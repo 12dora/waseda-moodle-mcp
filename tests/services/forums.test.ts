@@ -10,6 +10,7 @@ import {
   type RawForum,
 } from '../../src/core/services/forums';
 import { clampInt, cleanFileUrl, pickLang } from '../../src/core/services/shared';
+import type { Course } from '../../src/core/types';
 import {
   forumDiscussions,
   forumDiscussionsC2,
@@ -124,13 +125,13 @@ describe('listDiscussions', () => {
     mod_hsuforum_get_forum_discussions_paginated: discussionsBy({ 4001: hsuDiscussions }),
   };
 
-  it('defaults to announcement forums of in-progress courses, newest activity first', async () => {
+  it('defaults to announcement forums of the courses in scope, newest activity first', async () => {
     const { ctx, calls } = makeFakeContext(handlers);
     const r = await listDiscussions(ctx, {});
     expect(ids(r)).toEqual([711, 701, 702]);
     expect(r.skippedForums).toBe(0);
     expect(r.discussions[0]).toMatchObject({ courseName: 'Seminar & Lab', forumName: 'Announcements' });
-    expect(vi.mocked(listCourses)).toHaveBeenCalledWith(ctx, { classification: 'inprogress' });
+    expect(vi.mocked(listCourses)).toHaveBeenCalledWith(ctx);
     expect(calls[0]).toEqual({ fn: 'mod_forum_get_forums_by_courses', params: { courseids: [9001, 9002] } });
     // general / empty forums are never read
     expect(calls.filter((c) => c.fn === 'mod_forum_get_forum_discussions').map((c) => c.params.forumid)).toEqual([
@@ -139,8 +140,9 @@ describe('listDiscussions', () => {
     expect(countCalls(calls, 'mod_hsuforum_get_forum_discussions_paginated')).toBe(0);
   });
 
-  it('drops hidden courses', async () => {
-    const { ctx, calls } = makeFakeContext(handlers, { hiddenCourseIds: [9002] });
+  it('only reads announcements of scope courses', async () => {
+    vi.mocked(listCourses).mockResolvedValueOnce([{ id: 9001, name: 'Corporate Finance Basics' } as Course]);
+    const { ctx, calls } = makeFakeContext(handlers, { myCourseIds: [9001] });
     const r = await listDiscussions(ctx, {});
     expect(ids(r)).toEqual([701, 702]);
     expect(calls[0]?.params).toEqual({ courseids: [9001] });

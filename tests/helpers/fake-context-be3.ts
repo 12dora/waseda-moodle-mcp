@@ -18,7 +18,7 @@ export interface FakeContextOptions {
   moodleUserId?: number;
   fullname?: string;
   lang?: string;
-  hiddenCourseIds?: number[];
+  myCourseIds?: number[] | null;
 }
 
 export const FAKE_BASE_URL = 'https://moodle.example.com';
@@ -62,7 +62,7 @@ export function makeFakeContext(
       moodleUserId,
       fullname: opts.fullname ?? 'Taro Yamada',
       lang: opts.lang ?? 'en',
-      settings: { ...DEFAULT_SETTINGS, hiddenCourseIds: opts.hiddenCourseIds ?? [] },
+      settings: { ...DEFAULT_SETTINGS, myCourseIds: opts.myCourseIds ?? null },
       createdAt: 0,
       lastSeenAt: null,
     },

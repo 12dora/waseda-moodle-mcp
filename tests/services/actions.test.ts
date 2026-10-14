@@ -18,12 +18,12 @@ import {
   unverifiableTypes,
 } from '../../src/core/services/actions';
 import { getActivity } from '../../src/core/services/activity';
-import { listCourses } from '../../src/core/services/courses';
+import { listAllCourses as listCourses } from '../../src/core/services/courses';
 import { ASSIGN_CMID, ASSIGN_INSTANCE, makeAssign, makeSubmission, statusResponse } from '../fixtures/be4/assign';
 import { BASE_URL, createTestContext, makeUser, PUBLIC_URL } from '../helpers/fake-context-be4';
 
 vi.mock('../../src/core/services/activity', () => ({ getActivity: vi.fn() }));
-vi.mock('../../src/core/services/courses', () => ({ listCourses: vi.fn() }));
+vi.mock('../../src/core/services/courses', () => ({ listAllCourses: vi.fn() }));
 
 const getActivityMock = vi.mocked(getActivity);
 const listCoursesMock = vi.mocked(listCourses);

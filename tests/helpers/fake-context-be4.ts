@@ -4,7 +4,7 @@ import type {
   ActionRow,
   ApiKeyRow,
   AuditRow,
-  CourseIndexRow,
+  CourseSnapshotRow,
   CredentialRow,
   DraftUploadResult,
   MoodleApi,
@@ -38,7 +38,8 @@ export function createMemoryStoreForTests(): MemoryStore {
   const keys = new Map<string, ApiKeyRow>();
   const actions = new Map<string, ActionRow>();
   const uploads = new Map<string, UploadDraftRow>();
-  const index = new Map<string, CourseIndexRow>();
+  const snapshots = new Map<string, CourseSnapshotRow>();
+  const syllabus = new Map<string, { json: string; fetchedAt: number }>();
   const auditLog: AuditRow[] = [];
   let nextUserId = 1;
   let nextAuditId = 1;
@@ -191,11 +192,29 @@ export function createMemoryStoreForTests(): MemoryStore {
       u.totalBytes += file.size;
     },
 
-    async getCourseIndex(userId) {
-      return [...index.values()].filter((r) => r.userId === userId);
+    async getCourseSnapshots(userId) {
+      return [...snapshots.values()].filter((r) => r.userId === userId);
     },
-    async putCourseIndex(row) {
-      index.set(`${row.userId}:${row.courseId}`, row);
+    async putCourseSnapshot(row) {
+      snapshots.set(`${row.userId}:${row.courseId}`, row);
+    },
+    async touchCourseSnapshot(userId, courseId, checkedAt) {
+      const cur = snapshots.get(`${userId}:${courseId}`);
+      if (cur) snapshots.set(`${userId}:${courseId}`, { ...cur, checkedAt });
+    },
+    async getSyllabusCache(idnumbers) {
+      const out = new Map<string, { json: string; fetchedAt: number }>();
+      for (const id of idnumbers) {
+        const row = syllabus.get(id);
+        if (row) out.set(id, row);
+      }
+      return out;
+    },
+    async putSyllabusCache(idnumber, json, fetchedAt) {
+      syllabus.set(idnumber, { json, fetchedAt });
+    },
+    async listSweepUsers(limit) {
+      return [...users.values()].slice(0, limit);
     },
 
     async audit(row) {

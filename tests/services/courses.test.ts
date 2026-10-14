@@ -1,23 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InvalidInput, MoodleError, NotFound } from '../../src/core/errors';
+import { InvalidInput, NotFound } from '../../src/core/errors';
 import {
   getCourseOutline,
+  listAllCourses,
   listCourses,
   mapCompleted,
-  mapCourse,
   mapDates,
   mapSections,
   searchCourseContent,
 } from '../../src/core/services/courses';
-import { buildIndex, parseCourseIndex, parseQuery, searchIndex } from '../../src/core/services/courses-index';
+import { searchSnapshots } from '../../src/core/services/sweep';
 import contentsFixture from '../fixtures/be2/course_contents.json';
 import timeline from '../fixtures/be2/timeline_courses.json';
-import { makeFakeContext, makeFakeStore } from '../helpers/fake-context';
+import { makeFakeContext } from '../helpers/fake-context';
+
+vi.mock('../../src/core/services/sweep', () => ({
+  searchSnapshots: vi.fn(async () => ({ hits: [], searchedCourses: 0, refreshed: 0, skipped: 0 })),
+}));
 
 const TIMELINE = 'core_course_get_enrolled_courses_by_timeline_classification';
 const CONTENTS = 'core_course_get_contents';
+const ENROL = 'core_enrol_get_users_courses';
 const NOW = new Date('2026-10-14T03:00:00Z'); // 2026-10-14 12:00 JST
-const HOUR = 3600 * 1000;
+const NOW_SEC = NOW.getTime() / 1000;
+const DAY = 86_400;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -53,67 +59,84 @@ function courseContents(courseId: number): unknown {
   ];
 }
 
-function responses(inprogress: unknown[] = timeline.courses.slice(0, 2)) {
+function responses() {
   return {
-    [TIMELINE]: (p: Record<string, unknown>) => ({
-      courses: p.classification === 'inprogress' ? inprogress : timeline.courses,
-    }),
+    [TIMELINE]: timeline,
     [CONTENTS]: (p: Record<string, unknown>) => courseContents(p.courseid as number),
   };
 }
 
+const ENROLLED = [
+  { id: 101, lastaccess: NOW_SEC - DAY }, // recent
+  { id: 102, lastaccess: NOW_SEC - 40 * DAY }, // stale
+  { id: 103, lastaccess: 0 }, // never
+];
+
 describe('listCourses', () => {
-  it('defaults to in-progress, decodes names and maps fields', async () => {
-    const { ctx, api } = makeFakeContext({ responses: { [TIMELINE]: timeline } });
+  const fakes = () => makeFakeContext({ responses: { [TIMELINE]: timeline, [ENROL]: ENROLLED } });
+
+  it('returns the suggested courses by default, mapped with scope fields', async () => {
+    const { ctx, api } = fakes();
     const courses = await listCourses(ctx);
-    expect(api.calls).toEqual([{ fn: TIMELINE, params: { classification: 'inprogress', limit: 0 } }]);
-    expect(courses).toHaveLength(4);
-    expect(courses[0]).toEqual({
-      id: 101,
-      name: 'Introduction to Finance & Accounting',
-      shortName: 'FIN101',
-      category: 'Business & Commerce',
-      url: 'https://moodle.example.edu/course/view.php?id=101',
-      start: '2026-09-01T00:00:00+09:00',
-      end: '2027-01-31T00:00:00+09:00',
-      progress: 40,
-      hidden: false,
-    });
+    expect(api.calls.map((c) => c.fn)).toEqual([TIMELINE, ENROL]);
+    expect(api.calls[0]?.params).toEqual({ classification: 'allincludinghidden', limit: 0 });
+    expect(api.calls[1]?.params).toEqual({ userid: 1001, returnusercount: 0 });
+    expect(courses).toEqual([
+      {
+        id: 101,
+        name: 'Introduction to Finance & Accounting',
+        shortName: 'FIN101',
+        category: 'Business & Commerce',
+        url: 'https://moodle.example.edu/course/view.php?id=101',
+        start: '2026-09-01T00:00:00+09:00',
+        end: '2027-01-31T00:00:00+09:00',
+        progress: 40,
+        kind: 'class',
+        mine: true,
+        suggested: true,
+        term: null,
+        lastAccess: '2026-10-13T12:00:00+09:00',
+      },
+    ]);
+  });
+
+  it('lists every enrolled course with scope: all', async () => {
+    const courses = await listCourses(fakes().ctx, { scope: 'all' });
+    expect(courses.map((c) => [c.id, c.mine, c.suggested])).toEqual([
+      [101, true, true],
+      [102, false, false],
+      [103, false, false],
+      [104, false, false],
+    ]);
     expect(courses[1]?.progress).toBeNull(); // hasprogress=false
   });
 
-  it('excludes courses hidden in settings unless includeHidden', async () => {
+  it('follows the confirmed selection once myCourseIds is set', async () => {
     const { ctx } = makeFakeContext({
-      responses: { [TIMELINE]: timeline },
-      user: { settings: { hiddenCourseIds: [103] } },
+      responses: { [TIMELINE]: timeline, [ENROL]: ENROLLED },
+      user: { settings: { myCourseIds: [102, 104] } },
     });
-    expect((await listCourses(ctx)).map((c) => c.id)).toEqual([101, 102, 104]);
-    const all = await listCourses(ctx, { includeHidden: true });
-    expect(all.map((c) => [c.id, c.hidden])).toEqual([
+    expect((await listCourses(ctx)).map((c) => c.id)).toEqual([102, 104]);
+    expect((await listCourses(ctx, { scope: 'all' })).filter((c) => c.suggested).map((c) => c.id)).toEqual([101]);
+  });
+
+  it('listAllCourses is one light call and flags only confirmed selections', async () => {
+    const { ctx, api } = makeFakeContext({
+      responses: { [TIMELINE]: timeline.courses },
+      user: { settings: { myCourseIds: [103] } },
+    });
+    const all = await listAllCourses(ctx);
+    expect(api.calls.map((c) => c.fn)).toEqual([TIMELINE]);
+    expect(all.map((c) => [c.id, c.mine])).toEqual([
       [101, false],
       [102, false],
       [103, true],
       [104, false],
     ]);
   });
-
-  it('passes the classification through and accepts a bare array response', async () => {
-    const { ctx, api } = makeFakeContext({ responses: { [TIMELINE]: timeline.courses } });
-    const courses = await listCourses(ctx, { classification: 'past' });
-    expect(api.calls[0]?.params).toEqual({ classification: 'past', limit: 0 });
-    expect(courses).toHaveLength(4);
-  });
 });
 
 describe('mappers', () => {
-  it('mapCourse builds a fallback url and clamps progress', () => {
-    const c = mapCourse({ id: 7, fullname: 'A', progress: 150, hasprogress: true }, new Set([7]), 'https://m.example');
-    expect(c.url).toBe('https://m.example/course/view.php?id=7');
-    expect(c.progress).toBe(100);
-    expect(c.hidden).toBe(true);
-    expect(c.category).toBeNull();
-  });
-
   it('mapDates maps known dataids, label fallbacks and skips unset timestamps', () => {
     const ts = 1792076340; // 2026-10-15 23:59 JST
     expect(
@@ -150,11 +173,6 @@ describe('mappers', () => {
   it('mapSections can skip the summary conversion', () => {
     expect(mapSections(contentsFixture)[1]?.summary).toContain('Intro week');
     expect(mapSections(contentsFixture, { summaries: false })[1]?.summary).toBe('');
-  });
-
-  it('parseQuery applies NFKC and lower-casing', () => {
-    expect(parseQuery('  ＬＥＣＴＵＲＥ  Slides ')).toEqual(['lecture', 'slides']);
-    expect(parseQuery('   ')).toEqual([]);
   });
 });
 
@@ -231,164 +249,32 @@ describe('getCourseOutline', () => {
 });
 
 describe('searchCourseContent', () => {
-  it('builds the index on first use and finds modules by name', async () => {
-    const t = makeFakeContext({ responses: responses() });
-    const res = await searchCourseContent(t.ctx, 'lecture slides');
-    expect(res).toMatchObject({ searchedCourses: 2, refreshed: 2 });
-    expect(res.hits).toHaveLength(1);
-    expect(res.hits[0]).toMatchObject({
-      courseId: 101,
-      courseName: 'Introduction to Finance & Accounting',
-      sectionName: 'Week 1 & Orientation',
-      module: { cmid: 5102, modname: 'resource', completed: null },
-    });
-    expect(res.hits[0]?.module.files[0]?.name).toBe('Lecture1_Slides.pdf');
-
-    expect(t.state.indexWrites).toHaveLength(2);
-    const stored = t.state.indexWrites.find((w) => w.courseId === 101);
-    expect(stored).toMatchObject({ userId: t.ctx.user.id, courseId: 101, updatedAt: NOW.getTime() });
-    expect(stored?.json).not.toContain('Intro week'); // summaries are dropped
-    expect(stored?.json).not.toContain('2026-10'); // dates are dropped
-    expect(parseCourseIndex(stored?.json ?? '')?.v).toBe(1);
+  it('delegates to searchSnapshots with the resolved scope and a default limit', async () => {
+    const { ctx } = makeFakeContext({ responses: { [TIMELINE]: timeline, [ENROL]: ENROLLED } });
+    vi.mocked(searchSnapshots).mockClear();
+    const res = await searchCourseContent(ctx, 'lecture');
+    expect(res).toEqual({ hits: [], searchedCourses: 0, refreshed: 0, skipped: 0 });
+    const [calledCtx, scope, query, opts] = vi.mocked(searchSnapshots).mock.calls[0] ?? [];
+    expect(calledCtx).toBe(ctx);
+    expect(scope?.mode).toBe('auto');
+    expect([...(scope?.mine ?? [])]).toEqual([101]);
+    expect(query).toBe('lecture');
+    expect(opts).toEqual({ courseId: undefined, limit: 20 });
   });
 
-  it('reuses a fresh index and refreshes one older than 6 hours', async () => {
-    const first = makeFakeContext({ responses: responses() });
-    await searchCourseContent(first.ctx, 'handout');
-    const shared = { store: first.store, state: first.state };
-
-    vi.setSystemTime(new Date(NOW.getTime() + 5 * HOUR));
-    const second = makeFakeContext({ responses: responses(), store: shared });
-    expect(await searchCourseContent(second.ctx, 'handout')).toMatchObject({ refreshed: 0, searchedCourses: 2 });
-    expect(second.api.count(CONTENTS)).toBe(0);
-
-    vi.setSystemTime(new Date(NOW.getTime() + 7 * HOUR));
-    const third = makeFakeContext({ responses: responses(), store: shared });
-    expect(await searchCourseContent(third.ctx, 'handout')).toMatchObject({ refreshed: 2, searchedCourses: 2 });
-    expect(third.api.count(CONTENTS)).toBe(2);
+  it('passes the course id through and caps the limit', async () => {
+    const { ctx } = makeFakeContext({ responses: { [TIMELINE]: timeline, [ENROL]: ENROLLED } });
+    vi.mocked(searchSnapshots).mockClear();
+    await searchCourseContent(ctx, 'x', { courseId: 103, limit: 500 });
+    expect(vi.mocked(searchSnapshots).mock.calls[0]?.[3]).toEqual({ courseId: 103, limit: 100 });
   });
 
-  it('refreshes at most 8 courses per call and catches up on the next one', async () => {
-    const many = Array.from({ length: 10 }, (_, i) => ({ id: 201 + i, fullname: `Course ${201 + i}`, shortname: 'C' }));
-    const first = makeFakeContext({ responses: responses(many) });
-    const r1 = await searchCourseContent(first.ctx, 'handout');
-    expect(r1).toMatchObject({ refreshed: 8, searchedCourses: 8, skipped: 2 });
-    expect(r1.hits).toHaveLength(8);
-    expect(first.api.count(CONTENTS)).toBe(8);
-
-    const second = makeFakeContext({ responses: responses(many), store: { store: first.store, state: first.state } });
-    const r2 = await searchCourseContent(second.ctx, 'handout');
-    expect(r2).toMatchObject({ refreshed: 2, searchedCourses: 10, skipped: 0 });
-    expect(r2.hits).toHaveLength(10);
-    expect(second.api.count(CONTENTS)).toBe(2);
-  });
-
-  it('limits to one course (even a hidden one) and matches file names', async () => {
-    const t = makeFakeContext({ responses: responses(), user: { settings: { hiddenCourseIds: [101] } } });
-    const res = await searchCourseContent(t.ctx, 'case_a', { courseId: 101 });
-    expect(res).toMatchObject({ searchedCourses: 1, refreshed: 1 });
-    expect(res.hits.map((h) => h.module.cmid)).toEqual([5105]);
-    expect(t.api.calls.find((c) => c.fn === TIMELINE)?.params).toEqual({
-      classification: 'allincludinghidden',
-      limit: 0,
-    });
-    expect(t.api.count(CONTENTS)).toBe(1);
-  });
-
-  it('skips courses hidden in settings', async () => {
-    const t = makeFakeContext({ responses: responses(), user: { settings: { hiddenCourseIds: [102] } } });
-    expect(await searchCourseContent(t.ctx, 'handout')).toMatchObject({ searchedCourses: 1, refreshed: 1, hits: [] });
-  });
-
-  it('matches section names with all terms (AND) and applies NFKC', async () => {
-    const t = makeFakeContext({ responses: responses() });
-    const bySection = await searchCourseContent(t.ctx, 'orientation');
-    expect(bySection.hits.map((h) => h.module.cmid)).toEqual([5102, 5001, 5104]);
-    const mixed = await searchCourseContent(t.ctx, 'report orientation');
-    expect(mixed.hits.map((h) => h.module.cmid)).toEqual([5001]);
-    const wide = await searchCourseContent(t.ctx, 'ＬＥＣＴＵＲＥ');
-    expect(wide.hits.map((h) => h.module.cmid)).toEqual([5102]);
-    expect((await searchCourseContent(t.ctx, 'week', { limit: 1 })).hits).toHaveLength(1);
-  });
-
-  it('ranks module/file-name matches above section-only matches', async () => {
-    const json = JSON.stringify({
-      v: 1,
-      name: 'x',
-      s: [
-        {
-          i: 1,
-          k: 1,
-          n: 'Report Templates',
-          m: [
-            { c: 1, n: 'Intro', t: 'page', u: null },
-            {
-              c: 2,
-              n: 'Report 2',
-              t: 'resource',
-              u: null,
-              f: [['r2.pdf', 'https://moodle.example.edu/webservice/pluginfile.php/1/a/r2.pdf', 10, 'application/pdf']],
-            },
-          ],
-        },
-      ],
-    });
-    const store = makeFakeStore({ courseIndex: [{ userId: 1, courseId: 101, json, updatedAt: NOW.getTime() }] });
-    const t = makeFakeContext({ responses: responses(timeline.courses.slice(0, 1)), store });
-    const res = await searchCourseContent(t.ctx, 'report');
-    expect(res).toMatchObject({ refreshed: 0, searchedCourses: 1 });
-    expect(t.api.count(CONTENTS)).toBe(0);
-    expect(res.hits.map((h) => h.module.cmid)).toEqual([2, 1]);
-    expect(res.hits[0]?.courseName).toBe('Introduction to Finance & Accounting');
-    expect(res.hits[0]?.module.files[0]).toEqual({
-      name: 'r2.pdf',
-      size: 10,
-      mime: 'application/pdf',
-      url: 'https://moodle.example.edu/webservice/pluginfile.php/1/a/r2.pdf',
-      modified: null,
-    });
-  });
-
-  it('treats an unreadable index row as missing', async () => {
-    const store = makeFakeStore({
-      courseIndex: [{ userId: 1, courseId: 101, json: '{bad', updatedAt: NOW.getTime() }],
-    });
-    const t = makeFakeContext({ responses: responses(timeline.courses.slice(0, 1)), store });
-    expect(await searchCourseContent(t.ctx, 'lecture')).toMatchObject({ refreshed: 1, searchedCourses: 1 });
-  });
-
-  it('keeps going when one course cannot be read', async () => {
-    const base = responses();
-    const t = makeFakeContext({
-      responses: {
-        ...base,
-        [CONTENTS]: (p: Record<string, unknown>) => {
-          if (p.courseid === 102) throw new MoodleError('no access', 'nopermissions');
-          return courseContents(p.courseid as number);
-        },
-      },
-    });
-    expect(await searchCourseContent(t.ctx, 'lecture')).toMatchObject({ refreshed: 1, searchedCourses: 1 });
-  });
-
-  it('rejects an empty query and invalid limit / course ids', async () => {
+  it('rejects an empty query and invalid limit / course ids before any Moodle call', async () => {
     const t = makeFakeContext({ responses: responses() });
     await expect(searchCourseContent(t.ctx, '  ')).rejects.toBeInstanceOf(InvalidInput);
     await expect(searchCourseContent(t.ctx, 'x', { limit: 0 })).rejects.toBeInstanceOf(InvalidInput);
     await expect(searchCourseContent(t.ctx, 'x', { limit: 1.5 })).rejects.toBeInstanceOf(InvalidInput);
     await expect(searchCourseContent(t.ctx, 'x', { courseId: -1 })).rejects.toBeInstanceOf(InvalidInput);
     expect(t.api.calls).toHaveLength(0);
-  });
-});
-
-describe('index helpers', () => {
-  it('searchIndex and buildIndexJson round-trip a compact index', async () => {
-    const { ctx } = makeFakeContext({ responses: responses() });
-    const outline = await getCourseOutline(ctx, 101);
-    const payload = parseCourseIndex(JSON.stringify(buildIndex(outline)));
-    expect(payload?.name).toBe('Introduction to Finance & Accounting');
-    const hits = searchIndex(payload as NonNullable<typeof payload>, { id: 101, name: 'X' }, ['quiz']);
-    expect(hits.map((h) => h.hit.module.cmid)).toEqual([5002]);
-    expect(parseCourseIndex('not json')).toBeNull();
   });
 });

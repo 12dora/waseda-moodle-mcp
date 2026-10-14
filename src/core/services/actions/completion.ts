@@ -4,7 +4,7 @@ import type { MoodleApi, ServiceContext } from '../../context';
 import { InvalidInput, NeedsReconnect, NotFound } from '../../errors';
 import { decodeEntities } from '../../html';
 import type { ActionPreview } from '../../types';
-import { listCourses } from '../courses';
+import { listAllCourses } from '../courses';
 import {
   type ActionOutcome,
   assertWriteAllowed,
@@ -68,7 +68,7 @@ async function manualCompletionState(api: MoodleApi, courseId: number, cmid: num
 async function courseNameOf(ctx: ServiceContext, courseId: number): Promise<string> {
   const fallback = `course ${courseId}`;
   try {
-    const courses = await listCourses(ctx, { classification: 'all', includeHidden: true });
+    const courses = await listAllCourses(ctx);
     return courses.find((c) => c.id === courseId)?.name ?? fallback;
   } catch (e) {
     if (e instanceof NeedsReconnect) throw e;

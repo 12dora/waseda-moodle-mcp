@@ -3,8 +3,10 @@
 import type { MoodleApi, ServiceContext } from '../context';
 import { MoodleError } from '../errors';
 import { decodeEntities } from '../html';
-import { isMidnight, isoJst, nowSec } from '../time';
+import { isMidnight, isoJst, nowSec, toMs } from '../time';
 import type { DueItem, DueKind, DueList } from '../types';
+import { noteUpcomingEventCourses, resolveScope } from './scope';
+import { collectSweepItems } from './sweep';
 import { optionalPositiveInt } from './validate';
 
 const GLOBAL_FN = 'core_calendar_get_action_events_by_timesort';
@@ -12,6 +14,7 @@ const BY_COURSE_FN = 'core_calendar_get_action_events_by_course';
 const PAGE_SIZE = 50; // Moodle accepts 1..50
 const MAX_PAGES = 4;
 const DAY = 86_400;
+const SUGGESTION_HORIZON = 30 * DAY; // calendar signal of the automatic course suggestion
 
 export interface RawActionEvent {
   id?: number;
@@ -120,6 +123,10 @@ function buildRow(evs: RawActionEvent[], now: number): Row | null {
       notOpenYet: opensTs !== null && opensTs > now,
       url: eventUrl(primary, evs),
       action: actionLabel(primary, evs),
+      source: 'calendar',
+      evidence: null,
+      sourceUrl: null,
+      isNew: false,
     },
   };
 }
@@ -208,6 +215,17 @@ async function collectEvents(fetchPage: PageFetcher): Promise<{ events: RawActio
   return { events, truncated };
 }
 
+/** (dueAt ?? opensAt) ascending; items without any date go last. Stable, so calendar order survives ties. */
+function byDate(a: DueItem, b: DueItem): number {
+  const key = (i: DueItem) => {
+    const at = i.dueAt ?? i.opensAt;
+    return at === null ? Number.POSITIVE_INFINITY : toMs(at);
+  };
+  const [ka, kb] = [key(a), key(b)];
+  if (ka === kb) return 0;
+  return ka < kb ? -1 : 1;
+}
+
 export async function getDueItems(
   ctx: ServiceContext,
   opts: { daysAhead?: number; overdueDays?: number; courseId?: number } = {},
@@ -219,23 +237,32 @@ export async function getDueItems(
   const api = await ctx.moodle();
 
   const { events, truncated } = await collectEvents(pageFetcher(api, { from, to }, courseId));
-  const scoped = courseId === undefined ? events : events.filter((e) => e.course?.id === courseId);
-  let items = mergeDueEvents(scoped, now);
-
-  let hiddenCourseCount = 0;
-  if (courseId === undefined && ctx.user.settings.hiddenCourseIds.length) {
-    const hidden = new Set(ctx.user.settings.hiddenCourseIds);
-    const visible = items.filter((i) => !hidden.has(i.courseId));
-    hiddenCourseCount = items.length - visible.length;
-    items = visible;
+  if (courseId === undefined) {
+    const soon = events.filter((e) => eventTime(e) >= now && eventTime(e) <= now + SUGGESTION_HORIZON);
+    noteUpcomingEventCourses(
+      ctx,
+      soon.flatMap((e) => e.course?.id ?? []),
+    );
   }
+  const scope = await resolveScope(ctx);
+  const scoped = courseId === undefined ? events : events.filter((e) => e.course?.id === courseId);
+  const calendar = mergeDueEvents(scoped, now).filter((i) => courseId !== undefined || scope.mine.has(i.courseId));
+
+  // an explicit course bypasses the scope, for the sweep too
+  const sweepScope = courseId === undefined ? scope : { ...scope, mine: new Set([courseId]) };
+  const sweep = await collectSweepItems(ctx, sweepScope, calendar, { fromMs: from * 1000, toMs: to * 1000 });
 
   return {
     generatedAt: isoJst(now * 1000),
     windowFrom: isoJst(from * 1000),
     windowTo: isoJst(to * 1000),
-    items,
-    hiddenCourseCount,
+    items: [...calendar, ...sweep.items].sort(byDate),
+    scope: {
+      mode: scope.mode,
+      courseIds: [...scope.mine],
+      otherCount: scope.courses.filter((c) => !scope.mine.has(c.id)).length,
+    },
+    sweep: sweep.stats,
     truncated,
   };
 }

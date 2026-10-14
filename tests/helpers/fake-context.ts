@@ -7,7 +7,7 @@
 import type {
   ActionRow,
   AuditRow,
-  CourseIndexRow,
+  CourseSnapshotRow,
   DraftUploadResult,
   MoodleApi,
   ServiceContext,
@@ -94,36 +94,57 @@ function makeFakeMoodle(responses: Record<string, FakeResponse> = {}, opts: Fake
 
 interface FakeStoreState {
   users: Map<number, UserRow>;
-  courseIndex: Map<string, CourseIndexRow>; // `${userId}:${courseId}`
+  courseSnapshots: Map<string, CourseSnapshotRow>; // `${userId}:${courseId}`
   actions: Map<string, ActionRow>;
   uploadDrafts: Map<string, UploadDraftRow>;
   audit: AuditRow[];
-  /** Every putCourseIndex call, in order. */
-  indexWrites: CourseIndexRow[];
+  /** Every putCourseSnapshot call, in order. */
+  snapshotWrites: CourseSnapshotRow[];
+  syllabusCache: Map<string, { json: string; fetchedAt: number }>;
 }
 
-export interface FakeStore {
+interface FakeStore {
   store: Store;
   state: FakeStoreState;
 }
 
-export function makeFakeStore(init: { courseIndex?: CourseIndexRow[]; users?: UserRow[] } = {}): FakeStore {
+function makeFakeStore(): FakeStore {
   const state: FakeStoreState = {
-    users: new Map((init.users ?? []).map((u) => [u.id, u])),
-    courseIndex: new Map((init.courseIndex ?? []).map((r) => [`${r.userId}:${r.courseId}`, r])),
+    users: new Map(),
+    courseSnapshots: new Map(),
     actions: new Map(),
     uploadDrafts: new Map(),
     audit: [],
-    indexWrites: [],
+    snapshotWrites: [],
+    syllabusCache: new Map(),
   };
 
   const impl: Partial<Store> = {
     getUser: async (id) => state.users.get(id) ?? null,
 
-    getCourseIndex: async (userId) => [...state.courseIndex.values()].filter((r) => r.userId === userId),
-    putCourseIndex: async (row) => {
-      state.indexWrites.push(row);
-      state.courseIndex.set(`${row.userId}:${row.courseId}`, row);
+    updateSettings: async (id, settings) => {
+      const cur = state.users.get(id);
+      if (cur) state.users.set(id, { ...cur, settings });
+    },
+    getSyllabusCache: async (idnumbers) => {
+      const out = new Map<string, { json: string; fetchedAt: number }>();
+      for (const id of idnumbers) {
+        const row = state.syllabusCache.get(id);
+        if (row) out.set(id, row);
+      }
+      return out;
+    },
+    putSyllabusCache: async (idnumber, json, fetchedAt) => void state.syllabusCache.set(idnumber, { json, fetchedAt }),
+    listSweepUsers: async (limit) => [...state.users.values()].slice(0, limit),
+
+    getCourseSnapshots: async (userId) => [...state.courseSnapshots.values()].filter((r) => r.userId === userId),
+    putCourseSnapshot: async (row) => {
+      state.snapshotWrites.push(row);
+      state.courseSnapshots.set(`${row.userId}:${row.courseId}`, row);
+    },
+    touchCourseSnapshot: async (userId, courseId, checkedAt) => {
+      const cur = state.courseSnapshots.get(`${userId}:${courseId}`);
+      if (cur) state.courseSnapshots.set(`${userId}:${courseId}`, { ...cur, checkedAt });
     },
 
     createAction: async (row) => void state.actions.set(row.id, row),
@@ -215,7 +236,6 @@ function makeUser(patch: Partial<Omit<UserRow, 'settings'>> & { settings?: Parti
 export interface FakeContextOptions extends FakeMoodleOptions {
   responses?: Record<string, FakeResponse>;
   user?: Parameters<typeof makeUser>[0];
-  store?: FakeStore;
   scopes?: Scope[];
   mode?: 'worker' | 'stdio';
   publicUrl?: string;
@@ -233,7 +253,7 @@ export interface FakeContext {
 
 export function makeFakeContext(opts: FakeContextOptions = {}): FakeContext {
   const api = makeFakeMoodle(opts.responses, opts);
-  const fake = opts.store ?? makeFakeStore();
+  const fake = makeFakeStore();
   const deferred: Promise<unknown>[] = [];
   const user = makeUser({ moodleUserId: api.moodleUserId, ...opts.user });
   fake.state.users.set(user.id, user);

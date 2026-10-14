@@ -17,11 +17,11 @@ export type UiLang = 'auto' | 'ja' | 'en' | 'zh-CN';
 
 export interface UserSettings {
   writeMode: WriteMode; // default 'chat'
-  hiddenCourseIds: number[]; // default []
+  myCourseIds: number[] | null; // courses the user attends this term; null = not confirmed → automatic suggestion
   uiLang: UiLang; // default 'auto'
 }
 
-export const DEFAULT_SETTINGS: UserSettings = { writeMode: 'chat', hiddenCourseIds: [], uiLang: 'auto' };
+export const DEFAULT_SETTINGS: UserSettings = { writeMode: 'chat', myCourseIds: null, uiLang: 'auto' };
 
 export interface UserInfo {
   id: number;
@@ -52,7 +52,11 @@ export interface Course {
   start: IsoJst | null;
   end: IsoJst | null;
   progress: number | null; // 0-100 when completion tracking is on
-  hidden: boolean; // hidden by the user in settings
+  kind: 'class' | 'other'; // 'other' = non-class 提供コンテンツ courses (idnumber contains "ZZ")
+  mine: boolean; // in the effective scope (confirmed my courses, or the automatic suggestion)
+  suggested: boolean; // the automatic suggestion would include it
+  term: string | null; // e.g. "秋クォーター" from the public syllabus when known
+  lastAccess: IsoJst | null;
 }
 
 export interface FileRef {
@@ -112,6 +116,10 @@ export interface DueItem {
   notOpenYet: boolean;
   url: string;
   action: string | null; // Moodle action label
+  source: 'calendar' | 'activity' | 'text'; // calendar event / pending activity found by the sweep / deadline mentioned in course text
+  evidence: string | null; // text items: snippet around the date (≤160 chars)
+  sourceUrl: string | null; // text items: where the mention was found
+  isNew: boolean; // first seen by the sweep within the last 72 h
 }
 
 export interface DueList {
@@ -119,8 +127,21 @@ export interface DueList {
   windowFrom: IsoJst;
   windowTo: IsoJst;
   items: DueItem[]; // sorted by dueAt ?? opensAt ascending
-  hiddenCourseCount: number; // items dropped because the course is hidden
+  scope: { mode: 'mine' | 'auto'; courseIds: number[]; otherCount: number }; // otherCount = enrolled courses outside the scope
+  sweep: { checked: number; stale: number; checkedAt: IsoJst | null }; // course-content sweep coverage
   truncated: boolean; // more events existed than the paging budget allowed
+}
+
+export interface CourseUpdate {
+  courseId: number;
+  courseName: string;
+  cmid: number;
+  name: string;
+  modname: string;
+  change: 'new' | 'updated';
+  what: string[]; // Moodle update areas, e.g. ["contentfiles"]
+  at: IsoJst; // when the sweep first noticed it
+  url: string;
 }
 
 // ------------------------------------------------------------------ activities

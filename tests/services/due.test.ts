@@ -2,8 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvalidInput, MoodleError } from '../../src/core/errors';
 import type { RawActionEvent } from '../../src/core/services/due';
 import { dueKind, getDueItems, mergeDueEvents, parseCmid } from '../../src/core/services/due';
+import { collectSweepItems } from '../../src/core/services/sweep';
+import type { DueItem } from '../../src/core/types';
 import eventsFixture from '../fixtures/be2/action_events.json';
+import timeline from '../fixtures/be2/timeline_courses.json';
 import { makeFakeContext } from '../helpers/fake-context';
+
+vi.mock('../../src/core/services/sweep', () => ({ collectSweepItems: vi.fn() }));
+
+const TIMELINE = 'core_course_get_enrolled_courses_by_timeline_classification';
+const ENROL = 'core_enrol_get_users_courses';
+const NO_SWEEP = { items: [], stats: { checked: 0, stale: 0, checkedAt: null } };
 
 const GLOBAL = 'core_calendar_get_action_events_by_timesort';
 const BY_COURSE = 'core_calendar_get_action_events_by_course';
@@ -14,6 +23,7 @@ const DAY = 86_400;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
+  vi.mocked(collectSweepItems).mockReset().mockResolvedValue(NO_SWEEP);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -80,6 +90,10 @@ describe('mergeDueEvents', () => {
       notOpenYet: false,
       url: 'https://moodle.example.edu/mod/assign/view.php?id=5005',
       action: 'Add submission',
+      source: 'calendar',
+      evidence: null,
+      sourceUrl: null,
+      isNew: false,
     });
   });
 
@@ -187,11 +201,18 @@ describe('mergeDueEvents', () => {
   });
 });
 
+/** All four fixture courses attended recently -> the automatic scope covers every class course. */
+const SCOPE_RESPONSES = {
+  [TIMELINE]: timeline,
+  [ENROL]: timeline.courses.map((c) => ({ id: c.id, lastaccess: NOW_SEC - DAY })),
+};
+const calls = (api: { calls: Array<{ fn: string }> }, fn: string) => api.calls.filter((c) => c.fn === fn);
+
 describe('getDueItems', () => {
-  it('queries the default window and returns the merged list', async () => {
-    const { ctx, api } = makeFakeContext({ responses: { [GLOBAL]: eventsFixture } });
+  it('queries the default window and returns the merged list with scope and sweep info', async () => {
+    const { ctx, api } = makeFakeContext({ responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES } });
     const list = await getDueItems(ctx);
-    expect(api.calls).toEqual([
+    expect(calls(api, GLOBAL)).toEqual([
       {
         fn: GLOBAL,
         params: {
@@ -206,46 +227,88 @@ describe('getDueItems', () => {
       generatedAt: '2026-10-14T12:00:00+09:00',
       windowFrom: '2026-09-30T12:00:00+09:00',
       windowTo: '2026-10-28T12:00:00+09:00',
-      hiddenCourseCount: 0,
+      scope: { mode: 'auto', courseIds: [101, 102, 103, 104], otherCount: 0 },
+      sweep: { checked: 0, stale: 0, checkedAt: null },
       truncated: false,
     });
     expect(list.items.map((i) => i.name)).toEqual(ALL_NAMES);
   });
 
-  it('drops and counts items of courses hidden in settings', async () => {
+  it('drops calendar items outside the scope and reports the rest as otherCount', async () => {
     const { ctx } = makeFakeContext({
-      responses: { [GLOBAL]: eventsFixture },
-      user: { settings: { hiddenCourseIds: [103] } },
+      responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES },
+      user: { settings: { myCourseIds: [101, 102, 104] } },
     });
     const list = await getDueItems(ctx);
-    expect(list.hiddenCourseCount).toBe(1);
+    expect(list.scope).toEqual({ mode: 'mine', courseIds: [101, 102, 104], otherCount: 1 });
     expect(list.items.map((i) => i.name)).toEqual(ALL_NAMES.filter((n) => n !== 'Elective Essay'));
   });
 
+  it('feeds the sweep with the in-scope calendar items and the window, and merges its items by date', async () => {
+    const undated = { ...mergeDueEvents([event(1, 1)], NOW_SEC)[0], name: 'Undated task', dueAt: null, opensAt: null };
+    const early = { ...undated, name: 'Mentioned', source: 'text', dueAt: '2026-10-01T09:00:00+09:00' };
+    vi.mocked(collectSweepItems).mockResolvedValue({
+      items: [undated as DueItem, early as DueItem],
+      stats: { checked: 2, stale: 1, checkedAt: '2026-10-14T11:50:00+09:00' },
+    });
+    const { ctx } = makeFakeContext({
+      responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES },
+      user: { settings: { myCourseIds: [101] } },
+    });
+    const list = await getDueItems(ctx);
+    expect(list.sweep).toEqual({ checked: 2, stale: 1, checkedAt: '2026-10-14T11:50:00+09:00' });
+    expect(list.items.map((i) => i.name)).toEqual(['Mentioned', 'Report 0', 'Report 1', 'Quiz A', 'Undated task']);
+
+    const [sweepCtx, scope, calendar, window] = vi.mocked(collectSweepItems).mock.calls[0] ?? [];
+    expect(sweepCtx).toBe(ctx);
+    expect([...(scope?.mine ?? [])]).toEqual([101]);
+    expect(calendar?.map((i) => i.name)).toEqual(['Report 0', 'Report 1', 'Quiz A']);
+    expect(window).toEqual({ fromMs: (NOW_SEC - 14 * DAY) * 1000, toMs: (NOW_SEC + 14 * DAY) * 1000 });
+  });
+
+  it('uses calendar events of the next 30 days as a signal of the automatic suggestion', async () => {
+    const soon = event(1, 1, { course: { id: 102, fullname: 'Seminar' }, timesort: NOW_SEC + 20 * DAY });
+    const later = event(2, 2, { course: { id: 104, fullname: 'Elective' }, timesort: NOW_SEC + 40 * DAY });
+    const { ctx } = makeFakeContext({
+      responses: {
+        [GLOBAL]: { events: [soon, later] },
+        [TIMELINE]: timeline,
+        [ENROL]: [{ id: 101, lastaccess: 0 }],
+      },
+    });
+    const list = await getDueItems(ctx, { daysAhead: 120 });
+    expect(list.scope.courseIds).toEqual([102]);
+    expect(list.items.map((i) => i.courseId)).toEqual([102]);
+  });
+
   it('clamps the window (max 120 days ahead, 60 days back) and honours small values', async () => {
-    const big = makeFakeContext({ responses: { [GLOBAL]: { events: [] } } });
+    const big = makeFakeContext({ responses: { [GLOBAL]: { events: [] }, ...SCOPE_RESPONSES } });
     await getDueItems(big.ctx, { daysAhead: 500, overdueDays: 100 });
     expect(big.api.calls[0]?.params).toMatchObject({
       timesortfrom: NOW_SEC - 60 * DAY,
       timesortto: NOW_SEC + 120 * DAY,
     });
 
-    const small = makeFakeContext({ responses: { [GLOBAL]: { events: [] } } });
+    const small = makeFakeContext({ responses: { [GLOBAL]: { events: [] }, ...SCOPE_RESPONSES } });
     await getDueItems(small.ctx, { daysAhead: 3, overdueDays: 0 });
     expect(small.api.calls[0]?.params).toMatchObject({ timesortfrom: NOW_SEC, timesortto: NOW_SEC + 3 * DAY });
   });
 
   it('pages with aftereventid until a short page', async () => {
-    const { ctx, api } = makeFakeContext({ responses: { [GLOBAL]: pagedFeed([50, 50, 10]) } });
+    const { ctx, api } = makeFakeContext({ responses: { [GLOBAL]: pagedFeed([50, 50, 10]), ...SCOPE_RESPONSES } });
     const list = await getDueItems(ctx);
     expect(api.count(GLOBAL)).toBe(3);
-    expect(api.calls.map((c) => c.params.aftereventid)).toEqual([undefined, 1049, 1099]);
+    expect(
+      calls(api, GLOBAL).map((c) => (c as unknown as { params: Record<string, unknown> }).params.aftereventid),
+    ).toEqual([undefined, 1049, 1099]);
     expect(list.items).toHaveLength(110);
     expect(list.truncated).toBe(false);
   });
 
   it('stops after 4 pages and reports truncation', async () => {
-    const { ctx, api } = makeFakeContext({ responses: { [GLOBAL]: pagedFeed([50, 50, 50, 50, 50, 50]) } });
+    const { ctx, api } = makeFakeContext({
+      responses: { [GLOBAL]: pagedFeed([50, 50, 50, 50, 50, 50]), ...SCOPE_RESPONSES },
+    });
     const list = await getDueItems(ctx);
     expect(api.count(GLOBAL)).toBe(4);
     expect(list.items).toHaveLength(200);
@@ -253,7 +316,7 @@ describe('getDueItems', () => {
   });
 
   it('does not report truncation when the last full page is followed by an empty one', async () => {
-    const { ctx, api } = makeFakeContext({ responses: { [GLOBAL]: pagedFeed([50, 0]) } });
+    const { ctx, api } = makeFakeContext({ responses: { [GLOBAL]: pagedFeed([50, 0]), ...SCOPE_RESPONSES } });
     const list = await getDueItems(ctx);
     expect(api.count(GLOBAL)).toBe(2);
     expect(list.truncated).toBe(false);
@@ -265,20 +328,21 @@ describe('getDueItems', () => {
     expect(api.calls).toHaveLength(0);
   });
 
-  it('uses the per-course feed when a course is requested (even a hidden one)', async () => {
+  it('uses the per-course feed for an explicit course, bypassing the scope (also for the sweep)', async () => {
     const { ctx, api } = makeFakeContext({
-      responses: { [BY_COURSE]: eventsFixture },
-      user: { settings: { hiddenCourseIds: [101] } },
+      responses: { [BY_COURSE]: eventsFixture, ...SCOPE_RESPONSES },
+      user: { settings: { myCourseIds: [102] } },
     });
     const list = await getDueItems(ctx, { courseId: 101 });
-    expect(api.calls).toEqual([
+    expect(calls(api, BY_COURSE)).toEqual([
       {
         fn: BY_COURSE,
         params: { courseid: 101, timesortfrom: NOW_SEC - 14 * DAY, timesortto: NOW_SEC + 14 * DAY, limitnum: 50 },
       },
     ]);
     expect(list.items.map((i) => i.name)).toEqual(['Report 0', 'Report 1', 'Quiz A']);
-    expect(list.hiddenCourseCount).toBe(0);
+    expect(list.scope).toEqual({ mode: 'mine', courseIds: [102], otherCount: 3 });
+    expect([...(vi.mocked(collectSweepItems).mock.calls[0]?.[1].mine ?? [])]).toEqual([101]);
   });
 
   it('falls back to the global feed (filtered) when the per-course function is unavailable', async () => {
@@ -286,10 +350,11 @@ describe('getDueItems', () => {
       responses: {
         [BY_COURSE]: new MoodleError('Access control exception', 'accessexception'),
         [GLOBAL]: eventsFixture,
+        ...SCOPE_RESPONSES,
       },
     });
     const list = await getDueItems(ctx, { courseId: 101 });
-    expect(api.calls.map((c) => c.fn)).toEqual([BY_COURSE, GLOBAL]);
+    expect([BY_COURSE, GLOBAL].map((fn) => api.count(fn))).toEqual([1, 1]);
     expect(list.items.map((i) => i.name)).toEqual(['Report 0', 'Report 1', 'Quiz A']);
   });
 });

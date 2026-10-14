@@ -108,11 +108,12 @@ export interface UploadDraftRow {
   expiresAt: number;
 }
 
-export interface CourseIndexRow {
+export interface CourseSnapshotRow {
   userId: number;
   courseId: number;
-  json: string; // compact JSON of CourseOutline (see services/courses.ts)
-  updatedAt: number;
+  json: string; // compact CourseSnapshot JSON (services/sweep)
+  fetchedAt: number; // last full core_course_get_contents
+  checkedAt: number; // last update check (core_course_get_updates_since) or fetch
 }
 
 export interface AuditRow {
@@ -181,9 +182,15 @@ export interface Store {
    */
   consumeUploadDraft(id: string): Promise<boolean>;
 
-  // course outline cache for search
-  getCourseIndex(userId: number): Promise<CourseIndexRow[]>;
-  putCourseIndex(row: CourseIndexRow): Promise<void>;
+  // course content snapshots (sweep + search)
+  getCourseSnapshots(userId: number): Promise<CourseSnapshotRow[]>;
+  putCourseSnapshot(row: CourseSnapshotRow): Promise<void>;
+  touchCourseSnapshot(userId: number, courseId: number, checkedAt: number): Promise<void>;
+  // public syllabus cache (global, keyed by Moodle course idnumber; json = SyllabusInfo or "null" for "no syllabus")
+  getSyllabusCache(idnumbers: string[]): Promise<Map<string, { json: string; fetchedAt: number }>>;
+  putSyllabusCache(idnumber: string, json: string, fetchedAt: number): Promise<void>;
+  /** Users with an active credential, for the scheduled sweep (oldest-checked first). */
+  listSweepUsers(limit: number): Promise<UserRow[]>;
 
   // audit log
   audit(row: AuditRow): Promise<void>;
@@ -210,6 +217,8 @@ export interface ServiceContext {
   publicUrl: string; // e.g. https://wasemoodle.example.com (no trailing slash); '' in stdio mode
   mode: 'worker' | 'stdio';
   scopes: Scope[];
+  /** Public syllabus term lookup (WMM / SYLLABUS_LOOKUP kill switch); undefined = on. */
+  syllabusLookup?: boolean;
   source: string; // display label of the caller: OAuth client name, "API key: <name>", "Console", "Local"
   /** Defer work past the response (Workers ctx.waitUntil; stdio runs it immediately). */
   defer(p: Promise<unknown>): void;

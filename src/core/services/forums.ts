@@ -229,10 +229,9 @@ async function selectByCourse(ctx: ServiceContext, api: MoodleApi, courseId: num
   return { refs: refs.sort((a, b) => Number(b.kind === 'news') - Number(a.kind === 'news')), names };
 }
 
-/** Announcement forums of the in-progress, non-hidden courses. */
+/** Announcement forums of the courses in the user's scope. */
 async function selectAnnouncements(ctx: ServiceContext, api: MoodleApi): Promise<ForumSelection> {
-  const hidden = new Set(ctx.user.settings.hiddenCourseIds);
-  const courses = (await listCourses(ctx, { classification: 'inprogress' })).filter((c) => !hidden.has(c.id));
+  const courses = await listCourses(ctx);
   const all = await fetchForumsOfTypes(
     api,
     ['forum', 'hsuforum'],
