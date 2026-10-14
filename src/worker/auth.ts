@@ -225,13 +225,30 @@ export interface RateLimitRule {
  * Throws RateLimited above the limit. Storage failures fail OPEN: an outage must not lock everybody out.
  */
 export async function rateLimit(store: D1Store, rule: RateLimitRule, now = Date.now()): Promise<void> {
+  // Keys this isolate already saw over the limit are refused without another D1 write (D1 Free: 100k writes/day).
+  const blockedUntil = blockedKeys.get(rule.key);
+  if (blockedUntil !== undefined && blockedUntil > now) throw new RateLimited();
+  memoryRateLimit(`pre:${rule.key}`, rule.limit * 2, rule.windowMs, now); // generous: D1 stays the source of truth
   let hits: number;
   try {
     hits = await store.hitRateLimit(rule.key, rule.windowMs, now);
   } catch {
     return;
   }
-  if (hits > rule.limit) throw new RateLimited();
+  if (hits > rule.limit) {
+    if (blockedKeys.size > 2000) blockedKeys.clear();
+    // D1 windows start at the first hit (unknown here), so only remember the block briefly.
+    blockedKeys.set(rule.key, now + Math.min(rule.windowMs / 10, 60_000));
+    throw new RateLimited();
+  }
+}
+
+const blockedKeys = new Map<string, number>();
+
+/** Tests: forget this isolate's counters and blocked keys. */
+export function resetRateLimitMemory(): void {
+  blockedKeys.clear();
+  memoryCounters.clear();
 }
 
 export function clientIp(request: Request): string {

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex } from '../../src/core/crypto';
 import { NeedsReconnect } from '../../src/core/errors';
 import { sweepForCron } from '../../src/core/services/sweep';
+import { resetRateLimitMemory } from '../../src/worker/auth';
 import type { Env } from '../../src/worker/env';
 import worker, {
   buildProviderOptions,
@@ -50,6 +51,7 @@ let n = 0;
 const execCtx = () => ({ waitUntil: (p: Promise<unknown>) => void deferred.push(p) }) as unknown as ExecutionContext;
 
 beforeEach(async () => {
+  resetRateLimitMemory();
   deferred = [];
   rec.purge.mockReset();
   vi.mocked(sweepForCron).mockReset().mockResolvedValue({ checked: 0, stale: 0, checkedAt: null });

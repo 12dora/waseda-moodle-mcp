@@ -5,7 +5,7 @@ import { cancelAction, confirmAction, listActionRecords } from '../../src/core/s
 import { getDueItems } from '../../src/core/services/due';
 import { streamDownload, streamUpload } from '../../src/core/services/files';
 import { createApi } from '../../src/worker/api';
-import { resolveApiKey, SESSION_COOKIE } from '../../src/worker/auth';
+import { resetRateLimitMemory, resolveApiKey, SESSION_COOKIE } from '../../src/worker/auth';
 import type { Env } from '../../src/worker/env';
 import { createD1Store } from '../../src/worker/store-d1';
 import { createTestD1, type TestD1 } from '../helpers/d1-sqlite';
@@ -189,6 +189,7 @@ function stubMoodle() {
 }
 
 beforeEach(() => {
+  resetRateLimitMemory();
   pending = [];
   env = makeEnv();
   stubMoodle();

@@ -43,4 +43,5 @@ await call('list_discussions', { limit: 5 });
 await call('list_messages', { limit: 5 });
 await call('list_notifications', { limit: 5 });
 await call('get_grades', {});
+await call('get_course_updates', {});
 await client.close();
