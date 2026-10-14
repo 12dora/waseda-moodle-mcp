@@ -33,15 +33,27 @@ function dueGroup(item: DueItem, now: number): DueGroup {
 }
 
 function dueWhen(i: DueItem): string {
+  if (!i.dueAt && i.source === 'activity' && !i.notOpenYet) return 'no deadline set in Moodle';
   if (i.dueAt) return `due ${fmtDue(i.dueAt)}${i.notOpenYet && i.opensAt ? `, opens ${fmt(i.opensAt)}` : ''}`;
   if (!i.opensAt) return 'no deadline';
   return i.notOpenYet ? `opens ${fmt(i.opensAt)}` : `open since ${fmt(i.opensAt)}, no deadline`;
 }
 
+/** Text items carry the quoted snippet and where it was found, so the model can check the date itself. */
+function evidenceLine(i: DueItem): string {
+  if (i.source !== 'text') return '';
+  const quote = i.evidence ? ` «${oneLine(i.evidence, 160)}»` : '';
+  const where = i.sourceUrl ? ` ${i.sourceUrl}` : '';
+  return quote || where ? `\n  evidence:${quote}${where}` : '';
+}
+
 function dueLine(i: DueItem): string {
   const cm = i.cmid !== null ? ` (cmid ${i.cmid})` : '';
   const late = i.overdue ? ' — OVERDUE' : '';
-  return `- [${i.kind}] ${oneLine(i.name, 90)} — ${oneLine(i.courseName, 60)} — ${dueWhen(i)}${late}${cm}`;
+  const fresh = i.isNew ? ' — NEW' : '';
+  const verify = i.source === 'text' ? ' — mentioned in course text — verify' : '';
+  const head = `- [${i.kind}] ${oneLine(i.name, 90)} — ${oneLine(i.courseName, 60)} — ${dueWhen(i)}`;
+  return `${head}${verify}${late}${fresh}${cm}${evidenceLine(i)}`;
 }
 
 interface Section {
@@ -84,6 +96,27 @@ function closedSummary(closed: DueItem[]): string {
   return clip(`${plural(closed.length, 'closed item')} no longer accepted: ${names}`, 400);
 }
 
+function dueFooter(list: DueList): string[] {
+  const { scope, sweep } = list;
+  const lines = [
+    scope.mode === 'auto'
+      ? `Using suggested courses (${scope.courseIds.length}); not confirmed by the user yet. Ask which courses they attend, then confirm with set_my_courses.`
+      : `Your courses: ${scope.courseIds.length}.`,
+  ];
+  if (sweep.checked > 0 || sweep.stale > 0) {
+    const stale =
+      sweep.stale > 0 ? `, ${plural(sweep.stale, 'course')} not refreshed yet (course-page tasks may be missing)` : '';
+    const at = sweep.checkedAt ? `, last check ${fmt(sweep.checkedAt)}` : '';
+    lines.push(`Course pages checked: ${sweep.checked}${stale}${at}.`);
+  }
+  if (scope.otherCount > 0) {
+    lines.push(
+      `${plural(scope.otherCount, 'other enrolled course')} not included (pass course_id to look at one; list_courses with scope "all" shows them).`,
+    );
+  }
+  return lines;
+}
+
 export function renderDueList(list: DueList): string {
   const open = list.items.filter((i) => !i.closed);
   const closed = list.items.filter((i) => i.closed);
@@ -95,10 +128,8 @@ export function renderDueList(list: DueList): string {
       : `${plural(list.items.length, 'item')} between ${window}:`,
   ];
   const notes: string[] = [];
-  if (list.hiddenCourseCount > 0) {
-    notes.push(`(${plural(list.hiddenCourseCount, 'item')} from hidden courses not shown.)`);
-  }
   if (list.truncated) notes.push('(More events exist than could be loaded; narrow with course_id or days_ahead.)');
+  notes.push(...dueFooter(list));
   const tail = closed.length > 0 ? [closedSummary(closed)] : [];
 
   const now = Date.parse(list.generatedAt);

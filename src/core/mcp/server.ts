@@ -1,5 +1,5 @@
 /**
- * MCP surface: 19 tools + 2 prompts over the service layer.
+ * MCP surface: 21 tools + 2 prompts over the service layer.
  * One McpServer per request (Worker) or per connection (stdio); tool definitions live in ./tools.
  */
 
@@ -9,6 +9,7 @@ import { registerPrompts } from './prompts';
 import { courseTools } from './tools/courses';
 import type { ToolDef } from './tools/define';
 import { createUploadLinkTool, getFileTool } from './tools/files';
+import { myCoursesTools } from './tools/my-courses';
 import { registerTool } from './tools/register';
 import { socialTools } from './tools/social';
 import { prepareSubmissionTool, writeTools } from './tools/write';
@@ -24,7 +25,7 @@ function access(ctx: ServiceContext) {
 /** Read tools need moodle:read, write tools moodle:write (upload links: Worker only). */
 function toolsFor({ canRead, canWrite, stdio }: ReturnType<typeof access>): ToolDef[] {
   const tools: ToolDef[] = [];
-  if (canRead) tools.push(...courseTools, getFileTool(stdio), ...socialTools);
+  if (canRead) tools.push(...courseTools, ...myCoursesTools, getFileTool(stdio), ...socialTools);
   if (canWrite) {
     if (!stdio) tools.push(createUploadLinkTool);
     tools.push(prepareSubmissionTool(stdio), ...writeTools);

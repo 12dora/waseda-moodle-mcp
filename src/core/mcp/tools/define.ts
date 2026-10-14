@@ -29,6 +29,14 @@ export const READ_HINTS: ToolAnnotations = {
   openWorldHint: true,
 };
 
+/** Changes only our own stored selection, never anything in Moodle. */
+export const LOCAL_SETTING_HINTS: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
+
 export const PREPARE_HINTS: ToolAnnotations = {
   readOnlyHint: false,
   destructiveHint: false,

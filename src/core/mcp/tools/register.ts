@@ -8,7 +8,7 @@ import type { ToolDef } from './define';
 const asSchema = (s: z.ZodType) => s as unknown as StandardSchemaWithJSON;
 
 /** Only plain, non-content values go to the audit log (never message text, file names or bytes). */
-const AUDIT_STRING_KEYS = new Set(['forum_type', 'classification', 'upload_id', 'action_id']);
+const AUDIT_STRING_KEYS = new Set(['forum_type', 'scope', 'upload_id', 'action_id']);
 
 function auditDetail(args: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {};

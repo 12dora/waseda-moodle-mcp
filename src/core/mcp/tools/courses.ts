@@ -3,6 +3,7 @@ import { getActivity } from '../../services/activity';
 import { getCourseOutline, listCourses, searchCourseContent } from '../../services/courses';
 import { getDueItems } from '../../services/due';
 import { getGrades } from '../../services/grades';
+import { resolveScope } from '../../services/scope';
 import { renderActivity } from '../render/activity';
 import { renderCourses, renderOutline, renderSearch } from '../render/courses';
 import { renderDueList } from '../render/due';
@@ -15,7 +16,8 @@ const getDueItemsTool = defineTool({
   description:
     "Lists the user's outstanding assignments, quizzes, questionnaires and other deadlines, grouped as Overdue / Today / Tomorrow / Next 7 days / Later. " +
     'Use this first for "what is due", "what should I work on" or "did I miss anything"; already submitted assignments no longer appear. ' +
-    'Times are JST, and a deadline at 00:00 means the previous day 24:00. Each line carries the cmid to pass to get_activity.',
+    'It combines the Moodle calendar with tasks found by checking the course pages: activities without a deadline in Moodle, and deadlines written in course text (marked "verify"; confirm them with the quoted evidence). ' +
+    "Covers the user's own courses; the footer says how many were checked. Times are JST, and a deadline at 00:00 means the previous day 24:00. Each line carries the cmid to pass to get_activity.",
   annotations: READ_HINTS,
   input: z.object({
     days_ahead: z
@@ -45,19 +47,19 @@ const listCoursesTool = defineTool({
   title: 'Courses',
   description:
     "Lists the user's Moodle courses with their course_id (needed by get_course, get_grades and the filters of other tools). " +
-    'Defaults to courses in progress this term; use classification "past" or "all" for earlier ones. ' +
-    'Courses the user hid in the console are omitted unless include_hidden is true.',
+    'By default only the user\'s own courses this term (scope "mine"); scope "all" also shows every other enrolled course, which is how to pick candidates. ' +
+    'Until the user has confirmed their courses the list is only a suggestion: ask them, then call set_my_courses.',
   annotations: READ_HINTS,
   input: z.object({
-    classification: z
-      .enum(['inprogress', 'future', 'past', 'all'])
-      .describe('Which courses: inprogress (default), future, past or all.')
+    scope: z
+      .enum(['mine', 'all'])
+      .describe("mine (default): the user's courses this term. all: also the other enrolled courses.")
       .optional(),
-    include_hidden: z.boolean().describe('Also list courses the user hid in settings. Default false.').optional(),
   }),
   async run(ctx, a) {
-    const r = await listCourses(ctx, { classification: a.classification, includeHidden: a.include_hidden });
-    return { text: renderCourses(r), data: { courses: r } };
+    const scope = a.scope ?? 'mine';
+    const [courses, { mode }] = await Promise.all([listCourses(ctx, { scope }), resolveScope(ctx)]);
+    return { text: renderCourses(courses, { mode, scope }), data: { courses, mode, scope } };
   },
 });
 
@@ -88,7 +90,7 @@ const searchCourseContentTool = defineTool({
   name: 'search_course_content',
   title: 'Search course content',
   description:
-    "Searches activity names, section names and file names across the user's current courses (or one course) and returns matching activities with their cmid. " +
+    "Searches activity names, section names and file names across the user's courses (or one course) and returns matching activities with their cmid. " +
     'Use it when the user asks for a lecture, slide, reading or assignment by topic or title. ' +
     'It matches names only, not the text inside files; the index refreshes automatically.',
   annotations: READ_HINTS,

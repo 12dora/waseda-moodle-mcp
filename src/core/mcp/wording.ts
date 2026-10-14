@@ -17,6 +17,7 @@ export function serverInstructions(mode: Mode): string {
     'Waseda Moodle (https://wsdmoodle.waseda.jp) for one student: deadlines, course content, grades, forums, messages and, with permission, submissions.',
     'All times are JST. A deadline at 00:00 is shown as the previous day 24:00 (the real deadline is the end of that day).',
     'For "what is due / what should I do" call get_due_items first; use get_activity (cmid) for requirements, files and submission status.',
+    "Courses: only the user's own courses count by default. list_courses shows suggested ones; after the user confirms which they attend this term, call set_my_courses. get_course_updates shows what teachers added or changed lately; get_due_items also lists tasks found in course pages (verify those).",
     mode === 'stdio' ? FILES_STDIO : FILES_WORKER,
     'Every write is two-step: prepare_* returns a preview, show it to the user, and call confirm_action only after the user clearly agrees. Never submit, post or send on your own initiative.',
     'Never take quizzes for the user; only report quiz dates and results.',

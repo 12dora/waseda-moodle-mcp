@@ -8,9 +8,12 @@ import { renderFileLink, renderUploadLink } from '../../src/core/mcp/render/file
 import { renderDiscussion, renderDiscussions } from '../../src/core/mcp/render/forums';
 import { renderGrades } from '../../src/core/mcp/render/grades';
 import { renderConversation, renderConversations, renderNotifications } from '../../src/core/mcp/render/messages';
+import { renderCourseUpdates, renderMyCourses } from '../../src/core/mcp/render/updates';
 import type {
   ActionPreview,
   AssignDetail,
+  Course,
+  CourseUpdate,
   Discussion,
   DiscussionSummary,
   DueItem,
@@ -36,6 +39,10 @@ function due(patch: Partial<DueItem>): DueItem {
     notOpenYet: false,
     url: 'https://moodle.example.edu/mod/assign/view.php?id=5001',
     action: null,
+    source: 'calendar',
+    evidence: null,
+    sourceUrl: null,
+    isNew: false,
     ...patch,
   };
 }
@@ -46,7 +53,8 @@ function dueList(items: DueItem[], patch: Partial<DueList> = {}): DueList {
     windowFrom: '2026-09-30T12:00:00+09:00',
     windowTo: '2026-10-28T12:00:00+09:00',
     items,
-    hiddenCourseCount: 0,
+    scope: { mode: 'mine', courseIds: [101], otherCount: 0 },
+    sweep: { checked: 1, stale: 0, checkedAt: '2026-10-14T11:30:00+09:00' },
     truncated: false,
     ...patch,
   };
@@ -110,14 +118,54 @@ describe('renderDueList', () => {
     expect(text).toContain('JST');
   });
 
-  it('reports hidden courses and truncation, and says when nothing is due', () => {
-    const t = renderDueList(dueList([due({})], { hiddenCourseCount: 2, truncated: true }));
-    expect(t).toContain('2 items from hidden courses');
+  it('reports truncation, and says when nothing is due', () => {
+    const t = renderDueList(dueList([due({})], { truncated: true }));
     expect(t).toContain('narrow with course_id');
     expect(renderDueList(dueList([]))).toContain('Nothing outstanding');
     expect(renderDueList(dueList([due({ overdue: true, closed: true })]))).toContain(
       '1 closed item no longer accepted',
     );
+  });
+
+  it('marks activity items without a deadline and tags new items', () => {
+    const t = renderDueList(
+      dueList([due({ source: 'activity', dueAt: null, name: 'Final task', isNew: true, cmid: 77 })]),
+    );
+    expect(t).toContain('## No deadline (1)');
+    expect(t).toContain('Final task — Strategic Marketing — no deadline set in Moodle — NEW (cmid 77)');
+  });
+
+  it('quotes the evidence and link of deadlines found in course text', () => {
+    const t = renderDueList(
+      dueList([
+        due({
+          source: 'text',
+          name: 'Report Due on 10/18',
+          evidence: 'Report Due on 10/18 (Sun) 23:59 via the form',
+          sourceUrl: 'https://moodle.example.edu/course/view.php?id=101#section-2',
+        }),
+      ]),
+    );
+    expect(t).toContain('mentioned in course text — verify');
+    expect(t).toContain(
+      '«Report Due on 10/18 (Sun) 23:59 via the form» https://moodle.example.edu/course/view.php?id=101#section-2',
+    );
+  });
+
+  it('shows the scope and sweep coverage in the footer', () => {
+    const mine = renderDueList(dueList([due({})], { scope: { mode: 'mine', courseIds: [1, 2, 3], otherCount: 4 } }));
+    expect(mine).toContain('Your courses: 3.');
+    expect(mine).toContain('4 other enrolled courses not included');
+    expect(mine).toContain('Course pages checked: 1, last check 2026-10-14');
+    const auto = renderDueList(
+      dueList([due({})], {
+        scope: { mode: 'auto', courseIds: [1, 2], otherCount: 0 },
+        sweep: { checked: 1, stale: 2, checkedAt: null },
+      }),
+    );
+    expect(auto).toContain('Using suggested courses (2)');
+    expect(auto).toContain('set_my_courses');
+    expect(auto).toContain('2 courses not refreshed yet');
   });
 
   it('truncates long lists with a "more" line', () => {
@@ -202,24 +250,55 @@ describe('renderDueList budget order', () => {
   });
 });
 
+function course(patch: Partial<Course> = {}): Course {
+  return {
+    id: 101,
+    name: 'Finance',
+    shortName: 'F',
+    category: null,
+    url: 'u',
+    start: null,
+    end: null,
+    progress: 40.4,
+    kind: 'class',
+    mine: true,
+    suggested: true,
+    term: null,
+    lastAccess: null,
+    ...patch,
+  };
+}
+
 describe('courses, outline, search', () => {
-  it('renders courses', () => {
-    const c = {
-      id: 101,
-      name: 'Finance',
-      shortName: 'F',
-      category: null,
-      url: 'u',
-      start: null,
-      end: null,
-      progress: 40.4,
-      hidden: true,
-    };
-    const t = renderCourses([c]);
+  it('renders your courses with term and last access, and tells the model to confirm suggestions', () => {
+    const t = renderCourses([course({ term: '秋クォーター', lastAccess: '2026-10-12T09:30:00+09:00' })], {
+      mode: 'auto',
+      scope: 'mine',
+    });
+    expect(t).toContain('## Your courses (1)');
     expect(t).toContain('course_id 101');
+    expect(t).toContain('秋クォーター');
+    expect(t).toContain('last access 2026-10-12');
     expect(t).toContain('progress 40%');
-    expect(t).toContain('hidden');
-    expect(renderCourses([])).toContain('No courses');
+    expect(t).toContain('call set_my_courses');
+    expect(t).toContain('scope "all"');
+    expect(renderCourses([], { mode: 'mine', scope: 'mine' })).toContain('No courses');
+  });
+
+  it('lists other class courses and collapses non-class courses to names', () => {
+    const list = [
+      course(),
+      course({ id: 102, name: 'Old seminar', mine: false, suggested: true }),
+      course({ id: 900, name: 'Library guide', kind: 'other', mine: false, suggested: false }),
+    ];
+    const t = renderCourses(list, { mode: 'mine', scope: 'all' });
+    expect(t).toContain('## Other class courses (1)');
+    expect(t).toContain('Old seminar — course_id 102 — progress 40% — suggested');
+    expect(t).toContain('## Other enrolled (1)');
+    expect(t).toContain('Library guide (900)');
+    expect(t).not.toContain('course_id 900');
+    expect(t).not.toContain('scope "all"');
+    expect(t).not.toContain('set_my_courses');
   });
 
   it('renders an outline with dates, completion and file names, skipping empty sections', () => {
@@ -244,7 +323,11 @@ describe('courses, outline, search', () => {
         start: null,
         end: null,
         progress: null,
-        hidden: false,
+        kind: 'class',
+        mine: true,
+        suggested: true,
+        term: null,
+        lastAccess: null,
       },
       sections: [
         { id: 1, number: 0, name: 'General', summary: '', modules: [] },
@@ -665,5 +748,69 @@ describe('actions', () => {
         url: 'https://moodle.example.edu/x',
       }),
     ).toBe('Action act_abc: executed. Submitted.\nhttps://moodle.example.edu/x');
+  });
+});
+
+describe('course updates', () => {
+  const upd = (patch: Partial<CourseUpdate>): CourseUpdate => ({
+    courseId: 101,
+    courseName: 'Strategic Marketing',
+    cmid: 1,
+    name: 'Week 1 slides',
+    modname: 'resource',
+    change: 'new',
+    what: [],
+    at: '2026-10-12T10:00:00+09:00',
+    url: 'https://moodle.example.edu/mod/resource/view.php?id=1',
+    ...patch,
+  });
+  const stats = { checked: 2, stale: 0, checkedAt: '2026-10-14T11:00:00+09:00' };
+
+  it('groups by course with the newest course and item first, labelling new and updated items', () => {
+    const t = renderCourseUpdates(
+      {
+        updates: [
+          upd({ cmid: 1, at: '2026-10-10T10:00:00+09:00' }),
+          upd({
+            cmid: 2,
+            courseId: 102,
+            courseName: 'Marketing',
+            name: 'Case',
+            modname: 'assign',
+            at: '2026-10-13T08:00:00+09:00',
+          }),
+          upd({
+            cmid: 3,
+            change: 'updated',
+            what: ['contentfiles'],
+            name: 'Week 2 slides',
+            at: '2026-10-12T10:00:00+09:00',
+          }),
+        ],
+        stats,
+      },
+      7,
+    );
+    expect(t.indexOf('## Marketing (course_id 102)')).toBeLessThan(t.indexOf('## Strategic Marketing (course_id 101)'));
+    expect(t.indexOf('Week 2 slides')).toBeLessThan(t.indexOf('Week 1 slides'));
+    expect(t).toContain('- NEW [assign] Case (cmid 2) — 2026-10-13 Tue 08:00 — https://moodle.example.edu');
+    expect(t).toContain('- updated (contentfiles) [resource] Week 2 slides (cmid 3)');
+    expect(t).toContain('get_activity');
+    expect(t).toContain('Checked 2 courses');
+  });
+
+  it('says so when nothing changed, mentions stale courses and truncates long lists', () => {
+    const none = renderCourseUpdates({ updates: [], stats: { ...stats, stale: 1 } }, 3);
+    expect(none).toContain('No new or changed course content in the last 3 days');
+    expect(none).toContain('1 course not refreshed yet');
+    const many = Array.from({ length: 80 }, (_, i) => upd({ cmid: i, name: `Slides number ${i}` }));
+    const t = renderCourseUpdates({ updates: many, stats }, 7);
+    expect(t.length).toBeLessThanOrEqual(LIMIT);
+    expect(t).toMatch(/… \d+ more \(pass course_id or a smaller since_days\)/);
+  });
+
+  it('confirms the saved selection', () => {
+    expect(renderMyCourses([5, 6])).toContain('2 courses (course_id 5, 6)');
+    expect(renderMyCourses(null)).toContain('automatic');
   });
 });

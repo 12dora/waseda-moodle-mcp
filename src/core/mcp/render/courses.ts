@@ -5,16 +5,67 @@ import { assemble, type Entry, oneLine, plural } from './common';
 /** Date keys that are deadlines (midnight reads as the previous day 24:00); the rest are plain times. */
 const DEADLINE_KEY = /due|clos|cutoff|cut-off|end|until|deadline/i;
 
-export function renderCourses(courses: Course[]): string {
+interface CoursesView {
+  /** 'auto' = the user has not confirmed their courses yet; the list is a suggestion. */
+  mode: 'mine' | 'auto';
+  scope: 'mine' | 'all';
+}
+
+function courseLine(c: Course, view: CoursesView): string {
+  const parts = [oneLine(c.name, 90), `course_id ${c.id}`];
+  if (c.term) parts.push(oneLine(c.term, 30));
+  if (c.lastAccess) parts.push(`last access ${fmt(c.lastAccess)}`);
+  if (c.progress !== null) parts.push(`progress ${Math.round(c.progress)}%`);
+  if (!c.mine && c.suggested && view.mode === 'mine') parts.push('suggested');
+  return `- ${parts.join(' — ')}`;
+}
+
+function courseGroup(title: string, courses: Course[], view: CoursesView): Entry[] {
+  if (courses.length === 0) return [];
+  return [
+    { text: '' },
+    { text: `## ${title} (${courses.length})` },
+    ...courses.map<Entry>((c) => ({ text: courseLine(c, view), item: true })),
+  ];
+}
+
+/** Non-class courses (library, career, seminars…): names only, so they do not crowd the list. */
+function otherEnrolled(courses: Course[]): Entry[] {
+  if (courses.length === 0) return [];
+  const names = oneLine(courses.map((c) => `${oneLine(c.name, 50)} (${c.id})`).join('; '), 1200);
+  return [{ text: '' }, { text: `## Other enrolled (${courses.length})` }, { text: names, item: true }];
+}
+
+function coursesFooter({ mode, scope }: CoursesView): string[] {
+  const lines: string[] = [];
+  if (mode === 'auto') {
+    lines.push(
+      'These are suggestions, not confirmed yet: ask the user which courses they attend this term, then call set_my_courses with those course_ids.',
+    );
+  }
+  if (scope === 'mine') lines.push('Pass scope "all" to see the other enrolled courses.');
+  return lines;
+}
+
+export function renderCourses(courses: Course[], view: CoursesView): string {
   if (courses.length === 0) return 'No courses found for this filter.';
-  const entries = courses.map<Entry>((c) => {
-    const progress = c.progress !== null ? ` — progress ${Math.round(c.progress)}%` : '';
-    return {
-      text: `- ${oneLine(c.name, 90)} — course_id ${c.id}${progress}${c.hidden ? ' — hidden' : ''}`,
-      item: true,
-    };
+  const mine = courses.filter((c) => c.mine);
+  const rest = courses.filter((c) => !c.mine);
+  const entries = [
+    ...courseGroup('Your courses', mine, view),
+    ...courseGroup(
+      'Other class courses',
+      rest.filter((c) => c.kind === 'class'),
+      view,
+    ),
+    ...otherEnrolled(rest.filter((c) => c.kind === 'other')),
+  ];
+  return assemble({
+    head: [`${plural(courses.length, 'course')}. Times are JST.`],
+    entries,
+    footer: coursesFooter(view),
+    hint: 'narrow with classification',
   });
-  return assemble({ head: [`${plural(courses.length, 'course')}:`], entries, hint: 'narrow with classification' });
 }
 
 function moduleLine(m: ModuleSummary): string {
