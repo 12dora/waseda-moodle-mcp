@@ -4,6 +4,8 @@ import { clip, hardCap, MAX_TEXT_CHARS, oneLine, plural } from './common';
 
 const JST_OFFSET_MS = 9 * 3600 * 1000;
 const DAY_MS = 86_400_000;
+/** Undated activities beyond this many are summarised; they mostly are trackerless material, not tasks. */
+const MAX_NO_DEADLINE_LINES = 5;
 
 type DueGroup = 'Overdue' | 'Today' | 'Tomorrow' | 'Next 7 days' | 'Later' | 'No deadline';
 /** Order on screen. */
@@ -41,7 +43,7 @@ function dueWhen(i: DueItem): string {
 
 /** Text items carry the quoted snippet and where it was found, so the model can check the date itself. */
 function evidenceLine(i: DueItem): string {
-  if (i.source !== 'text') return '';
+  if (!i.evidence && i.source !== 'text') return '';
   const quote = i.evidence ? ` «${oneLine(i.evidence, 160)}»` : '';
   const where = i.sourceUrl ? ` ${i.sourceUrl}` : '';
   return quote || where ? `\n  evidence:${quote}${where}` : '';
@@ -51,15 +53,27 @@ function dueLine(i: DueItem): string {
   const cm = i.cmid !== null ? ` (cmid ${i.cmid})` : '';
   const late = i.overdue ? ' — OVERDUE' : '';
   const fresh = i.isNew ? ' — NEW' : '';
-  const verify = i.source === 'text' ? ' — mentioned in course text — verify' : '';
+  const verify = i.source === 'text' || i.evidence ? ' — mentioned in course text — verify' : '';
   const head = `- [${i.kind}] ${oneLine(i.name, 90)} — ${oneLine(i.courseName, 60)} — ${dueWhen(i)}`;
   return `${head}${verify}${late}${fresh}${cm}${evidenceLine(i)}`;
+}
+
+/** Newest first: NEW ones, then the higher cmid (added later). Stable otherwise. */
+function newestFirst(items: readonly DueItem[]): DueItem[] {
+  const newness = (i: DueItem) => (i.isNew ? 1 : 0);
+  return [...items].sort((a, b) => newness(b) - newness(a) || (b.cmid ?? 0) - (a.cmid ?? 0));
+}
+
+/** The items a group may list: the "No deadline" group shows only its newest few. */
+function listable(group: DueGroup, items: DueItem[]): DueItem[] {
+  return group === 'No deadline' ? newestFirst(items).slice(0, MAX_NO_DEADLINE_LINES) : items;
 }
 
 interface Section {
   heading: string;
   lines: string[];
   dropped: number;
+  capped: number; // items not even offered to the budget (the "No deadline" cap)
 }
 
 /** Overdue-but-open items may use at most this share of what is left, so upcoming ones are never crowded out. */
@@ -72,11 +86,17 @@ function fitSections(groups: Map<DueGroup, DueItem[]>, budget: number): Map<DueG
   for (const g of BUDGET_ORDER) {
     const items = groups.get(g) ?? [];
     if (items.length === 0) continue;
-    const section: Section = { heading: `## ${g} (${items.length})`, lines: [], dropped: 0 };
+    const offered = listable(g, items);
+    const section: Section = {
+      heading: `## ${g} (${items.length})`,
+      lines: [],
+      dropped: 0,
+      capped: items.length - offered.length,
+    };
     let allowance = g === 'Overdue' ? Math.floor(left * OVERDUE_SHARE) : left;
     allowance -= section.heading.length + 2;
     left -= section.heading.length + 2;
-    for (const item of items) {
+    for (const item of offered) {
       const line = dueLine(item);
       if (line.length + 1 > allowance) {
         section.dropped++;
@@ -147,6 +167,7 @@ export function renderDueList(list: DueList): string {
     if (!s) continue;
     body.push('', s.heading, ...s.lines);
     if (s.dropped > 0) body.push(`… ${s.dropped} more (use course_id or a smaller days_ahead)`);
+    if (s.capped > 0) body.push(`… ${s.capped} more without a deadline (see the console's Due page)`);
   }
   return hardCap([...head, ...body, ...notes, ...tail].join('\n'));
 }

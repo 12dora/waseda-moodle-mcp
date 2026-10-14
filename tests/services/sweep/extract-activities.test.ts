@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { dropCoveredText, nameTokens } from '../../../src/core/services/sweep/dedupe';
-import { pendingActivityItems, textDeadlineItems } from '../../../src/core/services/sweep/extract-activities';
+import {
+  pendingActivityItems,
+  taskModules,
+  textDeadlineItems,
+} from '../../../src/core/services/sweep/extract-activities';
 import { buildSnapshot } from '../../../src/core/services/sweep/snapshot';
 import type { DueItem } from '../../../src/core/types';
 import { BASE, DAY, NOW_MS, NOW_SEC, rawSection } from './helpers';
@@ -92,8 +96,8 @@ describe('textDeadlineItems', () => {
       ['Report Due on 10/18', '2026-10-18T23:59:00+09:00', 20],
       ['Project Plan Form (due 23:00 p.m. on Oct 19 (Mon)', '2026-10-19T23:00:00+09:00', 21],
       ['Session 2', '2026-10-15T23:59:00+09:00', null],
-      ['Session 2', '2026-10-21T12:00:00+09:00', null],
-      ['Guide', '2026-10-22T17:00:00+09:00', null],
+      ['Session 2: Hand in the memo', '2026-10-21T12:00:00+09:00', null],
+      ['Guide: Quiz', '2026-10-22T17:00:00+09:00', null],
     ]);
     expect(items[2]).toMatchObject({
       source: 'text',
@@ -107,6 +111,78 @@ describe('textDeadlineItems', () => {
     expect(items[0]).toMatchObject({ kind: 'other', sourceUrl: `${BASE}/mod/resource/view.php?id=20` });
     expect(items[1]?.kind).toBe('assign');
     expect(items[4]?.url).toBe(`${BASE}/mod/page/view.php?id=23`);
+  });
+});
+
+describe('text items of task modules and titles', () => {
+  const sec = (mods: Parameters<typeof rawSection>[1], summary = '', name = 'Week1 授業概要') =>
+    buildSnapshot([rawSection(1, mods, summary, name)], { baseUrl: BASE });
+
+  it("a deadline in a task module's description carries that module (cmid, real name and kind)", () => {
+    const s = sec([
+      {
+        id: 31,
+        modname: 'questionnaire',
+        name: 'Session 3 & 4 - Weekly Reflection Log',
+        description: '<p>Deadline 18 October 2026 (Sunday) at 23.59</p>',
+      },
+      { id: 32, modname: 'feedback', name: 'Course feedback', description: '<p>Please answer by 10/20</p>' },
+    ]);
+    const items = textDeadlineItems(C, s, NOW_MS);
+    expect(items.map((i) => [i.kind, i.cmid, i.name, i.dueAt])).toEqual([
+      ['questionnaire', 31, 'Session 3 & 4 - Weekly Reflection Log', '2026-10-18T23:59:00+09:00'],
+      ['other', 32, 'Course feedback', '2026-10-20T23:59:00+09:00'],
+    ]);
+    expect(items[0]).toMatchObject({ source: 'text', sourceUrl: `${BASE}/mod/questionnaire/view.php?id=31` });
+    expect(taskModules(s).has(31)).toBe(true);
+  });
+
+  it('ignores mentions of completed or hidden task modules', () => {
+    const s = sec([
+      { id: 41, modname: 'assign', name: 'Done', state: 1, description: '<p>Due 10/18</p>' },
+      { id: 42, modname: 'assign', name: 'Hidden', visible: 0, description: '<p>Due 10/18</p>' },
+      { id: 43, modname: 'assign', name: 'Done 10/19 due', state: 1 },
+    ]);
+    expect(textDeadlineItems(C, s, NOW_MS)).toEqual([]);
+  });
+
+  it('names label / section / page mentions "<where>: <trigger phrase>" and keeps the evidence', () => {
+    const s = sec(
+      [
+        { id: 51, modname: 'label', name: 'x', description: '<p>課題の説明。課題の提出 10月20日 までです</p>' },
+        { id: 52, modname: 'page', name: 'Guide', description: '<p>Please send your plan by 10/21</p>' },
+      ],
+      '<p>10月15日（木）23：59までに以下の課題をやって</p>',
+    );
+    const items = textDeadlineItems(C, s, NOW_MS);
+    expect(items.map((i) => i.name)).toEqual([
+      'Week1 授業概要',
+      'Week1 授業概要: 課題の提出',
+      'Guide: Please send your plan',
+    ]);
+    expect(items[1]?.evidence).toContain('課題の提出 10月20日');
+    expect(items.every((i) => i.cmid === null && i.kind === 'other')).toBe(true);
+  });
+});
+
+describe('practice material', () => {
+  it('skips practice quizzes / h5p unless completion tracking says incomplete', () => {
+    const items = pendingActivityItems(
+      C,
+      snap(
+        { id: 1, modname: 'quiz', name: '小テスト（れんしゅう）' },
+        { id: 2, modname: 'quiz', name: 'Practice Quiz 1' },
+        { id: 3, modname: 'h5pactivity', name: 'Sample exercise' },
+        { id: 4, modname: 'quiz', name: '模擬テスト' },
+        { id: 5, modname: 'quiz', name: '練習問題', state: 0 },
+        { id: 6, modname: 'quiz', name: 'Practice done', state: 1 },
+        { id: 7, modname: 'quiz', name: 'Chapter 1 quiz' },
+        { id: 8, modname: 'assign', name: 'Practice report' },
+        { id: 9, modname: 'h5pactivity', name: 'ＰＲＡＣＴＩＣＥ' },
+      ),
+      opts,
+    );
+    expect(items.map((i) => i.cmid)).toEqual([5, 7, 8]);
   });
 });
 

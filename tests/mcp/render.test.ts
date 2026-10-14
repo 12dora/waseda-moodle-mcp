@@ -135,6 +135,27 @@ describe('renderDueList', () => {
     expect(t).toContain('Final task — Strategic Marketing — no deadline set in Moodle — NEW (cmid 77)');
   });
 
+  it('lists at most 5 "No deadline" lines, newest first, and counts the rest', () => {
+    const undated = Array.from({ length: 8 }, (_, i) =>
+      due({ source: 'activity', dueAt: null, name: `Undated ${i}`, cmid: 100 + i, isNew: i === 1 }),
+    );
+    const t = renderDueList(dueList(undated));
+    expect(t).toContain('## No deadline (8)');
+    const shown = [...t.matchAll(/- \[assign\] (Undated \d)/g)].map((m) => m[1]);
+    expect(shown).toEqual(['Undated 1', 'Undated 7', 'Undated 6', 'Undated 5', 'Undated 4']);
+    expect(t).toContain("… 3 more without a deadline (see the console's Due page)");
+    const few = renderDueList(dueList(undated.slice(0, 5)));
+    expect(few).not.toContain('more without a deadline');
+  });
+
+  it('shows the evidence of a date a calendar item took from its own module text', () => {
+    const t = renderDueList(
+      dueList([due({ evidence: 'Deadline 18 October 2026', sourceUrl: 'https://moodle.example.edu/mod/x?id=1' })]),
+    );
+    expect(t).toContain('mentioned in course text — verify');
+    expect(t).toContain('«Deadline 18 October 2026» https://moodle.example.edu/mod/x?id=1');
+  });
+
   it('quotes the evidence and link of deadlines found in course text', () => {
     const t = renderDueList(
       dueList([

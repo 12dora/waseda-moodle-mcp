@@ -107,3 +107,24 @@ describe('findDeadlines', () => {
     expect(fmt(isoJst(d?.ms ?? 0))).toBe('2026-10-18 Sun 12:00');
   });
 });
+
+describe('findDeadlines lead phrase', () => {
+  const lead = (text: string) => findDeadlines(text, NOW_MS)[0]?.lead;
+
+  it('takes the words before the date, cut at the sentence start', () => {
+    expect(lead('課題の説明。課題の提出 10月20日 までです')).toBe('課題の提出');
+    expect(lead('Intro line\nFinal report due on 10/18')).toBe('Final report');
+    expect(lead('- **Hand in memo** by 10/21 12:00')).toBe('Hand in memo');
+  });
+
+  it('is at most 30 characters and never starts mid-word', () => {
+    const l = lead('Please remember the extraordinarily important report due on 10/18') ?? '';
+    expect(l.length).toBeLessThanOrEqual(30);
+    expect(l).toBe('important report');
+  });
+
+  it('is empty when the date opens the sentence', () => {
+    expect(lead('10月15日（木）23：59までに提出してください')).toBe('');
+    expect(lead('Due: 10/18')).toBe('');
+  });
+});

@@ -256,7 +256,7 @@ export async function getDueItems(
     generatedAt: isoJst(now * 1000),
     windowFrom: isoJst(from * 1000),
     windowTo: isoJst(to * 1000),
-    items: [...calendar, ...sweep.items].sort(byDate),
+    items: [...sweep.calendar, ...sweep.items].sort(byDate), // sweep.calendar = calendar + dates found in module text
     scope: {
       mode: scope.mode,
       courseIds: [...scope.mine],

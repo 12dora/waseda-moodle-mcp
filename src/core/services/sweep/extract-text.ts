@@ -10,6 +10,7 @@ export const EVIDENCE_MAX = 160;
 const SNIPPET_PAD = 60;
 const CUE_PAD = 80;
 const TIME_PAD = 40;
+const LEAD_MAX = 30;
 const MAX_HITS_PER_PATTERN = 300;
 const DEFAULT_MAX = 12;
 const DAY = 86_400_000;
@@ -21,6 +22,7 @@ const DEFAULT_TIME = { h: 23, mi: 59 };
 export interface TextDeadline {
   ms: number; // the deadline instant
   evidence: string; // snippet around the date, <= EVIDENCE_MAX chars
+  lead: string; // <= LEAD_MAX chars written right before the date, cut at the sentence start ('' when none)
 }
 
 // ------------------------------------------------------------------ dates
@@ -210,6 +212,23 @@ function snippet(text: string, hit: DateHit): string {
   return out.length <= EVIDENCE_MAX ? out : `${out.slice(0, EVIDENCE_MAX - 1)}…`;
 }
 
+const LEAD_TAIL = /[\s*_([（［「『:：,、\-–~〜]+$/;
+const TRAILING_CUE = /(?:^|\s+)(?:(?:by|on|before|until|due|deadline|closes?|ends?|at|is)\s*)+$/i;
+
+/** The words just before the date ("課題の提出" in "課題の提出 10月20日まで"), as a short trigger phrase for a title. */
+function leadPhrase(text: string, hit: DateHit): string {
+  const from = Math.max(0, hit.start - LEAD_MAX);
+  const pieces = text.slice(from, hit.start).split(/[\n\r。！？!?;；|]/);
+  let lead = pieces.at(-1) ?? '';
+  if (pieces.length === 1 && from > 0 && /\w/.test(text.charAt(from - 1))) lead = lead.replace(/^\w+/, ''); // cut mid-word
+  return lead
+    .replace(/^[\s*_#>\-•・:：,、.]+/, '')
+    .replace(LEAD_TAIL, '')
+    .replace(TRAILING_CUE, '')
+    .replace(LEAD_TAIL, '')
+    .trim();
+}
+
 // ------------------------------------------------------------------ public
 
 /** Cheap pre-check for callers that store text: dates need digits (full-width digits included). */
@@ -230,7 +249,7 @@ export function findDeadlines(raw: string, now: number, opts: { max?: number } =
     const ms = inferDeadlineMs(hit, nearestTime(text, hit, bounds), now);
     if (ms === null || seen.has(ms)) continue;
     seen.add(ms);
-    out.push({ ms, evidence: snippet(text, hit) });
+    out.push({ ms, evidence: snippet(text, hit), lead: leadPhrase(text, hit) });
   }
   return out;
 }

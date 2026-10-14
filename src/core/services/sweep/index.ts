@@ -7,9 +7,11 @@ import type { Course, CourseUpdate, DueItem, SearchHit } from '../../types';
 import { type CourseScope, resolveScope } from '../scope';
 import { announcementItems } from './announcements';
 import { dropCoveredText } from './dedupe';
-import { pendingActivityItems, textDeadlineItems } from './extract-activities';
+import { pendingActivityItems, taskModules, textDeadlineItems } from './extract-activities';
 import { refreshSnapshots } from './refresh';
 import { parseQuery, type ScoredHit, searchSnapshot } from './search';
+import type { CourseSnapshot } from './snapshot';
+import { attachTaskMentions } from './task-mentions';
 import type { SweepStats } from './types';
 import { courseUpdates } from './updates';
 
@@ -19,6 +21,7 @@ const MAX_CALLS = 12; // Moodle calls per request
 const MAX_FULL = 3; // full course refetches per request
 const ANNOUNCE_CALLS = 5; // share of MAX_CALLS reserved for announcements (1 forum list + up to 4 forums)
 const DAY_MS = 86_400_000;
+const PAST_MENTION_MS = DAY_MS; // text mentions older than this are dropped
 const SEARCH_DEFAULT_LIMIT = 20;
 const SEARCH_MAX_LIMIT = 100;
 const UPDATES_DEFAULT_DAYS = 7;
@@ -39,42 +42,67 @@ function clamp(v: number | undefined, dflt: number, max: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(1, Math.trunc(v))) : dflt;
 }
 
+interface Extracted {
+  pending: DueItem[];
+  mentioned: DueItem[];
+  taskCmids: Set<number>;
+}
+
+function extractAll(
+  targets: readonly Course[],
+  snapshots: ReadonlyMap<number, CourseSnapshot>,
+  opts: { now: number; toMs: number },
+): Extracted {
+  const out: Extracted = { pending: [], mentioned: [], taskCmids: new Set() };
+  for (const course of targets) {
+    const snap = snapshots.get(course.id);
+    if (!snap) continue;
+    out.pending.push(...pendingActivityItems(course, snap, opts));
+    out.mentioned.push(...textDeadlineItems(course, snap, opts.now));
+    for (const cmid of taskModules(snap).keys()) out.taskCmids.add(cmid);
+  }
+  return out;
+}
+
+/** Text mentions inside the window; ones already past by more than a day are noise (we cannot know if it was done). */
+function timely(items: readonly DueItem[], window: { fromMs: number; toMs: number }, now: number): DueItem[] {
+  const from = Math.max(window.fromMs, now - PAST_MENTION_MS);
+  return items.filter((i) => {
+    const ms = i.dueAt ? Date.parse(i.dueAt) : Number.NaN;
+    return ms >= from && ms <= window.toMs;
+  });
+}
+
 /**
  * Sweep results for the scope courses that the calendar did not already list:
  * pending activities without a deadline, and deadlines mentioned in course text / recent announcements.
  * Text items are limited to `window`; ≤ 12 Moodle calls and ≤ 3 full refetches.
+ * `calendar` is the given calendar list, where an undated item may have received the date its own module text mentions.
  */
 export async function collectSweepItems(
   ctx: ServiceContext,
   scope: CourseScope,
   calendar: readonly DueItem[],
   window: { fromMs: number; toMs: number },
-): Promise<{ items: DueItem[]; stats: SweepStats }> {
+): Promise<{ items: DueItem[]; calendar: DueItem[]; stats: SweepStats }> {
   const targets = inScope(scope);
-  if (targets.length === 0) return { items: [], stats: NO_STATS };
+  if (targets.length === 0) return { items: [], calendar: [...calendar], stats: NO_STATS };
   const now = nowMs();
   const api = await ctx.moodle();
   const [refresh, announced] = await Promise.all([
     refreshSnapshots(ctx, targets, { maxCalls: MAX_CALLS - ANNOUNCE_CALLS, maxFull: MAX_FULL }),
     announcementItems(api, targets, { now, maxCalls: ANNOUNCE_CALLS }),
   ]);
-  const pending: DueItem[] = [];
-  const mentioned: DueItem[] = [];
-  for (const course of targets) {
-    const snap = refresh.snapshots.get(course.id);
-    if (!snap) continue;
-    pending.push(...pendingActivityItems(course, snap, { now, toMs: window.toMs }));
-    mentioned.push(...textDeadlineItems(course, snap, now));
-  }
-  mentioned.push(...announced);
-  const inWindow = mentioned.filter((i) => {
-    const ms = i.dueAt ? Date.parse(i.dueAt) : Number.NaN;
-    return ms >= window.fromMs && ms <= window.toMs;
+  const found = extractAll(targets, refresh.snapshots, { now, toMs: window.toMs });
+  const calendarCmids = new Set(calendar.flatMap((i) => (i.cmid === null ? [] : [i.cmid])));
+  const attached = attachTaskMentions({
+    mentions: timely([...found.mentioned, ...announced], window, now),
+    calendar,
+    activities: found.pending.filter((i) => i.cmid === null || !calendarCmids.has(i.cmid)),
+    taskCmids: found.taskCmids,
   });
-  const texts = dropCoveredText(inWindow, calendar);
-  const taken = new Set([...calendar, ...texts].flatMap((i) => (i.cmid === null ? [] : [i.cmid])));
-  const activities = pending.filter((i) => i.cmid === null || !taken.has(i.cmid));
-  return { items: [...activities, ...texts], stats: refresh.stats };
+  const texts = [...attached.standalone, ...dropCoveredText(attached.rest, calendar)];
+  return { items: [...attached.activities, ...texts], calendar: attached.calendar, stats: refresh.stats };
 }
 
 /** New / changed modules of the scope courses (or one course) within the last `sinceDays` (default 7). */

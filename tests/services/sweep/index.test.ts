@@ -115,16 +115,77 @@ describe('collectSweepItems', () => {
     expect(items.filter((i) => i.source === 'text').map((i) => i.dueAt)).toEqual(['2026-10-16T17:00:00+09:00']);
   });
 
-  it('a text item replaces the undated activity item of the same module; the calendar owns its cmid', async () => {
+  it('a date in a module name fills the undated activity item; the calendar owns its cmid', async () => {
     const f = makeFake({
       [CONTENTS]: () => [rawSection(1, [{ id: 7, modname: 'assign', name: 'Form (due Oct 19 (Mon)', state: 0 }])],
       [FORUMS]: () => [],
     });
     const sc = scopeOf(course(101));
     const a = await collectSweepItems(f.ctx, sc, [], WINDOW);
-    expect(a.items.map((i) => [i.source, i.cmid])).toEqual([['text', 7]]);
+    expect(a.items.map((i) => [i.source, i.cmid, i.dueAt])).toEqual([['activity', 7, '2026-10-19T23:59:00+09:00']]);
     const b = await collectSweepItems(f.ctx, sc, [calendarItem({ cmid: 7, name: 'Form' })], WINDOW);
     expect(b.items).toEqual([]);
+  });
+
+  it("a deadline in a task module's own description is attached to its calendar item, not listed again", async () => {
+    const survey = {
+      id: 8,
+      modname: 'questionnaire',
+      name: 'Session 3 & 4 - Weekly Reflection Log',
+      description: '<p>Deadline 18 October 2026 (Sunday) at 23.59</p>',
+    };
+    const f = makeFake({ [CONTENTS]: () => [rawSection(1, [survey])], [FORUMS]: () => [] });
+    const sc = scopeOf(course(101));
+    const opening = calendarItem({
+      kind: 'questionnaire',
+      cmid: 8,
+      name: survey.name,
+      dueAt: null,
+      opensAt: '2026-10-01T09:00:00+09:00',
+      url: `${BASE}/mod/questionnaire/view.php?id=8`,
+    });
+    const r = await collectSweepItems(f.ctx, sc, [opening], WINDOW);
+    expect(r.items).toEqual([]);
+    expect(r.calendar).toHaveLength(1);
+    expect(r.calendar[0]).toMatchObject({
+      source: 'calendar',
+      cmid: 8,
+      dueAt: '2026-10-18T23:59:00+09:00',
+      overdue: false,
+      sourceUrl: `${BASE}/mod/questionnaire/view.php?id=8`,
+    });
+    expect(r.calendar[0]?.evidence).toContain('18 October 2026');
+
+    // a calendar item that has a deadline keeps it; the mention is dropped
+    const dated = { ...opening, dueAt: '2026-10-20T23:59:00+09:00' };
+    const kept = await collectSweepItems(f.ctx, sc, [dated], WINDOW);
+    expect(kept.items).toEqual([]);
+    expect(kept.calendar).toEqual([dated]);
+
+    // not listed anywhere: one item with the module's cmid, real name and kind (not 'other')
+    const closes = [{ label: 'Closes', timestamp: NOW_SEC + 40 * 86400, dataid: 'timeclose' }];
+    const g = makeFake({ [CONTENTS]: () => [rawSection(1, [{ ...survey, dates: closes }])], [FORUMS]: () => [] });
+    const alone = await collectSweepItems(g.ctx, sc, [], WINDOW);
+    expect(alone.items.map((i) => [i.source, i.kind, i.cmid, i.name, i.dueAt])).toEqual([
+      ['text', 'questionnaire', 8, survey.name, '2026-10-18T23:59:00+09:00'],
+    ]);
+  });
+
+  it("drops text mentions older than 24 h, keeps the calendar's overdue logic", async () => {
+    const f = makeFake({
+      [CONTENTS]: () => [
+        rawSection(1, [], '<p>Report due on 10/10</p>', 'Old'),
+        rawSection(2, [], '<p>Report due on 10/13 12:30</p>', 'Yesterday'),
+        rawSection(3, [], '<p>Report due on 10/14 09:00</p>', 'Hours ago'),
+      ],
+      [FORUMS]: () => [],
+    });
+    const sc = scopeOf(course(101));
+    const { items } = await collectSweepItems(f.ctx, sc, [calendarItem({ overdue: true })], WINDOW);
+    expect(items.map((i) => [i.name, i.dueAt, i.overdue])).toEqual([
+      ['Yesterday: Report', '2026-10-13T12:30:00+09:00', true],
+      ['Hours ago: Report', '2026-10-14T09:00:00+09:00', true],
+    ]);
   });
 
   it('survives announcement failures and out-of-scope courses are not touched', async () => {
@@ -145,7 +206,7 @@ describe('collectSweepItems', () => {
   it('empty scope → nothing, no Moodle calls', async () => {
     const f = makeFake({});
     const r = await collectSweepItems(f.ctx, scopeOf(), [], WINDOW);
-    expect(r).toEqual({ items: [], stats: { checked: 0, stale: 0, checkedAt: null } });
+    expect(r).toEqual({ items: [], calendar: [], stats: { checked: 0, stale: 0, checkedAt: null } });
     expect(f.calls).toEqual([]);
   });
 

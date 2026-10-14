@@ -12,7 +12,13 @@ vi.mock('../../src/core/services/sweep', () => ({ collectSweepItems: vi.fn() }))
 
 const TIMELINE = 'core_course_get_enrolled_courses_by_timeline_classification';
 const ENROL = 'core_enrol_get_users_courses';
-const NO_SWEEP = { items: [], stats: { checked: 0, stale: 0, checkedAt: null } };
+const NO_STATS = { checked: 0, stale: 0, checkedAt: null };
+/** A sweep that finds nothing and hands the calendar list back untouched. */
+const NO_SWEEP: typeof collectSweepItems = async (_ctx, _scope, calendar) => ({
+  items: [],
+  calendar: [...calendar],
+  stats: NO_STATS,
+});
 
 const GLOBAL = 'core_calendar_get_action_events_by_timesort';
 const BY_COURSE = 'core_calendar_get_action_events_by_course';
@@ -23,7 +29,7 @@ const DAY = 86_400;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
-  vi.mocked(collectSweepItems).mockReset().mockResolvedValue(NO_SWEEP);
+  vi.mocked(collectSweepItems).mockReset().mockImplementation(NO_SWEEP);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -247,10 +253,11 @@ describe('getDueItems', () => {
   it('feeds the sweep with the in-scope calendar items and the window, and merges its items by date', async () => {
     const undated = { ...mergeDueEvents([event(1, 1)], NOW_SEC)[0], name: 'Undated task', dueAt: null, opensAt: null };
     const early = { ...undated, name: 'Mentioned', source: 'text', dueAt: '2026-10-01T09:00:00+09:00' };
-    vi.mocked(collectSweepItems).mockResolvedValue({
+    vi.mocked(collectSweepItems).mockImplementation(async (_c, _s, calendar) => ({
       items: [undated as DueItem, early as DueItem],
+      calendar: [...calendar],
       stats: { checked: 2, stale: 1, checkedAt: '2026-10-14T11:50:00+09:00' },
-    });
+    }));
     const { ctx } = makeFakeContext({
       responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES },
       user: { settings: { myCourseIds: [101] } },
@@ -264,6 +271,27 @@ describe('getDueItems', () => {
     expect([...(scope?.mine ?? [])]).toEqual([101]);
     expect(calendar?.map((i) => i.name)).toEqual(['Report 0', 'Report 1', 'Quiz A']);
     expect(window).toEqual({ fromMs: (NOW_SEC - 14 * DAY) * 1000, toMs: (NOW_SEC + 14 * DAY) * 1000 });
+  });
+
+  it('lists the calendar items as the sweep returns them (a date found in module text is attached there)', async () => {
+    vi.mocked(collectSweepItems).mockImplementation(async (_c, _s, calendar) => ({
+      items: [],
+      calendar: calendar.map((i) =>
+        i.name === 'Quiz A' ? { ...i, dueAt: '2026-10-30T23:59:00+09:00', evidence: 'Deadline 30 October' } : i,
+      ),
+      stats: NO_STATS,
+    }));
+    const { ctx } = makeFakeContext({
+      responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES },
+      user: { settings: { myCourseIds: [101] } },
+    });
+    const list = await getDueItems(ctx);
+    expect(list.items.find((i) => i.name === 'Quiz A')).toMatchObject({
+      dueAt: '2026-10-30T23:59:00+09:00',
+      source: 'calendar',
+      evidence: 'Deadline 30 October',
+    });
+    expect(list.items.at(-1)?.name).toBe('Quiz A');
   });
 
   it('uses calendar events of the next 30 days as a signal of the automatic suggestion', async () => {
