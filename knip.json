@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["src/worker/index.ts", "src/node/stdio.ts", "tests/**/*.test.ts", "extension/**/*.js"],
+      "project": ["src/**/*.ts", "tests/**/*.ts", "extension/**/*.js"],
+      "ignoreDependencies": ["@biomejs/biome", "@cloudflare/workers-types"]
+    },
+    "web": {
+      "entry": ["src/main.tsx", "src/**/*.test.ts"],
+      "project": ["src/**/*.{ts,tsx}"]
+    }
+  }
+}

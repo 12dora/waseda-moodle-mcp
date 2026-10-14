@@ -1,0 +1,44 @@
+{
+  "name": "waseda-moodle-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server that lets AI agents read and act on Waseda Moodle",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "waseda-moodle-mcp": "dist/stdio.js"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "pnpm --dir web build && wrangler deploy",
+    "build:stdio": "esbuild src/node/stdio.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/stdio.js --banner:js='#!/usr/bin/env node'",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "dup": "jscpd src web/src extension",
+    "dead": "knip",
+    "quality": "pnpm lint && pnpm dup && pnpm dead && pnpm typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@cloudflare/workers-types": "^5.20261013.1",
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "jscpd": "^5.4.1",
+    "knip": "^6.41.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.4",
+    "wrangler": "^4.150.0"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^1.2.3",
+    "@modelcontextprotocol/server": "^2.3.1",
+    "hono": "^4.13.13",
+    "zod": "^4.6.7"
+  }
+}
