@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex } from '../../src/core/crypto';
-import { NeedsReconnect } from '../../src/core/errors';
+import { NeedsReconnect, NotFound, RateLimited } from '../../src/core/errors';
 import { cancelAction, confirmAction, listActionRecords } from '../../src/core/services/actions';
 import { listCourses } from '../../src/core/services/courses';
 import { getDueItems } from '../../src/core/services/due';
@@ -59,7 +59,11 @@ interface GrantRec {
 function fakeProvider() {
   const grants: GrantRec[] = [];
   const completed: Array<Record<string, unknown>> = [];
-  const state = { parseError: null as unknown };
+  const state = {
+    parseError: null as unknown,
+    clientDomain: undefined as string | undefined,
+    cursor: undefined as string | undefined,
+  };
   const authRequest = {
     responseType: 'code',
     clientId: 'client-1',
@@ -77,6 +81,7 @@ function fakeProvider() {
       clientId: r.clientId,
       clientName: 'Claude',
       clientUri: 'https://claude.example.org',
+      ...(state.clientDomain ? { clientDomain: state.clientDomain } : {}),
       redirectUri: r.redirectUri,
       redirectHost: 'client.example.org',
       redirectIsLoopback: false,
@@ -86,7 +91,10 @@ function fakeProvider() {
       completed.push(opts);
       return { redirectTo: 'https://client.example.org/cb?code=abc&state=st-1' };
     }),
-    listUserGrants: vi.fn(async (userId: string) => ({ items: grants.filter((g) => g.userId === userId) })),
+    listUserGrants: vi.fn(async (userId: string, _opts?: { limit?: number; cursor?: string }) => ({
+      items: grants.filter((g) => g.userId === userId),
+      cursor: state.cursor,
+    })),
     revokeGrant: vi.fn(async (id: string, userId: string) => {
       const i = grants.findIndex((g) => g.id === id && g.userId === userId);
       if (i >= 0) grants.splice(i, 1);
@@ -124,7 +132,7 @@ function makeEnv(over: Partial<Env> = {}): Env {
     MASTER_KEY,
     PUBLIC_URL: ORIGIN,
     REGISTRATION: 'allowlist',
-    ALLOWED_MOODLE_USERIDS: '1001',
+    ALLOWED_MOODLE_USERIDS: '1001,1002',
     OAUTH_PROVIDER: fp.provider as unknown as Env['OAUTH_PROVIDER'],
     ...over,
   };
@@ -164,12 +172,21 @@ async function connect(token = TOKEN_A): Promise<{ cookie: string; body: Body }>
   return { cookie, body: await res.json() };
 }
 
-function stubMoodle(userId = 1001) {
+const TOKEN_C = 'c'.repeat(32); // belongs to a second Moodle user
+
+function stubMoodle() {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () =>
-      Response.json({ siteurl: 'https://wsdmoodle.waseda.jp', userid: userId, fullname: 'Taro Yamada', lang: 'ja' }),
-    ),
+    vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const token = new URLSearchParams(String(init?.body ?? '')).get('wstoken');
+      const other = token === TOKEN_C;
+      return Response.json({
+        siteurl: 'https://wsdmoodle.waseda.jp',
+        userid: other ? 1002 : 1001,
+        fullname: other ? 'Hanako Sato' : 'Taro Yamada',
+        lang: 'ja',
+      });
+    }),
   );
 }
 
@@ -377,13 +394,23 @@ describe('extension refresh', () => {
     expect(await changed.json()).toEqual({ status: 'updated' });
   });
 
-  it('limits to 10 per hour per IP and keeps KV writes low', async () => {
+  it('limits each token to 6 per hour and never writes KV', async () => {
     const ip = freshIp();
     const statuses: number[] = [];
-    for (let i = 0; i < 12; i++) statuses.push((await refresh(TOKEN_A, ip)).status);
-    expect(statuses.slice(0, 10).every((s) => s === 404)).toBe(true);
-    expect(statuses.slice(10)).toEqual([429, 429]);
-    expect(kv.ops.put).toBe(8);
+    for (let i = 0; i < 8; i++) statuses.push((await refresh(TOKEN_A, ip)).status);
+    expect(statuses.slice(0, 6).every((s) => s === 404)).toBe(true);
+    expect(statuses.slice(6)).toEqual([429, 429]);
+    expect(kv.ops.put).toBe(0);
+    expect((await refresh(TOKEN_B, ip)).status).toBe(404); // another token is not affected
+  });
+
+  it('limits each IP to 300 per hour', async () => {
+    const ip = freshIp();
+    const store = createD1Store(env.DB);
+    for (let i = 0; i < 300; i++) await store.hitRateLimit(`ext:ip:${ip}`, 3_600_000, Date.now());
+    const res = await refresh(TOKEN_A, ip);
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
   });
 });
 
@@ -438,13 +465,13 @@ describe('token hand-off', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('is rate limited per IP', async () => {
+  it('is rate limited to 60 per hour per IP', async () => {
     const ip = nextIp('192.0.2');
     const statuses: number[] = [];
-    for (let i = 0; i < 12; i++)
+    for (let i = 0; i < 62; i++)
       statuses.push((await handoff({ launch: TOKEN_A, via: 'bookmarklet' }, null, ip)).status);
-    expect(statuses.slice(0, 10).every((s) => s === 200)).toBe(true);
-    expect(statuses.slice(10)).toEqual([429, 429]);
+    expect(statuses.slice(0, 60).every((s) => s === 200)).toBe(true);
+    expect(statuses.slice(60)).toEqual([429, 429]);
   });
 
   it('connect redeems the code once and records how the token arrived', async () => {
@@ -472,7 +499,41 @@ describe('token hand-off', () => {
     });
     expect((await post('/api/connect', { code: 'hnd_old' })).status).toBe(400);
     expect((await post('/api/connect', { code: 'hnd_unknown' })).status).toBe(400);
-    expect(handoffRows()).toHaveLength(0); // the expired row was consumed too
+    expect(handoffRows()).toHaveLength(1); // expired rows are swept by the cron, not by connect
+  });
+
+  it('keeps a signed-in session when the code belongs to the same account', async () => {
+    const { cookie } = await connect(TOKEN_A);
+    const { code } = (await (await handoff({ launch: TOKEN_B, via: 'extension' })).json()) as Body;
+    const res = await post('/api/connect', { code }, cookie);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Body).created).toBe(false);
+  });
+
+  it('asks before switching to a different account and keeps the code valid', async () => {
+    const first = await connect(TOKEN_A);
+    const { code } = (await (await handoff({ launch: TOKEN_C, via: 'bookmarklet' })).json()) as Body;
+
+    const refused = await post('/api/connect', { code }, first.cookie);
+    expect(refused.status).toBe(409);
+    expect(refused.headers.get('Set-Cookie')).toBeNull();
+    const refusedBody = (await refused.json()) as Body & { account: { fullname: string } };
+    expect(refusedBody.error.code).toBe('account_switch');
+    expect(refusedBody.account).toEqual({ fullname: 'Hanako Sato' });
+    expect(handoffRows()).toHaveLength(1);
+
+    const switched = await post('/api/connect', { code, switchAccount: true }, first.cookie);
+    expect(switched.status).toBe(200);
+    const body = (await switched.json()) as Body;
+    expect(body.user.moodleUserId).toBe(1002);
+    expect(body.user.id).not.toBe(first.body.user.id);
+    expect(handoffRows()).toHaveLength(0);
+    expect((await post('/api/connect', { code, switchAccount: true }, first.cookie)).status).toBe(400);
+  });
+
+  it('signs in directly when nobody is signed in', async () => {
+    const { code } = (await (await handoff({ launch: TOKEN_C, via: 'extension' })).json()) as Body;
+    expect((await post('/api/connect', { code })).status).toBe(200);
   });
 });
 
@@ -629,6 +690,11 @@ describe('OAuth apps', () => {
     expect(fp.provider.revokeGrant).toHaveBeenCalledWith('g1', uid);
     expect((await (await call('/api/apps', { cookie })).json()) as Row[]).toHaveLength(1);
     expect((await call('/api/apps')).status).toBe(401);
+
+    fp.state.cursor = 'next-1';
+    const paged = await call('/api/apps?cursor=abc', { cookie });
+    expect(paged.headers.get('X-Next-Cursor')).toBe('next-1');
+    expect(fp.provider.listUserGrants).toHaveBeenLastCalledWith(uid, { limit: 100, cursor: 'abc' });
   });
 });
 
@@ -698,28 +764,36 @@ describe('activity', () => {
 });
 
 describe('OAuth consent glue', () => {
-  async function startAuthorize(): Promise<string> {
+  const OAUTH_COOKIE = '__Host-wmm_oauth';
+
+  /** Opens /authorize like a browser: returns the request id and the binding cookie it was given. */
+  async function startAuthorize(): Promise<{ id: string; bound: string }> {
     const res = await call('/authorize?response_type=code&client_id=client-1');
     expect(res.status).toBe(302);
     const loc = res.headers.get('Location') ?? '';
     expect(loc.startsWith(`${ORIGIN}/oauth/consent?req=`)).toBe(true);
-    return decodeURIComponent(loc.split('req=')[1] ?? '');
+    const id = decodeURIComponent(loc.split('req=')[1] ?? '');
+    const setCookie = res.headers.get('Set-Cookie') ?? '';
+    expect(setCookie).toContain(`${OAUTH_COOKIE}=${id}`);
+    for (const attr of ['HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/', 'Max-Age=600'])
+      expect(setCookie).toContain(attr);
+    return { id, bound: `${OAUTH_COOKIE}=${id}` };
   }
 
-  it('/authorize stores the request for 10 minutes and redirects to the SPA', async () => {
-    const id = await startAuthorize();
+  const oauthRows = () => testD1.sqlite.prepare('SELECT * FROM oauth_requests').all() as Row[];
+
+  it('/authorize parks the request encrypted in D1 (not KV) for 10 minutes', async () => {
+    const { id } = await startAuthorize();
     expect(id).toMatch(/^req_/);
-    const rec = (await kv.get(`oauthreq:${id}`, 'json')) as Body;
-    expect(rec).toMatchObject({
-      clientName: 'Claude',
-      redirectHost: 'client.example.org',
-      scopes: ['moodle:read', 'moodle:write'],
-    });
-    expect(rec.authRequest.clientId).toBe('client-1');
-    expect(kv.data.get(`oauthreq:${id}`)?.expiresAt).not.toBeNull();
+    expect(kv.ops.put).toBe(0);
+    const rows = oauthRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(id);
+    expect(String(rows[0]?.payload_enc)).not.toContain('client-1');
+    expect((rows[0]?.expires_at as number) - (rows[0]?.created_at as number)).toBe(600_000);
   });
 
-  it('/authorize reports invalid requests', async () => {
+  it('/authorize reports invalid requests without leaking internals', async () => {
     fp.state.parseError = Object.assign(new Error('bad'), {
       redirectTo: 'https://client.example.org/cb?error=invalid_scope',
     });
@@ -727,35 +801,71 @@ describe('OAuth consent glue', () => {
     expect(redirect.status).toBe(302);
     expect(redirect.headers.get('Location')).toBe('https://client.example.org/cb?error=invalid_scope');
 
-    fp.state.parseError = new Error('unknown client');
+    fp.state.parseError = new Error('connect ECONNREFUSED 10.0.0.5:5432');
     const local = await call('/authorize');
     expect(local.status).toBe(400);
-    expect(((await local.json()) as { error: string }).error).toBe('invalid_request');
+    expect(await local.json()).toEqual({
+      error: 'invalid_request',
+      error_description: 'Invalid authorization request.',
+    });
+
+    fp.state.parseError = Object.assign(new Error('x'), {
+      name: 'AuthorizationError',
+      description: 'Unknown redirect_uri.',
+    });
+    const described = await call('/authorize');
+    expect(((await described.json()) as { error_description: string }).error_description).toBe('Unknown redirect_uri.');
   });
 
-  it('shows request info only to signed-in users', async () => {
-    const id = await startAuthorize();
+  it('shows request info only to signed-in users, including the client verification state', async () => {
+    const { id } = await startAuthorize();
     expect((await call(`/api/oauth/requests/${id}`)).status).toBe(401);
     const { cookie } = await connect();
     const info = (await (await call(`/api/oauth/requests/${id}`, { cookie })).json()) as Body;
     expect(info).toEqual({
       clientName: 'Claude',
       clientUri: 'https://claude.example.org',
+      clientDomain: null,
+      verified: false,
       redirectHost: 'client.example.org',
       scopes: ['moodle:read', 'moodle:write'],
     });
     expect((await call('/api/oauth/requests/req_missing', { cookie })).status).toBe(404);
+
+    fp.state.clientDomain = 'claude.example.org';
+    const second = await startAuthorize();
+    const cimd = (await (await call(`/api/oauth/requests/${second.id}`, { cookie })).json()) as Body;
+    expect(cimd).toMatchObject({ clientDomain: 'claude.example.org', verified: true });
   });
 
-  it('approve intersects scopes, completes the authorization once', async () => {
-    const id = await startAuthorize();
-    const { cookie, body } = await connect();
+  it('approve and deny only work from the browser that opened /authorize', async () => {
+    const { id, bound } = await startAuthorize();
+    const { cookie } = await connect();
+    for (const action of ['approve', 'deny']) {
+      for (const jar of [cookie, `${cookie}; ${OAUTH_COOKIE}=req_someone_else`]) {
+        const res = await post(`/api/oauth/requests/${id}/${action}`, {}, jar);
+        expect(res.status, `${action} ${jar}`).toBe(403);
+        expect(((await res.json()) as Body).error.message).toBe(
+          'This authorization request was not started in this browser.',
+        );
+      }
+    }
+    expect(fp.completed).toHaveLength(0);
+    expect(oauthRows()).toHaveLength(1);
+    expect((await post(`/api/oauth/requests/${id}/approve`, {}, `${cookie}; ${bound}`)).status).toBe(200);
+  });
 
-    expect((await post(`/api/oauth/requests/${id}/approve`, { scopes: [] }, cookie)).status).toBe(400);
+  it('approve intersects scopes and completes the authorization once', async () => {
+    const { id, bound } = await startAuthorize();
+    const { cookie, body } = await connect();
+    const jar = `${cookie}; ${bound}`;
+
+    expect((await post(`/api/oauth/requests/${id}/approve`, { scopes: [] }, jar)).status).toBe(400);
     expect(fp.completed).toHaveLength(0);
 
-    const res = await post(`/api/oauth/requests/${id}/approve`, { scopes: ['moodle:read'] }, cookie);
+    const res = await post(`/api/oauth/requests/${id}/approve`, { scopes: ['moodle:read'] }, jar);
     expect(res.status).toBe(200);
+    expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0');
     expect(((await res.json()) as Body).redirectTo).toContain('code=abc');
     expect(fp.completed).toHaveLength(1);
     expect(fp.completed[0]).toMatchObject({
@@ -765,34 +875,57 @@ describe('OAuth consent glue', () => {
       props: { userId: body.user.id, scopes: ['moodle:read'], source: 'Claude' },
     });
     expect(fp.completed[0]?.request).toMatchObject({ clientId: 'client-1' });
+    expect(oauthRows()).toHaveLength(0);
 
     // single use
-    expect((await post(`/api/oauth/requests/${id}/approve`, { scopes: ['moodle:read'] }, cookie)).status).toBe(404);
+    expect((await post(`/api/oauth/requests/${id}/approve`, { scopes: ['moodle:read'] }, jar)).status).toBe(404);
   });
 
   it('approve without a scopes list grants what was requested; write needs read', async () => {
-    const id = await startAuthorize();
+    const first = await startAuthorize();
     const { cookie } = await connect();
-    await post(`/api/oauth/requests/${id}/approve`, {}, cookie);
+    await post(`/api/oauth/requests/${first.id}/approve`, {}, `${cookie}; ${first.bound}`);
     expect(fp.completed[0]).toMatchObject({ scope: ['moodle:read', 'moodle:write'] });
 
-    const id2 = await startAuthorize();
-    await post(`/api/oauth/requests/${id2}/approve`, { scopes: ['moodle:write'] }, cookie);
+    const second = await startAuthorize();
+    await post(`/api/oauth/requests/${second.id}/approve`, { scopes: ['moodle:write'] }, `${cookie}; ${second.bound}`);
     expect(fp.completed[1]).toMatchObject({ scope: ['moodle:read', 'moodle:write'] });
   });
 
   it('deny redirects with access_denied and consumes the request', async () => {
-    const id = await startAuthorize();
+    const { id, bound } = await startAuthorize();
     const { cookie } = await connect();
-    const res = await post(`/api/oauth/requests/${id}/deny`, {}, cookie);
+    const res = await post(`/api/oauth/requests/${id}/deny`, {}, `${cookie}; ${bound}`);
     const { redirectTo } = (await res.json()) as Body;
     const u = new URL(redirectTo);
     expect(u.origin + u.pathname).toBe('https://client.example.org/cb');
     expect(u.searchParams.get('error')).toBe('access_denied');
     expect(u.searchParams.get('state')).toBe('st-1');
     expect(u.searchParams.get('iss')).toBe(ORIGIN);
-    expect(await kv.get(`oauthreq:${id}`)).toBeNull();
+    expect(oauthRows()).toHaveLength(0);
     expect(fp.completed).toHaveLength(0);
+  });
+});
+
+describe('request body limits', () => {
+  it('rejects a declared oversize body before reading it', async () => {
+    const { cookie } = await connect();
+    const res = await call('/api/settings', {
+      method: 'PATCH',
+      cookie,
+      body: '{}',
+      headers: { 'Content-Length': String(70 * 1024) },
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as Body).error.code).toBe('invalid_input');
+  });
+
+  it('stops reading a body that grows past 64 KiB', async () => {
+    const { cookie } = await connect();
+    const big = JSON.stringify({ uiLang: 'ja', pad: 'x'.repeat(70 * 1024) });
+    const res = await call('/api/settings', { method: 'PATCH', cookie, body: big });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as Body).error.message).toBe('Request body is too large.');
   });
 });
 
@@ -831,6 +964,16 @@ describe('file ticket routes', () => {
     expect(pre.status).toBe(204);
     expect(pre.headers.get('Access-Control-Allow-Methods')).toContain('PUT');
     expect((await call('/f/tk', { method: 'OPTIONS' })).status).toBe(204);
+  });
+
+  it('maps service errors with the shared status table', async () => {
+    vi.mocked(streamDownload).mockRejectedValue(new NotFound('gone'));
+    const res = await call('/f/x');
+    expect(res.status).toBe(404);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(((await res.json()) as Body).error).toEqual({ code: 'not_found', message: 'gone' });
+    vi.mocked(streamUpload).mockRejectedValue(new RateLimited());
+    expect((await call('/u/x', { method: 'PUT', body: 'z', mutating: false })).status).toBe(429);
   });
 
   it('turns thrown errors into JSON with CORS', async () => {

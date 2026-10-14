@@ -4,7 +4,7 @@ import type { Context } from 'hono';
 import type { UserRow } from '../../core/context';
 import { InvalidInput } from '../../core/errors';
 import type { Scope } from '../../core/types';
-import { type AppEnv, deferOn, requireSession } from '../auth';
+import { type AppEnv, deferOn, loadSession, readSessionCookie, requireSession } from '../auth';
 import { buildServiceContext, consoleProps, tryExecutionContext } from '../context';
 import { type Env, isScope } from '../env';
 import { createD1Store, type D1Store } from '../store-d1';
@@ -22,9 +22,31 @@ export const storeOf = (env: Env): D1Store => createD1Store(env.DB);
 /** Route middleware: requires a console session and exposes `user` / `sessionHash`. */
 export const session = requireSession(storeOf);
 
+const TOO_LARGE = 'Request body is too large.';
+
+/** Reads at most `max` bytes: rejects on a declared oversize and stops reading as soon as the limit is crossed. */
+async function readLimitedText(request: Request, max: number): Promise<string> {
+  const declared = Number(request.headers.get('Content-Length'));
+  if (Number.isFinite(declared) && declared > max) throw new InvalidInput(TOO_LARGE);
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel();
+      throw new InvalidInput(TOO_LARGE);
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+}
+
 export async function readJson(c: { req: { raw: Request } }): Promise<Record<string, unknown>> {
-  const text = await c.req.raw.text();
-  if (text.length > MAX_BODY_BYTES) throw new InvalidInput('Request body is too large.');
+  const text = await readLimitedText(c.req.raw, MAX_BODY_BYTES);
   if (!text.trim()) return {};
   let parsed: unknown;
   try {
@@ -36,6 +58,13 @@ export async function readJson(c: { req: { raw: Request } }): Promise<Record<str
     throw new InvalidInput('Request body must be a JSON object.');
   }
   return parsed as Record<string, unknown>;
+}
+
+/** The signed-in user of this request, if any (no error when signed out). */
+export async function optionalSessionUser(c: Context<AppEnv>): Promise<UserRow | null> {
+  const cookie = readSessionCookie(c.req.raw);
+  if (!cookie) return null;
+  return (await loadSession(storeOf(c.env), cookie, (p) => deferOn(c, p)))?.user ?? null;
 }
 
 export function reqString(v: unknown, name: string, max: number): string {

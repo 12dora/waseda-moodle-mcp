@@ -8,11 +8,12 @@ import { type MasterKey, randomId, sha256Hex } from '../../core/crypto';
 import { Forbidden, InvalidInput } from '../../core/errors';
 import { MOODLE_URL, parseLaunch } from '../../core/moodle/launch';
 import type { ConnectVia } from '../../core/types';
-import { type AppEnv, clientIp, kvRateLimit } from '../auth';
+import { type AppEnv, clientIp, rateLimit } from '../auth';
 import { getRuntime } from '../context';
 import type { D1Store } from '../store-d1';
-import { HANDOFF_PATH, oneOf, optString, readJson, reqString } from './shared';
+import { HANDOFF_PATH, oneOf, optString, readJson, reqString, storeOf } from './shared';
 
+const HOUR_MS = 3_600_000;
 const HANDOFF_TTL_MS = 120_000;
 const HANDOFF_VIAS: readonly ConnectVia[] = ['bookmarklet', 'extension'];
 const MOODLE_ORIGIN = new URL(MOODLE_URL).origin;
@@ -27,11 +28,18 @@ function originAllowed(origin: string): boolean {
   return origin === MOODLE_ORIGIN || origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');
 }
 
-/** Consumes a hand-off code (single use). Unknown, used and expired codes look the same. */
-export async function redeemHandoff(deps: { store: D1Store; key: MasterKey }, code: string): Promise<HandoffPayload> {
-  const enc = await deps.store.takeHandoff(await sha256Hex(code), Date.now());
-  if (!enc) throw new InvalidInput('This sign-in link has expired. Start the connection again.');
+const EXPIRED = 'This sign-in link has expired. Start the connection again.';
+
+/** Reads a hand-off payload without using the code up (the caller consumes it once the sign-in is accepted). */
+export async function peekHandoff(deps: { store: D1Store; key: MasterKey }, code: string): Promise<HandoffPayload> {
+  const enc = await deps.store.peekHandoff(await sha256Hex(code), Date.now());
+  if (!enc) throw new InvalidInput(EXPIRED);
   return JSON.parse(await deps.key.decrypt(enc)) as HandoffPayload;
+}
+
+/** Single use: exactly one caller wins. Unknown, used and expired codes look the same. */
+export async function consumeHandoff(deps: { store: D1Store }, code: string): Promise<void> {
+  if (!(await deps.store.takeHandoff(await sha256Hex(code), Date.now()))) throw new InvalidInput(EXPIRED);
 }
 
 export function handoffRoutes(): Hono<AppEnv> {
@@ -52,7 +60,7 @@ export function handoffRoutes(): Hono<AppEnv> {
   app.options(HANDOFF_PATH, (c) => c.body(null, 204));
 
   app.post(HANDOFF_PATH, async (c) => {
-    await kvRateLimit({ kv: c.env.OAUTH_KV, id: `hnd:${clientIp(c.req.raw)}`, limit: 10 });
+    await rateLimit(storeOf(c.env), { key: `hnd:ip:${clientIp(c.req.raw)}`, limit: 60, windowMs: HOUR_MS });
     const body = await readJson(c);
     const launch = reqString(body.launch, 'launch', 4096);
     const via = oneOf(body.via, HANDOFF_VIAS, 'via must be bookmarklet or extension.');

@@ -5,10 +5,10 @@
  */
 
 import { Hono, type MiddlewareHandler } from 'hono';
-import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { MoodleError, WmmError } from '../../core/errors';
+import { WmmError } from '../../core/errors';
 import { type AppEnv, csrfGuard } from '../auth';
 import { filesRoutes } from '../files-routes';
+import { errorPayload } from '../http-errors';
 import { accountRoutes } from './account';
 import { dataRoutes } from './data';
 import { handoffRoutes } from './handoff';
@@ -16,28 +16,16 @@ import { keyRoutes } from './keys';
 import { oauthRoutes } from './oauth';
 import { CSRF_EXEMPT_PATHS } from './shared';
 
-const STATUS_BY_CODE: Record<string, ContentfulStatusCode> = {
-  unauthorized: 401,
-  forbidden: 403,
-  not_found: 404,
-  invalid_input: 400,
-  budget_exceeded: 400,
-  needs_reconnect: 409,
-  rate_limited: 429,
-  moodle_unavailable: 502,
-};
-
 export function createApi(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   const csrf = csrfGuard();
 
   app.onError((err, c) => {
-    if (err instanceof WmmError) {
-      const status = STATUS_BY_CODE[err.code] ?? (err instanceof MoodleError ? 502 : 500);
-      return c.json({ error: { code: err.code, message: err.message } }, status);
+    if (!(err instanceof WmmError)) {
+      console.error('api error:', err instanceof Error ? `${err.name}: ${err.message}` : 'unknown');
     }
-    console.error('api error:', err instanceof Error ? `${err.name}: ${err.message}` : 'unknown');
-    return c.json({ error: { code: 'internal', message: 'Something went wrong. Try again later.' } }, 500);
+    const { status, body } = errorPayload(err);
+    return c.json(body, status);
   });
 
   app.notFound((c) => c.json({ error: { code: 'not_found', message: 'Not found.' } }, 404));

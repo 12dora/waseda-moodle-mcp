@@ -278,6 +278,39 @@ describe('handoffs', () => {
   });
 });
 
+describe('handoff peek', () => {
+  it('reads without consuming and hides expired rows', async () => {
+    await store.putHandoff({ codeHash: 'p1', payloadEnc: 'enc', createdAt: 1, expiresAt: 5000 });
+    expect(await store.peekHandoff('p1', 2000)).toBe('enc');
+    expect(await store.peekHandoff('p1', 2000)).toBe('enc');
+    expect(await store.peekHandoff('p1', 5000)).toBeNull();
+    expect(await store.takeHandoff('p1', 2000)).toBe('enc');
+  });
+});
+
+describe('pending OAuth requests', () => {
+  it('can be read repeatedly but taken only once, and expire', async () => {
+    await store.putOAuthRequest({ id: 'req_1', payloadEnc: 'enc-1', createdAt: 1, expiresAt: 5000 });
+    expect(await store.getOAuthRequest('req_1', 2000)).toBe('enc-1');
+    expect(await store.getOAuthRequest('req_1', 2000)).toBe('enc-1');
+    expect(await store.takeOAuthRequest('req_1', 2000)).toBe('enc-1');
+    expect(await store.takeOAuthRequest('req_1', 2000)).toBeNull();
+    await store.putOAuthRequest({ id: 'req_2', payloadEnc: 'enc-2', createdAt: 1, expiresAt: 5000 });
+    expect(await store.getOAuthRequest('req_2', 5000)).toBeNull();
+    expect(await store.takeOAuthRequest('req_2', 5000)).toBeNull();
+  });
+});
+
+describe('rate limit counters', () => {
+  it('count per key inside a fixed window and restart after it', async () => {
+    expect(await store.hitRateLimit('k', 1000, 10_000)).toBe(1);
+    expect(await store.hitRateLimit('k', 1000, 10_400)).toBe(2);
+    expect(await store.hitRateLimit('other', 1000, 10_400)).toBe(1);
+    expect(await store.hitRateLimit('k', 1000, 11_001)).toBe(1);
+    expect(await store.hitRateLimit('k', 1000, 11_002)).toBe(2);
+  });
+});
+
 describe('deleteUser', () => {
   it('removes the user and every dependent row, leaving other users alone', async () => {
     const other = await store.upsertUser({ moodleUserId: 2002, fullname: 'Hanako Sato', lang: 'ja' });
@@ -354,6 +387,32 @@ describe('purgeExpired', () => {
 
     await store.putHandoff({ codeHash: 'old', payloadEnc: 'x', createdAt: 1, expiresAt: now - 1 });
     await store.putHandoff({ codeHash: 'live', payloadEnc: 'x', createdAt: 1, expiresAt: now + 1 });
+    await store.putOAuthRequest({ id: 'old', payloadEnc: 'x', createdAt: 1, expiresAt: now - 1 });
+    await store.putOAuthRequest({ id: 'live', payloadEnc: 'x', createdAt: 1, expiresAt: now + 1 });
+    await store.hitRateLimit('stale', 1000, now - 2 * 86_400_000);
+    await store.hitRateLimit('fresh', 1000, now);
+    await store.createApiKey({
+      id: 'key_old',
+      userId: user.id,
+      name: 'old',
+      prefix: 'wmm_0000',
+      keyHash: 'h-old',
+      scopes: ['moodle:read'],
+      createdAt: 1,
+      lastUsedAt: null,
+      revokedAt: now - AUDIT_RETENTION_MS - 1,
+    });
+    await store.createApiKey({
+      id: 'key_recent',
+      userId: user.id,
+      name: 'recent',
+      prefix: 'wmm_1111',
+      keyHash: 'h-recent',
+      scopes: ['moodle:read'],
+      createdAt: 1,
+      lastUsedAt: null,
+      revokedAt: now - 1000,
+    });
 
     const res = await store.purgeExpired(now);
     expect(res).toMatchObject({
@@ -361,10 +420,15 @@ describe('purgeExpired', () => {
       sessions: 1,
       uploadDrafts: 1,
       handoffs: 1,
+      oauthRequests: 1,
+      rateLimits: 1,
+      revokedKeys: 1,
       actionsExpired: 1,
       actionsDeleted: 1,
     });
     expect(await store.takeHandoff('live', now)).toBe('x');
+    expect(await store.getOAuthRequest('live', now)).toBe('x');
+    expect((await store.listApiKeys(user.id)).map((k) => k.id)).toEqual(['key_recent']);
     expect((await store.listAudit(user.id, { limit: 10 })).map((r) => r.action)).toEqual(['new']);
     expect(await store.getSession('live')).not.toBeNull();
     expect((await store.getAction('act_pending_old'))?.status).toBe('expired');

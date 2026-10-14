@@ -7,8 +7,9 @@
  */
 
 import OAuthProvider, { type OAuthProviderOptions } from '@cloudflare/workers-oauth-provider';
+import { RateLimited } from '../core/errors';
 import { createApi } from './api';
-import { resolveApiKey } from './auth';
+import { clientIp, rateLimit, resolveApiKey } from './auth';
 import { makeDefer } from './context';
 import { type Env, publicUrlOf } from './env';
 import { mcpApiHandler } from './mcp';
@@ -39,7 +40,8 @@ export function buildProviderOptions(env: Env): ProviderOptions {
     tokenEndpoint: '/token',
     clientRegistrationEndpoint: '/register',
     scopesSupported: ['moodle:read', 'moodle:write'],
-    requiredScopes: ['moodle:read'],
+    // both scopes are advertised in the 401 challenge so clients ask for write too; the consent page can downgrade
+    requiredScopes: ['moodle:read', 'moodle:write'],
     resourceMetadata: {
       resource,
       authorization_servers: [publicUrl],
@@ -92,8 +94,32 @@ export async function runScheduled(env: Env, now = Date.now()): Promise<void> {
   }
 }
 
+/** Unauthenticated endpoints that cost KV writes inside the provider: throttled per IP before it runs. */
+const PUBLIC_LIMITS: Record<string, { method: string; limit: number; windowMs: number }> = {
+  '/authorize': { method: 'GET', limit: 60, windowMs: 10 * 60_000 },
+  '/register': { method: 'POST', limit: 20, windowMs: 3_600_000 },
+};
+
+async function throttlePublic(request: Request, env: Env): Promise<Response | null> {
+  const rule = PUBLIC_LIMITS[new URL(request.url).pathname];
+  if (!rule || rule.method !== request.method) return null;
+  try {
+    const key = `public:${new URL(request.url).pathname}:${clientIp(request)}`;
+    await rateLimit(createD1Store(env.DB), { key, limit: rule.limit, windowMs: rule.windowMs });
+    return null;
+  } catch (e) {
+    if (!(e instanceof RateLimited)) return null;
+    return Response.json(
+      { error: 'temporarily_unavailable', error_description: 'Too many requests. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(rule.windowMs / 1000)), 'Cache-Control': 'no-store' } },
+    );
+  }
+}
+
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const limited = await throttlePublic(request, env);
+    if (limited) return limited;
     executionByRequest.set(request, ctx);
     return providerFor(env).fetch(request, env, ctx);
   },

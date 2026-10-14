@@ -1,10 +1,10 @@
 /** Thin HTTP adapters for signed file tickets: GET /f/:ticket (download) and PUT|POST /u/:ticket (upload). */
 
 import { type Context, Hono } from 'hono';
-import { WmmError } from '../core/errors';
 import { type FileRouteEnv, streamDownload, streamUpload } from '../core/services/files';
 import { getRuntime, makeMoodleFactory, tryExecutionContext, type WaitUntil } from './context';
 import type { Env } from './env';
+import { errorPayload } from './http-errors';
 
 const FILE_CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -22,13 +22,7 @@ function withCors(res: Response): Response {
 }
 
 function errorResponse(e: unknown): Response {
-  const status = e instanceof WmmError && e.code === 'invalid_input' ? 400 : 500;
-  const body = {
-    error: {
-      code: e instanceof WmmError ? e.code : 'internal',
-      message: e instanceof WmmError ? e.message : 'Internal error.',
-    },
-  };
+  const { status, body } = errorPayload(e);
   return withCors(Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } }));
 }
 

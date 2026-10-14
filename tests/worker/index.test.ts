@@ -63,7 +63,7 @@ describe('provider options (contract §10)', () => {
       tokenEndpoint: '/token',
       clientRegistrationEndpoint: '/register',
       scopesSupported: ['moodle:read', 'moodle:write'],
-      requiredScopes: ['moodle:read'],
+      requiredScopes: ['moodle:read', 'moodle:write'],
       clientIdMetadataDocumentEnabled: true,
       accessTokenTTL: 43200,
       refreshTokenTTL: 7776000,
@@ -93,6 +93,54 @@ describe('provider options (contract §10)', () => {
     expect(await res.text()).toBe('from-provider');
     expect(rec.instances.length).toBe(before + 1);
     expect(providerFor(env)).toBe(rec.instances[rec.instances.length - 1]);
+  });
+});
+
+describe('public endpoint throttling', () => {
+  const hit = (path: string, method: string, ip: string) =>
+    worker.fetch(new Request(`https://x.test${path}`, { method, headers: { 'CF-Connecting-IP': ip } }), env, execCtx());
+
+  it('limits GET /authorize to 60 per 10 minutes per IP before the provider runs', async () => {
+    const before = vi.mocked(providerFor(env).fetch).mock.calls.length;
+    const statuses: number[] = [];
+    for (let i = 0; i < 62; i++) statuses.push((await hit('/authorize', 'GET', '203.0.113.9')).status);
+    expect(statuses.slice(0, 60).every((s) => s === 200)).toBe(true);
+    expect(statuses.slice(60)).toEqual([429, 429]);
+    expect(vi.mocked(providerFor(env).fetch).mock.calls.length - before).toBe(60);
+    const limited = await hit('/authorize', 'GET', '203.0.113.9');
+    expect(limited.headers.get('Retry-After')).toBe('600');
+    expect(((await limited.json()) as { error: string }).error).toBe('temporarily_unavailable');
+    expect((await hit('/authorize', 'GET', '203.0.113.10')).status).toBe(200); // other IPs unaffected
+  });
+
+  it('limits POST /register to 20 per hour per IP and ignores other methods and paths', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 22; i++) statuses.push((await hit('/register', 'POST', '203.0.113.20')).status);
+    expect(statuses.slice(0, 20).every((s) => s === 200)).toBe(true);
+    expect(statuses.slice(20)).toEqual([429, 429]);
+    expect((await hit('/register', 'OPTIONS', '203.0.113.20')).status).toBe(200);
+    expect((await hit('/mcp', 'GET', '203.0.113.20')).status).toBe(200);
+  });
+
+  it('uses D1 only (KV is reserved for the OAuth library) and fails open when D1 breaks', async () => {
+    await hit('/authorize', 'GET', '203.0.113.30');
+    expect(kv.ops.put).toBe(0);
+    const broken = {
+      ...env,
+      DB: {
+        prepare: () => {
+          throw new Error('D1 down');
+        },
+      },
+    } as unknown as Env;
+    for (let i = 0; i < 70; i++) {
+      const res = await worker.fetch(
+        new Request('https://x.test/authorize', { headers: { 'CF-Connecting-IP': '203.0.113.31' } }),
+        broken,
+        execCtx(),
+      );
+      expect(res.status).toBe(200);
+    }
   });
 });
 

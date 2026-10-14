@@ -42,9 +42,10 @@ beforeEach(async () => {
   vi.mocked(buildMcpServer).mockClear();
 });
 
-const execCtx = (props: unknown) =>
+const execCtx = (props: unknown, auth?: { scope: string[] }) =>
   ({
     props,
+    auth,
     waitUntil: (p: Promise<unknown>) => void pending.push(p),
     passThroughOnException: () => undefined,
   }) as unknown as ExecutionContext;
@@ -78,6 +79,59 @@ const INIT = {
 };
 
 describe('mcpApiHandler', () => {
+  it('answers 401/403 with an RFC 6750 challenge pointing at the resource metadata', async () => {
+    const unauthorized = await mcpApiHandler.fetch(rpcRequest(INIT), env, execCtx(undefined));
+    const challenge = unauthorized.headers.get('WWW-Authenticate') ?? '';
+    expect(challenge).toContain('Bearer ');
+    expect(challenge).toContain('error="invalid_token"');
+    expect(challenge).toContain(
+      'resource_metadata="https://wasemoodle.example.com/.well-known/oauth-protected-resource/mcp"',
+    );
+
+    const forbidden = await mcpApiHandler.fetch(
+      rpcRequest(INIT),
+      env,
+      execCtx({ userId, scopes: ['moodle:write'], source: 'x' }),
+    );
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.headers.get('WWW-Authenticate')).toContain('error="insufficient_scope"');
+    expect(forbidden.headers.get('WWW-Authenticate')).toContain('scope="moodle:read"');
+  });
+
+  it('limits OAuth callers to the scopes the token carries now', async () => {
+    const props = { userId, scopes: ['moodle:read', 'moodle:write'], source: 'Claude' };
+    await mcpApiHandler.fetch(rpcRequest(INIT), env, execCtx(props, { scope: ['moodle:read'] }));
+    expect(vi.mocked(buildMcpServer).mock.calls[0]?.[0].scopes).toEqual(['moodle:read']);
+
+    await mcpApiHandler.fetch(rpcRequest(INIT), env, execCtx(props, { scope: ['moodle:write'] }));
+    expect(vi.mocked(buildMcpServer).mock.calls).toHaveLength(1); // no read scope left: rejected
+  });
+
+  it('keeps stored scopes for API keys (their token carries no scope list)', async () => {
+    const props = { userId, scopes: ['moodle:read', 'moodle:write'], source: 'API key: ci' };
+    await mcpApiHandler.fetch(rpcRequest(INIT), env, execCtx(props, { scope: [] }));
+    expect(vi.mocked(buildMcpServer).mock.calls[0]?.[0].scopes).toEqual(['moodle:read', 'moodle:write']);
+  });
+
+  it('throttles each user to 120 requests per minute', async () => {
+    const other = (await createD1Store(env.DB).upsertUser({ moodleUserId: 2002, fullname: 'Hanako Sato', lang: 'ja' }))
+      .id;
+    const props = { userId: other, scopes: ['moodle:read'], source: 'x' };
+    const statuses: number[] = [];
+    for (let i = 0; i < 122; i++) {
+      statuses.push((await mcpApiHandler.fetch(rpcRequest(INIT), env, execCtx(props))).status);
+    }
+    expect(statuses.slice(0, 120).every((st) => st === 200)).toBe(true);
+    expect(statuses.slice(120)).toEqual([429, 429]);
+    // another user is not affected
+    const ok = await mcpApiHandler.fetch(
+      rpcRequest(INIT),
+      env,
+      execCtx({ userId, scopes: ['moodle:read'], source: 'x' }),
+    );
+    expect(ok.status).toBe(200);
+  });
+
   it('rejects calls that carry no usable props', async () => {
     for (const props of [
       undefined,

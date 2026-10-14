@@ -2,6 +2,7 @@ import type { AuditRow, Store } from '../../core/context';
 import { changes, parseJson, toJson } from './rows';
 
 export const AUDIT_RETENTION_MS = 90 * 86_400_000;
+const RATE_LIMIT_RETENTION_MS = 86_400_000;
 const COURSE_INDEX_RETENTION_MS = 30 * 86_400_000;
 
 interface AuditRaw {
@@ -83,6 +84,12 @@ export async function purgeExpired(db: D1Database, now: number): Promise<Record<
     sessions: await run('DELETE FROM sessions WHERE expires_at < ?', now),
     uploadDrafts: await run('DELETE FROM upload_drafts WHERE expires_at < ?', now),
     handoffs: await run('DELETE FROM handoffs WHERE expires_at < ?', now),
+    oauthRequests: await run('DELETE FROM oauth_requests WHERE expires_at < ?', now),
+    rateLimits: await run('DELETE FROM rate_limits WHERE window_start < ?', now - RATE_LIMIT_RETENTION_MS),
+    revokedKeys: await run(
+      'DELETE FROM api_keys WHERE revoked_at IS NOT NULL AND revoked_at < ?',
+      now - AUDIT_RETENTION_MS,
+    ),
     actionsExpired: await run("UPDATE actions SET status = 'expired' WHERE status = 'pending' AND expires_at < ?", now),
     actionsDeleted: await run(
       "DELETE FROM actions WHERE status != 'pending' AND created_at < ?",

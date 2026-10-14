@@ -1,9 +1,9 @@
 /** Sign-in, session and account routes. */
 
-import { type Context, Hono } from 'hono';
+import { Hono } from 'hono';
 import { type MasterKey, sha256Hex } from '../../core/crypto';
 import { InvalidInput } from '../../core/errors';
-import { launchUrl, MOODLE_URL } from '../../core/moodle/launch';
+import { launchUrl, MOODLE_URL, parseLaunch } from '../../core/moodle/launch';
 import { connectFromLaunch, refreshFromLaunch, toCredentialInfo, toUserInfo } from '../../core/services/account';
 import type { ConnectVia, UserSettings } from '../../core/types';
 import {
@@ -11,8 +11,7 @@ import {
   clearSessionCookieHeader,
   clientIp,
   deferOn,
-  kvRateLimit,
-  memoryRateLimit,
+  rateLimit,
   readSessionCookie,
   registrationPolicy,
   startSession,
@@ -21,11 +20,12 @@ import { connectDeps, getRuntime } from '../context';
 import { publicUrlOf, registrationMode, VERSION } from '../env';
 import { normalizeSettings } from '../store/rows';
 import type { D1Store } from '../store-d1';
-import { redeemHandoff } from './handoff';
+import { consumeHandoff, peekHandoff } from './handoff';
 import {
   auditConsole,
   EXTENSION_REFRESH_PATH,
   oneOf,
+  optionalSessionUser,
   optString,
   readJson,
   reqString,
@@ -33,6 +33,7 @@ import {
   storeOf,
 } from './shared';
 
+const HOUR_MS = 3_600_000;
 const WRITE_MODES: readonly UserSettings['writeMode'][] = ['off', 'chat', 'console'];
 const UI_LANGS: readonly UserSettings['uiLang'][] = ['auto', 'ja', 'en', 'zh-CN'];
 
@@ -58,18 +59,28 @@ function applySettingsPatch(current: UserSettings, body: Record<string, unknown>
   return normalizeSettings(next);
 }
 
-/** `{ code }` redeems a hand-off (bookmarklet / extension); otherwise `{ launch }` is a pasted link. */
-async function connectInput(
-  c: Context<AppEnv>,
+interface ConnectRequest {
+  input: { launch: string; via: ConnectVia; passport?: string };
+  /** Present for hand-offs: consumed once the sign-in is accepted. */
+  code?: string;
+}
+
+/** `{ code }` reads a hand-off (bookmarklet / extension); otherwise `{ launch }` is a pasted link. */
+async function connectRequest(
+  body: Record<string, unknown>,
   rt: { store: D1Store; key: MasterKey },
-): Promise<{ launch: string; via: ConnectVia; passport?: string }> {
-  const body = await readJson(c);
-  if (body.code !== undefined) return redeemHandoff(rt, reqString(body.code, 'code', 200));
+): Promise<ConnectRequest> {
+  if (body.code !== undefined) {
+    const code = reqString(body.code, 'code', 200);
+    return { input: await peekHandoff(rt, code), code };
+  }
   oneOf(body.via ?? 'paste', ['paste'], 'via must be paste when sending a launch link.');
   return {
-    launch: reqString(body.launch, 'launch', 4096),
-    via: 'paste',
-    passport: optString(body.passport, 'passport', 64),
+    input: {
+      launch: reqString(body.launch, 'launch', 4096),
+      via: 'paste',
+      passport: optString(body.passport, 'passport', 64),
+    },
   };
 }
 
@@ -90,12 +101,23 @@ export function accountRoutes(): Hono<AppEnv> {
   });
 
   app.post('/api/connect', async (c) => {
-    memoryRateLimit(`connect:${clientIp(c.req.raw)}`, 20, 10 * 60_000);
     const rt = await getRuntime(c.env);
-    const input = await connectInput(c, rt);
-    const result = await connectFromLaunch(connectDeps(rt, registrationPolicy(c.env)), input);
-    const { setCookie } = await startSession(rt.store, result.user.id, c.req.header('User-Agent') ?? null);
+    await rateLimit(rt.store, { key: `connect:ip:${clientIp(c.req.raw)}`, limit: 60, windowMs: 10 * 60_000 });
+    const body = await readJson(c);
+    const request = await connectRequest(body, rt);
+    const result = await connectFromLaunch(connectDeps(rt, registrationPolicy(c.env)), request.input);
 
+    // A hand-off link must not silently replace the account that is signed in (login CSRF): ask first.
+    if (request.code) {
+      const current = await optionalSessionUser(c);
+      if (current && current.id !== result.user.id && body.switchAccount !== true) {
+        const message = 'This sign-in link belongs to a different account. Confirm to switch.';
+        return c.json({ error: { code: 'account_switch', message }, account: { fullname: result.user.fullname } }, 409);
+      }
+      await consumeHandoff(rt, request.code);
+    }
+
+    const { setCookie } = await startSession(rt.store, result.user.id, c.req.header('User-Agent') ?? null);
     const old = readSessionCookie(c.req.raw);
     if (old)
       deferOn(
@@ -119,9 +141,13 @@ export function accountRoutes(): Hono<AppEnv> {
   });
   app.options(EXTENSION_REFRESH_PATH, (c) => c.body(null, 204));
   app.post(EXTENSION_REFRESH_PATH, async (c) => {
-    await kvRateLimit({ kv: c.env.OAUTH_KV, id: `ext:${clientIp(c.req.raw)}`, limit: 10 });
+    const store = storeOf(c.env);
+    await rateLimit(store, { key: `ext:ip:${clientIp(c.req.raw)}`, limit: 300, windowMs: HOUR_MS });
     const body = await readJson(c);
     const launch = reqString(body.launch, 'launch', 4096);
+    // per token: a stolen or looping client cannot hammer Moodle through one credential
+    const tokenKey = await sha256Hex(parseLaunch(launch).token);
+    await rateLimit(store, { key: `ext:token:${tokenKey}`, limit: 6, windowMs: HOUR_MS });
     const rt = await getRuntime(c.env);
     const r = await refreshFromLaunch(connectDeps(rt, registrationPolicy(c.env)), { launch });
     return c.json({ status: r.tokenChanged ? 'updated' : 'unchanged' });

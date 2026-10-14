@@ -33,27 +33,24 @@ class Unauthorized extends WmmError {
 
 // ------------------------------------------------------------------ cookies
 
-export function sessionCookieHeader(value: string): string {
-  return `${SESSION_COOKIE}=${value}; Max-Age=${SESSION_TTL_MS / 1000}; Path=/; HttpOnly; Secure; SameSite=Lax`;
+/** `__Host-` cookies: Secure, Path=/, no Domain, HttpOnly, SameSite=Lax. */
+export function hostCookie(name: string, value: string, maxAgeSec: number): string {
+  return `${name}=${value}; Max-Age=${maxAgeSec}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 }
 
-export function clearSessionCookieHeader(): string {
-  return `${SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`;
-}
-
-export function readSessionCookie(request: Request): string | null {
+export function readCookie(request: Request, name: string): string | null {
   const header = request.headers.get('Cookie');
   if (!header) return null;
   for (const part of header.split(';')) {
     const i = part.indexOf('=');
-    if (i < 0) continue;
-    if (part.slice(0, i).trim() === SESSION_COOKIE) {
-      const v = part.slice(i + 1).trim();
-      return v || null;
-    }
+    if (i >= 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim() || null;
   }
   return null;
 }
+
+export const sessionCookieHeader = (value: string): string => hostCookie(SESSION_COOKIE, value, SESSION_TTL_MS / 1000);
+export const clearSessionCookieHeader = (): string => hostCookie(SESSION_COOKIE, '', 0);
+export const readSessionCookie = (request: Request): string | null => readCookie(request, SESSION_COOKIE);
 
 // ------------------------------------------------------------------ sessions
 
@@ -216,34 +213,25 @@ export function memoryRateLimit(key: string, limit: number, windowMs: number, no
   if (cur.n > limit) throw new RateLimited();
 }
 
-const kvLocal = new Map<string, number>();
-const KV_FREE_HITS = 2;
-
-export interface KvRateLimit {
-  kv: KVNamespace;
-  id: string;
+export interface RateLimitRule {
+  /** Counter key, e.g. `ext:ip:203.0.113.7`. */
+  key: string;
   limit: number;
-  windowSec?: number;
-  now?: number;
+  windowMs: number;
 }
 
 /**
- * Hourly KV-backed counter that keeps KV writes tiny (Free: 1000 writes/day): the first two hits per window in an
- * isolate touch no KV at all; from the third on the shared counter is read, compared and written back.
- * Counting is best effort (isolates race), the point is to stop floods, not to meter exactly.
+ * Fixed-window counter in D1 (KV is reserved for the OAuth library: Free KV allows 1000 writes/day).
+ * Throws RateLimited above the limit. Storage failures fail OPEN: an outage must not lock everybody out.
  */
-export async function kvRateLimit(opts: KvRateLimit): Promise<void> {
-  const windowSec = opts.windowSec ?? 3600;
-  const bucket = Math.floor((opts.now ?? Date.now()) / (windowSec * 1000));
-  const key = `rl:${opts.id}:${bucket}`;
-  if (kvLocal.size > 2000) kvLocal.clear();
-  const local = (kvLocal.get(key) ?? 0) + 1;
-  kvLocal.set(key, local);
-  if (local <= KV_FREE_HITS) return;
-  const stored = Number(await opts.kv.get(key)) || 0;
-  const total = Math.max(stored, local - 1) + 1;
-  if (total > opts.limit) throw new RateLimited('Too many refresh attempts. Try again later.');
-  await opts.kv.put(key, String(total), { expirationTtl: windowSec + 120 });
+export async function rateLimit(store: D1Store, rule: RateLimitRule, now = Date.now()): Promise<void> {
+  let hits: number;
+  try {
+    hits = await store.hitRateLimit(rule.key, rule.windowMs, now);
+  } catch {
+    return;
+  }
+  if (hits > rule.limit) throw new RateLimited();
 }
 
 export function clientIp(request: Request): string {

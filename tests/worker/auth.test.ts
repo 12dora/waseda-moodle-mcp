@@ -5,9 +5,9 @@ import {
   API_KEY_PATTERN,
   clearSessionCookieHeader,
   clientIp,
-  kvRateLimit,
   loadSession,
   memoryRateLimit,
+  rateLimit,
   readSessionCookie,
   registrationPolicy,
   resolveApiKey,
@@ -20,7 +20,6 @@ import {
 import type { Env } from '../../src/worker/env';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
 import { createTestD1 } from '../helpers/d1-sqlite';
-import { MemoryKV } from '../helpers/memory-kv';
 
 const SECRET = `wmm_${'A1b2C3d4E5'.repeat(4)}`; // wmm_ + 40 base62
 
@@ -174,26 +173,25 @@ describe('rate limits', () => {
     expect(() => memoryRateLimit('t1', 3, 1000, now + 1001)).not.toThrow();
   });
 
-  it('kvRateLimit does no KV I/O for the first two hits, then counts', async () => {
-    const kv = new MemoryKV();
-    const now = 5_000_000_000;
-    await kvRateLimit({ kv: kv.asKV(), id: 'kv-a', limit: 10, now });
-    await kvRateLimit({ kv: kv.asKV(), id: 'kv-a', limit: 10, now });
-    expect(kv.ops).toEqual({ get: 0, put: 0, delete: 0, list: 0 });
-
-    for (let i = 3; i <= 10; i++) await kvRateLimit({ kv: kv.asKV(), id: 'kv-a', limit: 10, now });
-    await expect(kvRateLimit({ kv: kv.asKV(), id: 'kv-a', limit: 10, now })).rejects.toBeInstanceOf(RateLimited);
-    expect(kv.ops.put).toBe(8);
+  it('rateLimit counts in D1 per key and window, and never touches KV', async () => {
+    const store = createD1Store(createTestD1().db);
+    const rule = { key: 'k-a', limit: 3, windowMs: 1000 };
+    for (let i = 0; i < 3; i++) await rateLimit(store, rule, 10_000);
+    await expect(rateLimit(store, rule, 10_500)).rejects.toBeInstanceOf(RateLimited);
+    // other keys are independent
+    await expect(rateLimit(store, { ...rule, key: 'k-b' }, 10_500)).resolves.toBeUndefined();
+    // a new window starts from zero
+    for (let i = 0; i < 3; i++) await rateLimit(store, rule, 11_001);
+    await expect(rateLimit(store, rule, 11_100)).rejects.toBeInstanceOf(RateLimited);
   });
 
-  it('kvRateLimit sees counts from other isolates', async () => {
-    const kv = new MemoryKV();
-    const now = 6_000_000_000;
-    const bucket = Math.floor(now / 3_600_000);
-    await kv.put(`rl:kv-b:${bucket}`, '10');
-    await kvRateLimit({ kv: kv.asKV(), id: 'kv-b', limit: 10, now });
-    await kvRateLimit({ kv: kv.asKV(), id: 'kv-b', limit: 10, now });
-    await expect(kvRateLimit({ kv: kv.asKV(), id: 'kv-b', limit: 10, now })).rejects.toBeInstanceOf(RateLimited);
+  it('rateLimit fails open when storage breaks', async () => {
+    const broken = {
+      hitRateLimit: async () => {
+        throw new Error('D1 unavailable');
+      },
+    } as unknown as D1Store;
+    await expect(rateLimit(broken, { key: 'x', limit: 0, windowMs: 1000 })).resolves.toBeUndefined();
   });
 
   it('clientIp prefers CF-Connecting-IP', () => {

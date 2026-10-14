@@ -1,15 +1,7 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
-    "includes": [
-      "src/**",
-      "tests/**",
-      "web/src/**",
-      "extension/**/*.js",
-      "scripts/**",
-      "!**/dist",
-      "!**/node_modules"
-    ]
+    "includes": ["src/**", "tests/**", "web/src/**", "extension/**/*.js", "scripts/**", "!**/dist", "!**/node_modules"]
   },
   "formatter": {
     "enabled": true,
@@ -27,7 +19,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "complexity": {
         "noExcessiveCognitiveComplexity": {
           "level": "error",
@@ -72,10 +64,7 @@
         "noConsole": {
           "level": "error",
           "options": {
-            "allow": [
-              "error",
-              "warn"
-            ]
+            "allow": ["error", "warn"]
           }
         }
       }
@@ -83,11 +72,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "tests/**",
-        "web/src/**/*.test.ts",
-        "extension/lib/*.test.js"
-      ],
+      "includes": ["tests/**", "web/src/**/*.test.ts", "extension/lib/*.test.js"],
       "linter": {
         "rules": {
           "complexity": {
@@ -108,9 +93,7 @@
       }
     },
     {
-      "includes": [
-        "web/src/**/*.tsx"
-      ],
+      "includes": ["web/src/**/*.tsx"],
       "linter": {
         "rules": {
           "complexity": {
@@ -126,10 +109,7 @@
       }
     },
     {
-      "includes": [
-        "web/src/i18n/*.ts",
-        "tests/fixtures/**"
-      ],
+      "includes": ["web/src/i18n/*.ts", "tests/fixtures/**"],
       "linter": {
         "rules": {
           "style": {
@@ -139,9 +119,7 @@
       }
     },
     {
-      "includes": [
-        "**/*.css"
-      ],
+      "includes": ["**/*.css"],
       "linter": {
         "rules": {
           "style": {

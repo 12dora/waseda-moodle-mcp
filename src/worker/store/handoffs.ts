@@ -7,6 +7,8 @@ interface HandoffRow {
 
 export interface HandoffMethods {
   putHandoff(row: HandoffRow): Promise<void>;
+  /** Non-destructive read; null when unknown or expired. */
+  peekHandoff(codeHash: string, now: number): Promise<string | null>;
   /** Atomically removes the row (single use) and returns its payload unless it has expired. */
   takeHandoff(codeHash: string, now: number): Promise<string | null>;
 }
@@ -18,6 +20,14 @@ export function handoffMethods(db: D1Database): HandoffMethods {
         .prepare('INSERT INTO handoffs (code_hash, payload_enc, created_at, expires_at) VALUES (?, ?, ?, ?)')
         .bind(row.codeHash, row.payloadEnc, row.createdAt, row.expiresAt)
         .run();
+    },
+
+    async peekHandoff(codeHash, now) {
+      const r = await db
+        .prepare('SELECT payload_enc FROM handoffs WHERE code_hash = ? AND expires_at > ?')
+        .bind(codeHash, now)
+        .first<{ payload_enc: string }>();
+      return r?.payload_enc ?? null;
     },
 
     async takeHandoff(codeHash, now) {

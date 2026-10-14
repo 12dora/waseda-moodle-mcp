@@ -70,7 +70,12 @@ export function keyRoutes(): Hono<AppEnv> {
   });
 
   app.get('/api/apps', session, async (c) => {
-    const page = await c.env.OAUTH_PROVIDER.listUserGrants(String(c.get('user').id), { limit: 100 });
+    // 100 per page; `X-Next-Cursor` is set when more exist (pass it back as ?cursor=)
+    const page = await c.env.OAUTH_PROVIDER.listUserGrants(String(c.get('user').id), {
+      limit: 100,
+      cursor: c.req.query('cursor') || undefined,
+    });
+    if (page.cursor) c.header('X-Next-Cursor', page.cursor);
     return c.json(
       page.items.map((g) => {
         const meta = (g.metadata ?? {}) as { clientName?: unknown };

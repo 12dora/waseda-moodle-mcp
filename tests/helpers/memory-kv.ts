@@ -46,14 +46,19 @@ export class MemoryKV {
     this.data.delete(key);
   }
 
-  async list(opts?: { prefix?: string; limit?: number }) {
+  /** Lexicographic listing; `cursor` is the last name of the previous page. */
+  async list(opts?: { prefix?: string; limit?: number; cursor?: string }) {
     this.ops.list++;
-    const keys = [...this.data.keys()]
+    const limit = opts?.limit ?? 1000;
+    const names = [...this.data.keys()]
       .filter((k) => this.live(k) && (!opts?.prefix || k.startsWith(opts.prefix)))
       .sort()
-      .slice(0, opts?.limit ?? 1000)
-      .map((name) => ({ name }));
-    return { keys, list_complete: true, cacheStatus: null };
+      .filter((k) => !opts?.cursor || k > opts.cursor);
+    const page = names.slice(0, limit).map((name) => ({ name }));
+    const complete = names.length <= limit;
+    return complete
+      ? { keys: page, list_complete: true as const, cacheStatus: null }
+      : { keys: page, list_complete: false as const, cursor: page[page.length - 1]?.name ?? '', cacheStatus: null };
   }
 
   asKV(): KVNamespace {
