@@ -17,6 +17,8 @@ export const en = {
   'common.requestFailed': 'Request failed ({status}).',
   'common.crashed': 'Something went wrong. Reload the page.',
   'common.reload': 'Reload',
+  'paused.title': 'Service paused',
+  'paused.desc': 'Service paused to stay within the usage limit. It resumes automatically.',
   'common.readOnly': 'Read only',
   'common.readWrite': 'Read & write',
 
@@ -25,6 +27,7 @@ export const en = {
   'nav.overview': 'Overview',
   'nav.due': 'Deadlines',
   'nav.courses': 'My courses',
+  'nav.timetable': 'Timetable',
   'nav.keys': 'API keys',
   'nav.apps': 'Authorized apps',
   'nav.actions': 'Approvals',
@@ -123,7 +126,8 @@ export const en = {
   'due.footer': 'Checked {checked} courses · updated {time}',
   'due.footerNoTime': 'Checked {checked} courses',
   'due.stale': '{count} courses not checked yet',
-  'due.otherCourses': 'Other enrolled courses not included: {count}',
+  'due.otherHint': 'These courses are not in My courses.',
+  'overview.due.other': 'Other enrolled courses: {count} deadlines',
   'due.closed': 'Closed',
   'scope.banner': 'Showing suggested courses. Confirm your courses for this term.',
   'scope.confirm': 'Confirm courses',
@@ -140,6 +144,17 @@ export const en = {
   'courses.save': 'Save',
   'courses.useAuto': 'Use automatic suggestion',
   'courses.empty': 'No courses.',
+  'timetable.title': 'Timetable',
+  'timetable.prev': 'Previous week',
+  'timetable.next': 'Next week',
+  'timetable.today': 'Today',
+  'timetable.period': 'P{n}',
+  'timetable.noClasses': 'No classes',
+  'timetable.onDemand': 'On-demand courses',
+  'timetable.unknown': 'Courses without class times',
+  'timetable.unknownDesc': 'The syllabus lists no day or period.',
+  'overview.today.title': "Today's classes",
+  'overview.today.empty': 'No classes today.',
 
   'kind.assign': 'Assignment',
   'kind.quiz': 'Quiz',
@@ -259,6 +274,7 @@ export const en = {
   'error.rate_limited': 'Too many requests. Wait a moment and retry.',
   'error.moodle_unavailable': 'Waseda Moodle is not reachable. Try again later.',
   'error.budget_exceeded': 'The request needs too many Moodle calls. Narrow it down and retry.',
+  'error.service_paused': 'Service paused to stay within the usage limit. It resumes automatically.',
 } as const;
 
 export type MessageKey = keyof typeof en;

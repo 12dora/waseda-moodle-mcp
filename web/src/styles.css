@@ -1183,3 +1183,121 @@ fieldset {
   list-style: none;
   padding: 0;
 }
+
+/* Timetable ---------------------------------------------------------------- */
+.tt-grid {
+  display: none;
+  gap: 2px;
+  grid-template-rows: auto repeat(7, minmax(64px, auto));
+}
+.tt-days {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+@media (min-width: 760px) {
+  .tt-grid {
+    display: grid;
+  }
+  .tt-days {
+    display: none;
+  }
+}
+.tt-head {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: var(--radius-sm);
+}
+.tt-head.today {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tt-note {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--warn);
+}
+.tt-period {
+  display: grid;
+  align-content: start;
+  padding: 6px 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.tt-period strong {
+  color: var(--text);
+}
+.tt-cell {
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+.tt-cell.today {
+  background: var(--accent-soft);
+}
+.tt-block {
+  z-index: 1;
+  display: grid;
+  gap: 2px;
+  align-content: stretch;
+  min-width: 0;
+}
+.tt-class {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 13px;
+  min-width: 0;
+}
+.tt-class:hover {
+  text-decoration: none;
+  background: var(--surface-2);
+}
+.tt-time {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.tt-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.tt-room {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.tt-day {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.tt-day.today {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.tt-day-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+
+.paused {
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.tt-today {
+  gap: 8px;
+}

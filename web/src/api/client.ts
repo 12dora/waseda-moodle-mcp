@@ -19,6 +19,18 @@ export class ApiError extends Error {
 
 type UnauthorizedHandler = (returnTo: string) => void;
 let onUnauthorized: UnauthorizedHandler | null = null;
+let onPaused: (() => void) | null = null;
+
+/** Registered by the app shell: called when the usage guard blocks /api/* at the edge (contract §13). */
+export function setPausedHandler(fn: (() => void) | null): void {
+  onPaused = fn;
+}
+
+/** Cloudflare edge block: 403 with `cf-mitigated`, or an HTML block page instead of JSON. */
+function isEdgeBlock(res: Response): boolean {
+  if (res.status !== 403) return false;
+  return res.headers.has('cf-mitigated') || (res.headers.get('content-type') ?? '').includes('text/html');
+}
 
 /** Registered by the router so redirects stay inside the SPA. */
 export function setUnauthorizedHandler(fn: UnauthorizedHandler | null): void {
@@ -90,6 +102,10 @@ async function send(path: string, init: RequestInit): Promise<Response> {
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const res = await send(buildPath(path, opts.query), buildInit(opts.method ?? 'GET', opts.body));
+  if (isEdgeBlock(res)) {
+    onPaused?.();
+    throw new ApiError(403, 'service_paused', 'Service paused');
+  }
   const payload = parseJson(await res.text());
   if (res.ok) return payload as T;
   if (res.status === 401 && opts.redirectOn401 !== false) redirectToConnect();

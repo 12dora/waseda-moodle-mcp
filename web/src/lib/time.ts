@@ -83,3 +83,12 @@ export function dueGroup(iso: string | null | undefined, opts: FormatOptions = {
 }
 
 export const DUE_GROUPS: readonly DueGroup[] = ['overdue', 'today', 'tomorrow', 'week', 'later', 'undated'];
+
+/** Short day label for a calendar date ('YYYY-MM-DD'): '10/12(月)' / 'Mon 10/12' / '10/12 周一'. */
+export function formatDay(date: string, lang: Lang): string {
+  const p = jstParts(Date.parse(`${date}T00:00:00+09:00`));
+  const wd = WEEKDAYS[lang][p.wd];
+  if (lang === 'ja') return `${p.mo}/${p.d}(${wd})`;
+  if (lang === 'zh-CN') return `${p.mo}/${p.d} ${wd}`;
+  return `${wd} ${p.mo}/${p.d}`;
+}

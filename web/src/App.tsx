@@ -6,6 +6,7 @@ import type { AppConfig } from './api/types';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ErrorBox } from './components/ErrorBox';
 import { Layout } from './components/Layout';
+import { PausedGate } from './components/PausedGate';
 import { PageLoading } from './components/Spinner';
 import { ToastProvider } from './components/Toast';
 import { I18nProvider, useT } from './i18n';
@@ -19,6 +20,7 @@ import { MyCoursesPage } from './pages/MyCourses';
 import { OAuthConsentPage } from './pages/OAuthConsent';
 import { OverviewPage } from './pages/Overview';
 import { SettingsPage } from './pages/Settings';
+import { TimetablePage } from './pages/Timetable';
 import { ConfigProvider, RequireSession } from './session';
 
 /** Lets the API client redirect to /connect without a full page reload. */
@@ -43,6 +45,7 @@ function AppRoutes() {
           <Route index element={<OverviewPage />} />
           <Route path="due" element={<DuePage />} />
           <Route path="courses" element={<MyCoursesPage />} />
+          <Route path="timetable" element={<TimetablePage />} />
           <Route path="keys" element={<KeysPage />} />
           <Route path="apps" element={<AppsPage />} />
           <Route path="actions" element={<ActionsPage />} />
@@ -90,7 +93,9 @@ export function App() {
     <I18nProvider>
       <ErrorBoundary>
         <ToastProvider>
-          <Boot />
+          <PausedGate>
+            <Boot />
+          </PausedGate>
         </ToastProvider>
       </ErrorBoundary>
     </I18nProvider>

@@ -5,6 +5,7 @@ import { cancelAction, confirmAction, listActionRecords } from '../../core/servi
 import { getDueItems } from '../../core/services/due';
 import { resolveScope } from '../../core/services/scope';
 import { getCourseUpdates } from '../../core/services/sweep';
+import { getTimetable } from '../../core/services/timetable';
 import { isoJst } from '../../core/time';
 import type { ActionStatus } from '../../core/types';
 import type { AppEnv } from '../auth';
@@ -39,6 +40,14 @@ export function dataRoutes(): Hono<AppEnv> {
     const ctx = await consoleContext(c, c.get('user'));
     return c.json(
       await getCourseUpdates(ctx, { sinceDays: intParam(c.req.query('days'), 'days', { min: 1, max: 30 }) ?? 7 }),
+    );
+  });
+
+  app.get('/api/timetable', session, async (c) => {
+    const ctx = await consoleContext(c, c.get('user'));
+    const q = c.req.query();
+    return c.json(
+      await getTimetable(ctx, { date: q.date || undefined, days: intParam(q.days, 'days', { min: 1, max: 14 }) }),
     );
   });
 

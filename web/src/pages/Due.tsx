@@ -33,6 +33,26 @@ function courseOptions(items: DueItem[]): Array<[number, string]> {
   return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
 }
 
+function OtherCourses({ items }: { items: DueItem[] }) {
+  const { t } = useI18n();
+  if (items.length === 0) return null;
+  return (
+    <Card>
+      <details className="disclosure">
+        <summary>{t('courses.other', { count: items.length })}</summary>
+        <p className="muted small">
+          {t('due.otherHint')} <Link to="/courses">{t('due.manage')}</Link>
+        </p>
+        <ul className="due-list">
+          {items.map((item) => (
+            <DueRow key={`${item.source}-${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`} item={item} />
+          ))}
+        </ul>
+      </details>
+    </Card>
+  );
+}
+
 function DueFooter({ list }: { list: DueList }) {
   const { t, lang } = useI18n();
   const { checked, stale, checkedAt } = list.sweep;
@@ -44,11 +64,6 @@ function DueFooter({ list }: { list: DueList }) {
           : t('due.footerNoTime', { checked })}
       </span>
       {stale > 0 && <span>{t('due.stale', { count: stale })}</span>}
-      {list.scope.otherCount > 0 && (
-        <span>
-          {t('due.otherCourses', { count: list.scope.otherCount })} <Link to="/courses">{t('due.manage')}</Link>
-        </span>
-      )}
       {list.truncated && <span>{t('due.truncated')}</span>}
     </div>
   );
@@ -115,6 +130,7 @@ export function DuePage() {
               </Card>
             ))
           )}
+          <OtherCourses items={due.data.otherCourses} />
           <DueFooter list={due.data} />
         </>
       )}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { getDue, getUpdates, listActions } from '../api/endpoints';
+import { getDue, getTimetable, getUpdates, listActions } from '../api/endpoints';
 import type { Me } from '../api/types';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -11,8 +11,10 @@ import { ErrorBox } from '../components/ErrorBox';
 import { PageHeader } from '../components/Layout';
 import { ScopeBanner } from '../components/ScopeBanner';
 import { Spinner } from '../components/Spinner';
+import { ClassLink } from '../components/TimetableGrid';
 import { type MessageKey, useI18n, useT } from '../i18n';
 import { formatDateTime } from '../lib/time';
+import { todayJst } from '../lib/timetable';
 import { useAsync } from '../lib/useAsync';
 import { useConfig, useSession } from '../session';
 
@@ -76,6 +78,33 @@ function UpcomingCard() {
             <DueRow key={`${item.source}-${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`} item={item} />
           ))}
         </ul>
+      )}
+      {due.data && due.data.otherCourses.length > 0 && (
+        <p className="muted small">
+          {t('overview.due.other', { count: due.data.otherCourses.length })}{' '}
+          <Link to="/courses">{t('due.manage')}</Link>
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function TodayCard() {
+  const t = useT();
+  const today = useAsync(() => getTimetable(todayJst(), 1));
+  const day = today.data?.days[0];
+  return (
+    <Card title={t('overview.today.title')} actions={<Link to="/timetable">{t('nav.timetable')}</Link>}>
+      {today.loading && <Spinner label={t('common.loading')} />}
+      {today.error != null && <ErrorBox error={today.error} onRetry={today.reload} />}
+      {day?.note && <p className="tt-note">{day.note}</p>}
+      {today.data && !day?.classes.length && <EmptyState>{t('overview.today.empty')}</EmptyState>}
+      {day && day.classes.length > 0 && (
+        <div className="stack tt-today">
+          {day.classes.map((c) => (
+            <ClassLink key={`${c.courseId}-${c.start}`} c={c} />
+          ))}
+        </div>
       )}
     </Card>
   );
@@ -209,8 +238,9 @@ export function OverviewPage() {
       <div className="grid-2">
         <ConnectionCard me={me} />
         <UpcomingCard />
+        <TodayCard />
+        <UpdatesCard />
       </div>
-      <UpdatesCard />
       <ClientCard />
     </>
   );
