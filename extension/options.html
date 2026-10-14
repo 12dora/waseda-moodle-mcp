@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title data-i18n="optionsTitle"></title>
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1 data-i18n="optionsTitle"></h1>
+    <form id="form" novalidate>
+      <label for="serviceUrl" data-i18n="labelServiceUrl"></label>
+      <input id="serviceUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" data-i18n-placeholder="placeholderServiceUrl">
+      <p class="muted help" data-i18n="helpServiceUrl"></p>
+      <div class="actions">
+        <button type="submit" class="primary" data-i18n="btnSave"></button>
+        <button type="button" id="sync" data-i18n="btnSyncNow"></button>
+      </div>
+      <p id="status" role="status"></p>
+    </form>
+    <section class="privacy">
+      <h2 data-i18n="privacyTitle"></h2>
+      <p class="muted" data-i18n="privacyBody"></p>
+    </section>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

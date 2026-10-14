@@ -1,0 +1,128 @@
+{
+  "extName": {
+    "message": "Waseda Moodle MCP Connector"
+  },
+  "extShortName": {
+    "message": "Moodle MCP Connector"
+  },
+  "extDescription": {
+    "message": "Connects your Waseda Moodle session to your Moodle MCP service and keeps it signed in."
+  },
+  "badgeNotConfigured": {
+    "message": "Service URL not set"
+  },
+  "badgeSigninNeeded": {
+    "message": "Sign in to Moodle required"
+  },
+  "badgeNotConnected": {
+    "message": "Not connected to the service"
+  },
+  "labelService": {
+    "message": "Service"
+  },
+  "labelMoodle": {
+    "message": "Moodle"
+  },
+  "labelLastSync": {
+    "message": "Last sync"
+  },
+  "statusChecking": {
+    "message": "Checking…"
+  },
+  "statusSignedIn": {
+    "message": "Signed in"
+  },
+  "statusSignedOut": {
+    "message": "Not signed in"
+  },
+  "statusNotConfigured": {
+    "message": "Not configured"
+  },
+  "statusNever": {
+    "message": "Never"
+  },
+  "statusConnecting": {
+    "message": "Connecting…"
+  },
+  "statusSyncing": {
+    "message": "Syncing…"
+  },
+  "hintConfigure": {
+    "message": "Set the service URL in Settings to get started."
+  },
+  "btnConnect": {
+    "message": "Connect"
+  },
+  "btnOpenConsole": {
+    "message": "Open console"
+  },
+  "btnSave": {
+    "message": "Save"
+  },
+  "btnSyncNow": {
+    "message": "Sync now"
+  },
+  "linkSettings": {
+    "message": "Settings"
+  },
+  "resultUpdated": {
+    "message": "Credential updated"
+  },
+  "resultUnchanged": {
+    "message": "Up to date"
+  },
+  "resultConnectOpened": {
+    "message": "Connection page opened"
+  },
+  "resultSigninRequired": {
+    "message": "Sign in to Moodle, then try again."
+  },
+  "resultUnknownUser": {
+    "message": "Account not connected. Click Connect."
+  },
+  "resultRateLimited": {
+    "message": "Too many requests. Try again later."
+  },
+  "resultServerError": {
+    "message": "Service error"
+  },
+  "resultNetworkError": {
+    "message": "Service unreachable"
+  },
+  "resultPermissionMissing": {
+    "message": "Access to the service was not granted. Save the URL again in Settings."
+  },
+  "optionsTitle": {
+    "message": "Connector settings"
+  },
+  "labelServiceUrl": {
+    "message": "Service URL"
+  },
+  "placeholderServiceUrl": {
+    "message": "https://wasemoodle.example.com"
+  },
+  "helpServiceUrl": {
+    "message": "The HTTPS address of your Moodle MCP service. Saving asks for permission to contact it."
+  },
+  "errorHttpsRequired": {
+    "message": "Enter a valid https:// URL."
+  },
+  "errorPermissionDenied": {
+    "message": "Permission was declined. The URL was not saved."
+  },
+  "optionsSaved": {
+    "message": "Saved."
+  },
+  "optionsCleared": {
+    "message": "Service URL cleared."
+  },
+  "optionsSyncOk": {
+    "message": "Sync complete."
+  },
+  "privacyTitle": {
+    "message": "Privacy"
+  },
+  "privacyBody": {
+    "message": "The connector reads your Moodle mobile-app token only to send it to the service you configured. It never stores the token and never revokes it, so the official Moodle app keeps working."
+  }
+}

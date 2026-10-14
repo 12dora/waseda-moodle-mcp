@@ -1,0 +1,128 @@
+{
+  "extName": {
+    "message": "Waseda Moodle MCP Connector"
+  },
+  "extShortName": {
+    "message": "Moodle MCP Connector"
+  },
+  "extDescription": {
+    "message": "早稲田 Moodle のセッションを Moodle MCP サービスに接続し、接続状態を維持します。"
+  },
+  "badgeNotConfigured": {
+    "message": "サービス URL が未設定です"
+  },
+  "badgeSigninNeeded": {
+    "message": "Moodle へのサインインが必要です"
+  },
+  "badgeNotConnected": {
+    "message": "サービスに未接続です"
+  },
+  "labelService": {
+    "message": "サービス"
+  },
+  "labelMoodle": {
+    "message": "Moodle"
+  },
+  "labelLastSync": {
+    "message": "最終同期"
+  },
+  "statusChecking": {
+    "message": "確認中…"
+  },
+  "statusSignedIn": {
+    "message": "サインイン済み"
+  },
+  "statusSignedOut": {
+    "message": "未サインイン"
+  },
+  "statusNotConfigured": {
+    "message": "未設定"
+  },
+  "statusNever": {
+    "message": "未実行"
+  },
+  "statusConnecting": {
+    "message": "接続中…"
+  },
+  "statusSyncing": {
+    "message": "同期中…"
+  },
+  "hintConfigure": {
+    "message": "設定でサービス URL を指定してください。"
+  },
+  "btnConnect": {
+    "message": "接続"
+  },
+  "btnOpenConsole": {
+    "message": "コンソールを開く"
+  },
+  "btnSave": {
+    "message": "保存"
+  },
+  "btnSyncNow": {
+    "message": "今すぐ同期"
+  },
+  "linkSettings": {
+    "message": "設定"
+  },
+  "resultUpdated": {
+    "message": "認証情報を更新しました"
+  },
+  "resultUnchanged": {
+    "message": "最新です"
+  },
+  "resultConnectOpened": {
+    "message": "接続ページを開きました"
+  },
+  "resultSigninRequired": {
+    "message": "Moodle にサインインしてから再試行してください。"
+  },
+  "resultUnknownUser": {
+    "message": "アカウントが未接続です。「接続」をクリックしてください。"
+  },
+  "resultRateLimited": {
+    "message": "リクエストが多すぎます。後で再試行してください。"
+  },
+  "resultServerError": {
+    "message": "サービスエラー"
+  },
+  "resultNetworkError": {
+    "message": "サービスに接続できません"
+  },
+  "resultPermissionMissing": {
+    "message": "サービスへのアクセスが許可されていません。設定で URL を再保存してください。"
+  },
+  "optionsTitle": {
+    "message": "コネクタ設定"
+  },
+  "labelServiceUrl": {
+    "message": "サービス URL"
+  },
+  "placeholderServiceUrl": {
+    "message": "https://wasemoodle.example.com"
+  },
+  "helpServiceUrl": {
+    "message": "Moodle MCP サービスの HTTPS アドレス。保存時にアクセス許可を求めます。"
+  },
+  "errorHttpsRequired": {
+    "message": "有効な https:// URL を入力してください。"
+  },
+  "errorPermissionDenied": {
+    "message": "許可されなかったため、URL は保存されていません。"
+  },
+  "optionsSaved": {
+    "message": "保存しました。"
+  },
+  "optionsCleared": {
+    "message": "サービス URL を削除しました。"
+  },
+  "optionsSyncOk": {
+    "message": "同期が完了しました。"
+  },
+  "privacyTitle": {
+    "message": "プライバシー"
+  },
+  "privacyBody": {
+    "message": "コネクタは Moodle モバイルアプリ用トークンを、設定したサービスへ送信するためにのみ読み取ります。トークンを保存・失効させることはないため、公式 Moodle アプリはそのまま使えます。"
+  }
+}

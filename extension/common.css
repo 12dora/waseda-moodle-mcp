@@ -1,0 +1,22 @@
+:root {
+  --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d0d7de; --surface: #f6f8fa;
+  --accent: #8c1d24; --accent-fg: #ffffff; --ok: #1a7f37; --warn: #b3261e;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1f24; --fg: #e6edf3; --muted: #9198a1; --border: #3d444d; --surface: #262a31;
+    --accent: #d2545c; --accent-fg: #ffffff; --ok: #3fb950; --warn: #f47067;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "Microsoft YaHei", sans-serif; }
+h1 { font-size: 15px; margin: 0; font-weight: 600; }
+.muted { color: var(--muted); }
+.ok { color: var(--ok); }
+.warn { color: var(--warn); }
+button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+button:disabled { opacity: .55; cursor: default; }
+input[type=url] { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+a { color: var(--accent); }

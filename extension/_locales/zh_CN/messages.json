@@ -1,0 +1,128 @@
+{
+  "extName": {
+    "message": "Waseda Moodle MCP Connector"
+  },
+  "extShortName": {
+    "message": "Moodle MCP Connector"
+  },
+  "extDescription": {
+    "message": "将早稻田 Moodle 会话连接到 Moodle MCP 服务，并保持登录状态。"
+  },
+  "badgeNotConfigured": {
+    "message": "未设置服务 URL"
+  },
+  "badgeSigninNeeded": {
+    "message": "需要登录 Moodle"
+  },
+  "badgeNotConnected": {
+    "message": "未连接到服务"
+  },
+  "labelService": {
+    "message": "服务"
+  },
+  "labelMoodle": {
+    "message": "Moodle"
+  },
+  "labelLastSync": {
+    "message": "上次同步"
+  },
+  "statusChecking": {
+    "message": "正在检查…"
+  },
+  "statusSignedIn": {
+    "message": "已登录"
+  },
+  "statusSignedOut": {
+    "message": "未登录"
+  },
+  "statusNotConfigured": {
+    "message": "未配置"
+  },
+  "statusNever": {
+    "message": "从未"
+  },
+  "statusConnecting": {
+    "message": "正在连接…"
+  },
+  "statusSyncing": {
+    "message": "正在同步…"
+  },
+  "hintConfigure": {
+    "message": "请先在设置中填写服务 URL。"
+  },
+  "btnConnect": {
+    "message": "连接"
+  },
+  "btnOpenConsole": {
+    "message": "打开控制台"
+  },
+  "btnSave": {
+    "message": "保存"
+  },
+  "btnSyncNow": {
+    "message": "立即同步"
+  },
+  "linkSettings": {
+    "message": "设置"
+  },
+  "resultUpdated": {
+    "message": "凭据已更新"
+  },
+  "resultUnchanged": {
+    "message": "已是最新"
+  },
+  "resultConnectOpened": {
+    "message": "已打开连接页面"
+  },
+  "resultSigninRequired": {
+    "message": "请登录 Moodle 后重试。"
+  },
+  "resultUnknownUser": {
+    "message": "账户未连接，请点击“连接”。"
+  },
+  "resultRateLimited": {
+    "message": "请求过多，请稍后重试。"
+  },
+  "resultServerError": {
+    "message": "服务错误"
+  },
+  "resultNetworkError": {
+    "message": "无法访问服务"
+  },
+  "resultPermissionMissing": {
+    "message": "未授予服务访问权限，请在设置中重新保存 URL。"
+  },
+  "optionsTitle": {
+    "message": "连接器设置"
+  },
+  "labelServiceUrl": {
+    "message": "服务 URL"
+  },
+  "placeholderServiceUrl": {
+    "message": "https://wasemoodle.example.com"
+  },
+  "helpServiceUrl": {
+    "message": "Moodle MCP 服务的 HTTPS 地址。保存时会请求访问权限。"
+  },
+  "errorHttpsRequired": {
+    "message": "请输入有效的 https:// URL。"
+  },
+  "errorPermissionDenied": {
+    "message": "权限被拒绝，URL 未保存。"
+  },
+  "optionsSaved": {
+    "message": "已保存。"
+  },
+  "optionsCleared": {
+    "message": "已清除服务 URL。"
+  },
+  "optionsSyncOk": {
+    "message": "同步完成。"
+  },
+  "privacyTitle": {
+    "message": "隐私"
+  },
+  "privacyBody": {
+    "message": "连接器仅为发送到你配置的服务而读取 Moodle 移动应用令牌，不会保存或吊销该令牌，官方 Moodle 应用可照常使用。"
+  }
+}
