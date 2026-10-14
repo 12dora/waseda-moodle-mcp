@@ -3,15 +3,7 @@
  * (memory) provide implementations.
  */
 
-import type {
-  ActionKind,
-  ActionStatus,
-  Approval,
-  ConnectVia,
-  Scope,
-  UploadedDraftFile,
-  UserSettings,
-} from './types';
+import type { ActionKind, ActionStatus, Approval, ConnectVia, Scope, UploadedDraftFile, UserSettings } from './types';
 
 // ------------------------------------------------------------------ Moodle client
 

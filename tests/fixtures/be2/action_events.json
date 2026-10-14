@@ -1,0 +1,342 @@
+{
+  "events": [
+    {
+      "id": 9007,
+      "name": "Report 0 is due",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_assign",
+      "modulename": "assign",
+      "activityname": "Report 0",
+      "instance": 15,
+      "eventtype": "due",
+      "timestart": 1791817140,
+      "timesort": 1791817140,
+      "overdue": true,
+      "course": {
+        "id": 101,
+        "fullname": "Introduction to Finance &amp; Accounting",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Add submission",
+        "url": "https://moodle.example.edu/mod/assign/view.php?id=5005",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=101&time=1791817140",
+      "url": "https://moodle.example.edu/mod/assign/view.php?id=5005"
+    },
+    {
+      "id": 9009,
+      "name": "Survey 1 opens",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_questionnaire",
+      "modulename": "questionnaire",
+      "activityname": "Survey 1",
+      "instance": 17,
+      "eventtype": "open",
+      "timestart": 1791849600,
+      "timesort": 1791849600,
+      "overdue": false,
+      "course": {
+        "id": 104,
+        "fullname": "Cross-Cultural Communication",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Answer the questions",
+        "url": "https://moodle.example.edu/mod/questionnaire/view.php?id=5007",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=104&time=1791849600",
+      "url": "https://moodle.example.edu/mod/questionnaire/view.php?id=5007"
+    },
+    {
+      "id": 9002,
+      "name": "Quiz A opens",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_quiz",
+      "modulename": "quiz",
+      "activityname": "Quiz A",
+      "instance": 12,
+      "eventtype": "open",
+      "timestart": 1791936000,
+      "timesort": 1791936000,
+      "overdue": false,
+      "course": {
+        "id": 101,
+        "fullname": "Introduction to Finance &amp; Accounting",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Attempt quiz now",
+        "url": "https://moodle.example.edu/mod/quiz/view.php?id=5002",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=101&time=1791936000",
+      "url": "https://moodle.example.edu/mod/quiz/view.php?id=5002"
+    },
+    {
+      "id": 9001,
+      "name": "Report 1 is due",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_assign",
+      "modulename": "assign",
+      "activityname": "Report 1",
+      "instance": 11,
+      "eventtype": "due",
+      "timestart": 1792076340,
+      "timesort": 1792076340,
+      "overdue": false,
+      "course": {
+        "id": 101,
+        "fullname": "Introduction to Finance &amp; Accounting",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Add submission",
+        "url": "https://moodle.example.edu/mod/assign/view.php?id=5001",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=101&time=1792076340",
+      "url": "https://moodle.example.edu/mod/assign/view.php?id=5001"
+    },
+    {
+      "id": 9008,
+      "name": "Elective Essay is due",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_assign",
+      "modulename": "assign",
+      "activityname": "Elective Essay",
+      "instance": 16,
+      "eventtype": "due",
+      "timestart": 1792112400,
+      "timesort": 1792112400,
+      "overdue": false,
+      "course": {
+        "id": 103,
+        "fullname": "Hidden Elective",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Add submission",
+        "url": "https://moodle.example.edu/mod/assign/view.php?id=5006",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=103&time=1792112400",
+      "url": "https://moodle.example.edu/mod/assign/view.php?id=5006"
+    },
+    {
+      "id": 9003,
+      "name": "Quiz A closes",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_quiz",
+      "modulename": "quiz",
+      "activityname": "Quiz A",
+      "instance": 12,
+      "eventtype": "close",
+      "timestart": 1792137600,
+      "timesort": 1792137600,
+      "overdue": false,
+      "course": {
+        "id": 101,
+        "fullname": "Introduction to Finance &amp; Accounting",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Attempt quiz now",
+        "url": "https://moodle.example.edu/mod/quiz/view.php?id=5002",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=101&time=1792137600",
+      "url": "https://moodle.example.edu/mod/quiz/view.php?id=5002"
+    },
+    {
+      "id": 9011,
+      "name": "Discussion Post is due",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_forum",
+      "modulename": "forum",
+      "activityname": "Discussion Post",
+      "instance": 18,
+      "eventtype": "due",
+      "timestart": 1792227600,
+      "timesort": 1792227600,
+      "overdue": false,
+      "course": {
+        "id": 104,
+        "fullname": "Cross-Cultural Communication",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Add a new discussion topic",
+        "url": "https://moodle.example.edu/mod/forum/view.php?id=5008",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=104&time=1792227600",
+      "url": "https://moodle.example.edu/mod/forum/view.php?id=5008"
+    },
+    {
+      "id": 9006,
+      "name": "Case Memo is due",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_assign",
+      "modulename": "assign",
+      "activityname": "Case Memo",
+      "instance": 14,
+      "eventtype": "due",
+      "timestart": 1792249200,
+      "timesort": 1792249200,
+      "overdue": false,
+      "course": {
+        "id": 102,
+        "fullname": "Seminar in Marketing",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Add submission",
+        "url": "https://moodle.example.edu/mod/assign/view.php?id=5004",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=102&time=1792249200",
+      "url": "https://moodle.example.edu/mod/assign/view.php?id=5004"
+    },
+    {
+      "id": 9010,
+      "name": "Survey 1 closes",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_questionnaire",
+      "modulename": "questionnaire",
+      "activityname": "Survey 1",
+      "instance": 17,
+      "eventtype": "close",
+      "timestart": 1792421940,
+      "timesort": 1792421940,
+      "overdue": false,
+      "course": {
+        "id": 104,
+        "fullname": "Cross-Cultural Communication",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Answer the questions",
+        "url": "https://moodle.example.edu/mod/questionnaire/view.php?id=5007",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=104&time=1792421940",
+      "url": "https://moodle.example.edu/mod/questionnaire/view.php?id=5007"
+    },
+    {
+      "id": 9004,
+      "name": "Quiz B opens",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_quiz",
+      "modulename": "quiz",
+      "activityname": "Quiz B",
+      "instance": 13,
+      "eventtype": "open",
+      "timestart": 1792458000,
+      "timesort": 1792458000,
+      "overdue": false,
+      "course": {
+        "id": 102,
+        "fullname": "Seminar in Marketing",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Attempt quiz now",
+        "url": "https://moodle.example.edu/mod/quiz/view.php?id=5003",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=102&time=1792458000",
+      "url": "https://moodle.example.edu/mod/quiz/view.php?id=5003"
+    },
+    {
+      "id": 9005,
+      "name": "Quiz B closes",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_quiz",
+      "modulename": "quiz",
+      "activityname": "Quiz B",
+      "instance": 13,
+      "eventtype": "close",
+      "timestart": 1792465200,
+      "timesort": 1792465200,
+      "overdue": false,
+      "course": {
+        "id": 102,
+        "fullname": "Seminar in Marketing",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Attempt quiz now",
+        "url": "https://moodle.example.edu/mod/quiz/view.php?id=5003",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=102&time=1792465200",
+      "url": "https://moodle.example.edu/mod/quiz/view.php?id=5003"
+    },
+    {
+      "id": 9012,
+      "name": "External Tool is due",
+      "description": "",
+      "descriptionformat": 1,
+      "component": "mod_lti",
+      "modulename": "lti",
+      "activityname": "External Tool",
+      "instance": 19,
+      "eventtype": "due",
+      "timestart": 1792544400,
+      "timesort": 1792544400,
+      "overdue": false,
+      "course": {
+        "id": 102,
+        "fullname": "Seminar in Marketing",
+        "shortname": "X"
+      },
+      "action": {
+        "name": "Open",
+        "url": "https://moodle.example.edu/mod/lti/view.php?id=5009",
+        "itemcount": 1,
+        "actionable": true,
+        "showitemcount": false
+      },
+      "viewurl": "https://moodle.example.edu/calendar/view.php?view=day&course=102&time=1792544400",
+      "url": "https://moodle.example.edu/mod/lti/view.php?id=5009"
+    }
+  ],
+  "firstid": 9007,
+  "lastid": 9012
+}

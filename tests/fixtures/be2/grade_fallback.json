@@ -1,0 +1,135 @@
+{
+  "assignments": {
+    "courses": [
+      {
+        "id": 101,
+        "assignments": [
+          {
+            "id": 11,
+            "cmid": 5001,
+            "name": "Report 1",
+            "duedate": 1792076340,
+            "grade": 100
+          },
+          {
+            "id": 12,
+            "cmid": 5010,
+            "name": "Case &amp; Memo",
+            "duedate": 1792249200,
+            "grade": 50
+          },
+          {
+            "id": 13,
+            "cmid": 5011,
+            "name": "Ungraded Essay",
+            "duedate": 1791817140,
+            "grade": 100
+          },
+          {
+            "id": 14,
+            "cmid": 5012,
+            "name": "Scale Task",
+            "duedate": 0,
+            "grade": -1
+          }
+        ]
+      }
+    ],
+    "warnings": []
+  },
+  "statuses": {
+    "11": {
+      "lastattempt": {
+        "graded": true
+      },
+      "feedback": {
+        "grade": {
+          "grade": "85.00000",
+          "timemodified": 1791613800
+        },
+        "gradefordisplay": "85.00 / 100.00",
+        "gradeddate": 1791613800,
+        "plugins": [
+          {
+            "type": "comments",
+            "name": "Feedback comments",
+            "fileareas": [],
+            "editorfields": [
+              {
+                "name": "comments",
+                "description": "Feedback comments",
+                "text": "<p>Well done.</p>",
+                "format": 1
+              }
+            ]
+          },
+          {
+            "type": "file",
+            "name": "Feedback files",
+            "fileareas": [
+              {
+                "area": "feedback_files",
+                "files": []
+              }
+            ],
+            "editorfields": []
+          }
+        ]
+      }
+    },
+    "12": {
+      "feedback": {
+        "grade": {
+          "grade": "40.00000",
+          "timemodified": 1791500000
+        },
+        "gradefordisplay": "40.00 / 50.00",
+        "gradeddate": 1791500000,
+        "plugins": []
+      }
+    },
+    "13": {
+      "lastattempt": {
+        "graded": false
+      },
+      "warnings": []
+    },
+    "14": {
+      "feedback": {
+        "grade": {
+          "grade": "-1.00000",
+          "timemodified": 0
+        },
+        "gradefordisplay": "Good",
+        "gradeddate": 0,
+        "plugins": []
+      }
+    }
+  },
+  "quizzes": {
+    "quizzes": [
+      {
+        "id": 21,
+        "coursemodule": 5002,
+        "name": "Quiz A",
+        "grade": 10
+      },
+      {
+        "id": 22,
+        "coursemodule": 5003,
+        "name": "Quiz B",
+        "grade": 10
+      }
+    ],
+    "warnings": []
+  },
+  "bestGrades": {
+    "21": {
+      "hasgrade": true,
+      "grade": 8.5
+    },
+    "22": {
+      "hasgrade": false
+    }
+  }
+}

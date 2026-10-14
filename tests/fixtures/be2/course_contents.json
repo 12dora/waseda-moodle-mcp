@@ -1,0 +1,202 @@
+[
+  {
+    "id": 2001,
+    "name": "",
+    "visible": 1,
+    "summary": "",
+    "summaryformat": 1,
+    "section": 0,
+    "uservisible": true,
+    "modules": [
+      {
+        "id": 5101,
+        "instance": 1,
+        "name": "Announcements",
+        "modname": "forum",
+        "visible": 1,
+        "uservisible": true,
+        "completion": 0,
+        "dates": [],
+        "url": "https://moodle.example.edu/mod/forum/view.php?id=5101",
+        "completiondata": {
+          "state": 0,
+          "hascompletion": false
+        }
+      }
+    ]
+  },
+  {
+    "id": 2002,
+    "name": "Week 1 &amp; Orientation",
+    "visible": 1,
+    "summary": "<p>Intro week</p>",
+    "summaryformat": 1,
+    "section": 1,
+    "uservisible": true,
+    "modules": [
+      {
+        "id": 5102,
+        "instance": 2,
+        "name": "Lecture 1 Slides",
+        "modname": "resource",
+        "visible": 1,
+        "uservisible": true,
+        "completion": 1,
+        "dates": [],
+        "url": "https://moodle.example.edu/mod/resource/view.php?id=5102",
+        "completiondata": {
+          "state": 1,
+          "hascompletion": true
+        },
+        "contents": [
+          {
+            "type": "file",
+            "filename": "Lecture1_Slides.pdf",
+            "filepath": "/",
+            "filesize": 123456,
+            "mimetype": "application/pdf",
+            "timemodified": 1790816400,
+            "fileurl": "https://moodle.example.edu/webservice/pluginfile.php/10/mod_resource/content/1/Lecture1_Slides.pdf?forcedownload=1"
+          }
+        ]
+      },
+      {
+        "id": 5001,
+        "instance": 11,
+        "name": "Report 1",
+        "modname": "assign",
+        "visible": 1,
+        "uservisible": true,
+        "completion": 2,
+        "dates": [
+          {
+            "label": "開始:",
+            "timestamp": 1790780400,
+            "dataid": "allowsubmissionsfromdate"
+          },
+          {
+            "label": "期限:",
+            "timestamp": 1792076340,
+            "dataid": "duedate"
+          }
+        ],
+        "url": "https://moodle.example.edu/mod/assign/view.php?id=5001",
+        "completiondata": {
+          "state": 0,
+          "hascompletion": true
+        }
+      },
+      {
+        "id": 5103,
+        "instance": 3,
+        "name": "Teacher Only Notes",
+        "modname": "page",
+        "visible": 0,
+        "uservisible": false,
+        "completion": 0,
+        "dates": [],
+        "url": "https://moodle.example.edu/mod/page/view.php?id=5103"
+      },
+      {
+        "id": 5104,
+        "instance": 4,
+        "name": "Read chapter 1 before class",
+        "modname": "label",
+        "visible": 1,
+        "uservisible": true,
+        "completion": 0,
+        "dates": []
+      }
+    ]
+  },
+  {
+    "id": 2003,
+    "name": "Week 2",
+    "visible": 1,
+    "summary": "",
+    "summaryformat": 1,
+    "section": 2,
+    "uservisible": true,
+    "modules": [
+      {
+        "id": 5105,
+        "instance": 5,
+        "name": "Case Materials",
+        "modname": "folder",
+        "visible": 1,
+        "uservisible": true,
+        "completion": 0,
+        "dates": [],
+        "url": "https://moodle.example.edu/mod/folder/view.php?id=5105",
+        "contents": [
+          {
+            "type": "file",
+            "filename": "Case_A.xlsx",
+            "filepath": "/data/",
+            "filesize": 2048,
+            "mimetype": "application/vnd.ms-excel",
+            "timemodified": 1790816400,
+            "fileurl": "https://moodle.example.edu/webservice/pluginfile.php/10/mod_resource/content/1/Case_A.xlsx?forcedownload=1"
+          },
+          {
+            "type": "file",
+            "filename": "Case_B.docx",
+            "filepath": "/",
+            "filesize": 4096,
+            "mimetype": "application/msword",
+            "timemodified": 1790816400,
+            "fileurl": "https://moodle.example.edu/webservice/pluginfile.php/10/mod_resource/content/1/Case_B.docx?forcedownload=1"
+          }
+        ]
+      },
+      {
+        "id": 5002,
+        "instance": 12,
+        "name": "Quiz A",
+        "modname": "quiz",
+        "visible": 1,
+        "uservisible": true,
+        "completion": 2,
+        "dates": [
+          {
+            "label": "Opens:",
+            "timestamp": 1791936000,
+            "dataid": "timeopen"
+          },
+          {
+            "label": "Closes:",
+            "timestamp": 1792137600,
+            "dataid": "timeclose"
+          }
+        ],
+        "url": "https://moodle.example.edu/mod/quiz/view.php?id=5002",
+        "completiondata": {
+          "state": 2,
+          "hascompletion": true
+        }
+      }
+    ]
+  },
+  {
+    "id": 2004,
+    "name": "Hidden Section",
+    "visible": 0,
+    "summary": "",
+    "summaryformat": 1,
+    "section": 3,
+    "uservisible": false,
+    "modules": [
+      {
+        "id": 5106,
+        "instance": 6,
+        "name": "Secret",
+        "modname": "page",
+        "visible": 1,
+        "uservisible": true,
+        "completion": 0,
+        "dates": [],
+        "url": "https://moodle.example.edu/mod/page/view.php?id=5106"
+      }
+    ]
+  }
+]
