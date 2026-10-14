@@ -1108,3 +1108,78 @@ fieldset {
   font-weight: 650;
   font-size: 1.05em;
 }
+
+.badge-new {
+  background: var(--accent);
+  color: var(--on-accent);
+  letter-spacing: 0.02em;
+}
+
+.tag-source-text,
+.tag-source-activity {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.due-evidence {
+  font-size: 13px;
+  color: var(--text-muted);
+  border-left: 2px solid var(--border-strong);
+  padding-left: 8px;
+}
+
+.due-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.course-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.course-item label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.course-item label:hover {
+  background: var(--surface-2);
+}
+.course-item input {
+  margin-top: 4px;
+  accent-color: var(--accent);
+}
+.course-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.disclosure > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 4px 0;
+}
+.disclosure[open] > summary {
+  margin-bottom: 8px;
+}
+
+.sticky-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.update-list {
+  list-style: none;
+  padding: 0;
+}

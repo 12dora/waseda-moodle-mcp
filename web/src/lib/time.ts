@@ -63,15 +63,15 @@ export function formatDate(iso: string | null | undefined, lang: Lang): string {
   return datePart(jstParts(ms), lang, true);
 }
 
-export type DueGroup = 'overdue' | 'today' | 'tomorrow' | 'week' | 'later';
+export type DueGroup = 'overdue' | 'today' | 'tomorrow' | 'week' | 'later' | 'undated';
 
 /**
  * Bucket for the deadlines list. 'week' = within the next 7 calendar days (JST). A deadline at 00:00:00 belongs
- * to the previous day; pass `deadline: false` for opening times.
+ * to the previous day; pass `deadline: false` for opening times. No date at all → 'undated'.
  */
 export function dueGroup(iso: string | null | undefined, opts: FormatOptions = {}): DueGroup {
   const ms = parse(iso);
-  if (ms === null) return 'later';
+  if (ms === null) return 'undated';
   const now = opts.now ?? Date.now();
   if (ms < now) return 'overdue';
   const shift = opts.deadline !== false && isMidnightMs(ms) ? 1 : 0;
@@ -82,4 +82,4 @@ export function dueGroup(iso: string | null | undefined, opts: FormatOptions = {
   return 'later';
 }
 
-export const DUE_GROUPS: readonly DueGroup[] = ['overdue', 'today', 'tomorrow', 'week', 'later'];
+export const DUE_GROUPS: readonly DueGroup[] = ['overdue', 'today', 'tomorrow', 'week', 'later', 'undated'];

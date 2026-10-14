@@ -15,6 +15,7 @@ import { AppsPage } from './pages/Apps';
 import { ConnectPage } from './pages/Connect';
 import { DuePage } from './pages/Due';
 import { KeysPage } from './pages/Keys';
+import { MyCoursesPage } from './pages/MyCourses';
 import { OAuthConsentPage } from './pages/OAuthConsent';
 import { OverviewPage } from './pages/Overview';
 import { SettingsPage } from './pages/Settings';
@@ -41,6 +42,7 @@ function AppRoutes() {
         <Route element={<Layout />}>
           <Route index element={<OverviewPage />} />
           <Route path="due" element={<DuePage />} />
+          <Route path="courses" element={<MyCoursesPage />} />
           <Route path="keys" element={<KeysPage />} />
           <Route path="apps" element={<AppsPage />} />
           <Route path="actions" element={<ActionsPage />} />

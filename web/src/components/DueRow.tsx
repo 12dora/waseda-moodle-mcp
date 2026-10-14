@@ -1,6 +1,12 @@
 import type { DueItem } from '../api/types';
-import { useI18n } from '../i18n';
+import { type MessageKey, useI18n } from '../i18n';
 import { formatDateTime } from '../lib/time';
+
+const SOURCE_LABEL: Record<DueItem['source'], MessageKey> = {
+  calendar: 'due.source.calendar',
+  activity: 'due.group.undated',
+  text: 'due.source.text',
+};
 
 function Status({ item }: { item: DueItem }) {
   const { t } = useI18n();
@@ -10,12 +16,37 @@ function Status({ item }: { item: DueItem }) {
   return null;
 }
 
-export function DueRow({ item, showCourse = true }: { item: DueItem; showCourse?: boolean }) {
+function When({ item }: { item: DueItem }) {
   const { t, lang } = useI18n();
-  const when = item.dueAt ?? item.opensAt;
-  const label = item.dueAt
-    ? formatDateTime(item.dueAt, lang, { deadline: true })
-    : t('due.opens', { time: formatDateTime(item.opensAt, lang) });
+  if (item.dueAt) {
+    return (
+      <time dateTime={item.dueAt} className={item.overdue && !item.closed ? 'text-danger' : undefined}>
+        {formatDateTime(item.dueAt, lang, { deadline: true })}
+      </time>
+    );
+  }
+  if (item.opensAt) {
+    return <time dateTime={item.opensAt}>{t('due.opens', { time: formatDateTime(item.opensAt, lang) })}</time>;
+  }
+  return <span className="muted">-</span>;
+}
+
+/** Text-derived deadlines are guesses: show the quote and where it came from so the student can verify. */
+function Evidence({ item }: { item: DueItem }) {
+  const { t } = useI18n();
+  if (item.source !== 'text' || !item.evidence) return null;
+  return (
+    <div className="due-evidence">
+      <q>{item.evidence}</q>{' '}
+      <a href={item.sourceUrl ?? item.url} target="_blank" rel="noopener noreferrer">
+        {t('due.openSource')}
+      </a>
+    </div>
+  );
+}
+
+export function DueRow({ item, showCourse = true }: { item: DueItem; showCourse?: boolean }) {
+  const { t } = useI18n();
   return (
     <li className={`due-row${item.closed ? ' row-muted' : ''}`}>
       <div className="due-main">
@@ -23,14 +54,15 @@ export function DueRow({ item, showCourse = true }: { item: DueItem; showCourse?
           {item.name}
         </a>
         <div className="due-meta">
+          {item.isNew && <span className="badge badge-new">{t('due.new')}</span>}
           <span className="tag">{t(`kind.${item.kind}`)}</span>
+          <span className={`tag tag-source-${item.source}`}>{t(SOURCE_LABEL[item.source])}</span>
           {showCourse && <span className="due-course">{item.courseName}</span>}
         </div>
+        <Evidence item={item} />
       </div>
       <div className="due-when">
-        <time dateTime={when ?? undefined} className={item.overdue && !item.closed ? 'text-danger' : undefined}>
-          {label}
-        </time>
+        <When item={item} />
         <Status item={item} />
       </div>
     </li>

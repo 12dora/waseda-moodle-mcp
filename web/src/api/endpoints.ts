@@ -9,12 +9,13 @@ import type {
   AuditEntry,
   ConnectRequest,
   ConnectResult,
-  Course,
+  CoursesResponse,
   DueList,
   Me,
   OAuthRequestInfo,
   Scope,
   SettingsPatch,
+  UpdatesResponse,
   UserSettings,
 } from './types';
 
@@ -32,8 +33,8 @@ export const deleteAccount = () => api.del<unknown>('/api/me');
 export const patchSettings = (patch: SettingsPatch) => api.patch<{ settings: UserSettings }>('/api/settings', patch);
 
 export const getDue = (days = 14) => api.get<DueList>('/api/due', { query: { days } });
-export const getCourses = (classification = 'inprogress') =>
-  api.get<Course[]>('/api/courses', { query: { classification } });
+export const getCourses = () => api.get<CoursesResponse>('/api/courses');
+export const getUpdates = (days = 7) => api.get<UpdatesResponse>('/api/updates', { query: { days } });
 
 export const listKeys = () => api.get<ApiKey[]>('/api/keys');
 export const createKey = (name: string, scopes: Scope[]) =>

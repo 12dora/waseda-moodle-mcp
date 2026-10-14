@@ -1,71 +1,72 @@
 import { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { getDue, patchSettings } from '../api/endpoints';
-import type { DueItem } from '../api/types';
-import { Button } from '../components/Button';
+import { getDue } from '../api/endpoints';
+import type { DueItem, DueList } from '../api/types';
 import { Card } from '../components/Card';
 import { DueRow } from '../components/DueRow';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBox } from '../components/ErrorBox';
 import { PageHeader } from '../components/Layout';
+import { ScopeBanner } from '../components/ScopeBanner';
 import { PageLoading } from '../components/Spinner';
-import { useToast } from '../components/Toast';
-import { useT } from '../i18n';
-import { errorText } from '../lib/errors';
-import { DUE_GROUPS, type DueGroup, dueGroup } from '../lib/time';
+import { useI18n } from '../i18n';
+import { DUE_GROUPS, type DueGroup, dueGroup, formatDateTime } from '../lib/time';
 import { useAsync } from '../lib/useAsync';
-import { useSession } from '../session';
+
+function groupItems(items: DueItem[], courseId: number | 'all'): Array<{ group: DueGroup; items: DueItem[] }> {
+  const now = Date.now();
+  const out = new Map<DueGroup, DueItem[]>();
+  for (const it of items) {
+    if (courseId !== 'all' && it.courseId !== courseId) continue;
+    const g = it.overdue ? 'overdue' : dueGroup(it.dueAt ?? it.opensAt, { now, deadline: it.dueAt !== null });
+    out.set(g, [...(out.get(g) ?? []), it]);
+  }
+  return DUE_GROUPS.flatMap((g) => {
+    const list = out.get(g);
+    return list ? [{ group: g, items: list }] : [];
+  });
+}
+
+function courseOptions(items: DueItem[]): Array<[number, string]> {
+  const map = new Map<number, string>();
+  for (const it of items) map.set(it.courseId, it.courseName);
+  return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+}
+
+function DueFooter({ list }: { list: DueList }) {
+  const { t, lang } = useI18n();
+  const { checked, stale, checkedAt } = list.sweep;
+  return (
+    <div className="due-footer">
+      <span>
+        {checkedAt
+          ? t('due.footer', { checked, time: formatDateTime(checkedAt, lang) })
+          : t('due.footerNoTime', { checked })}
+      </span>
+      {stale > 0 && <span>{t('due.stale', { count: stale })}</span>}
+      {list.scope.otherCount > 0 && (
+        <span>
+          {t('due.otherCourses', { count: list.scope.otherCount })} <Link to="/courses">{t('due.manage')}</Link>
+        </span>
+      )}
+      {list.truncated && <span>{t('due.truncated')}</span>}
+    </div>
+  );
+}
 
 export function DuePage() {
-  const t = useT();
-  const toast = useToast();
-  const { me, setSettings } = useSession();
+  const { t } = useI18n();
   const due = useAsync(() => getDue(14));
   const [courseId, setCourseId] = useState<number | 'all'>('all');
-  const [hiding, setHiding] = useState(false);
   const filterId = useId();
 
-  const courses = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const it of due.data?.items ?? []) map.set(it.courseId, it.courseName);
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [due.data]);
-
-  const groups = useMemo(() => {
-    const now = Date.now();
-    const out = new Map<DueGroup, DueItem[]>();
-    for (const it of due.data?.items ?? []) {
-      if (courseId !== 'all' && it.courseId !== courseId) continue;
-      const g = it.overdue ? 'overdue' : dueGroup(it.dueAt ?? it.opensAt, { now, deadline: it.dueAt !== null });
-      const list = out.get(g) ?? [];
-      list.push(it);
-      out.set(g, list);
-    }
-    return DUE_GROUPS.flatMap((g) => {
-      const items = out.get(g);
-      return items ? [{ group: g, items }] : [];
-    });
-  }, [due.data, courseId]);
-
-  const hideCourse = async (id: number) => {
-    setHiding(true);
-    try {
-      const ids = [...new Set([...me.user.settings.hiddenCourseIds, id])];
-      const { settings } = await patchSettings({ hiddenCourseIds: ids });
-      setSettings(settings);
-      setCourseId('all');
-      toast.show(t('due.courseHidden'));
-      due.reload();
-    } catch (e) {
-      toast.show(errorText(e, t), 'error');
-    } finally {
-      setHiding(false);
-    }
-  };
+  const courses = useMemo(() => courseOptions(due.data?.items ?? []), [due.data]);
+  const groups = useMemo(() => groupItems(due.data?.items ?? [], courseId), [due.data, courseId]);
 
   return (
     <>
       <PageHeader title={t('due.title')} desc={t('due.window')} />
+      <ScopeBanner />
       {due.loading && !due.data && <PageLoading label={t('common.loading')} />}
       {due.error != null && <ErrorBox error={due.error} onRetry={due.reload} />}
       {due.data && (
@@ -89,24 +90,7 @@ export function DuePage() {
                 ))}
               </select>
             </div>
-            {courseId !== 'all' && (
-              <Button size="sm" variant="ghost" busy={hiding} onClick={() => hideCourse(courseId)}>
-                {t('due.hideCourse')}
-              </Button>
-            )}
           </div>
-
-          {(due.data.hiddenCourseCount > 0 || due.data.truncated) && (
-            <div className="notes">
-              {due.data.hiddenCourseCount > 0 && (
-                <p className="muted">
-                  {t('due.hiddenCount', { count: due.data.hiddenCourseCount })}{' '}
-                  <Link to="/settings#hidden">{t('due.manage')}</Link>
-                </p>
-              )}
-              {due.data.truncated && <p className="muted">{t('due.truncated')}</p>}
-            </div>
-          )}
 
           {groups.length === 0 ? (
             <Card>
@@ -122,7 +106,7 @@ export function DuePage() {
                 <ul className="due-list">
                   {items.map((item) => (
                     <DueRow
-                      key={`${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`}
+                      key={`${item.source}-${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`}
                       item={item}
                       showCourse={courseId === 'all'}
                     />
@@ -131,6 +115,7 @@ export function DuePage() {
               </Card>
             ))
           )}
+          <DueFooter list={due.data} />
         </>
       )}
     </>

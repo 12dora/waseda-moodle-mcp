@@ -13,7 +13,15 @@ export type {
   WriteMode,
 } from '../../../src/core/types';
 
-import type { CredentialInfo, IsoJst, Scope, UserInfo, UserSettings } from '../../../src/core/types';
+import type {
+  Course,
+  CourseUpdate,
+  CredentialInfo,
+  IsoJst,
+  Scope,
+  UserInfo,
+  UserSettings,
+} from '../../../src/core/types';
 
 export interface AppConfig {
   publicUrl: string;
@@ -74,5 +82,15 @@ export interface OAuthRequestInfo {
 export type ConnectRequest =
   | { code: string; switchAccount?: boolean }
   | { launch: string; via: 'paste'; passport?: string };
+
+export interface CoursesResponse {
+  mode: 'mine' | 'auto';
+  courses: Course[];
+}
+
+export interface UpdatesResponse {
+  updates: CourseUpdate[];
+  stats: { checked: number; stale: number; checkedAt: IsoJst | null };
+}
 
 export type SettingsPatch = Partial<UserSettings>;

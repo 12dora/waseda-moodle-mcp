@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { getDue, listActions } from '../api/endpoints';
+import { getDue, getUpdates, listActions } from '../api/endpoints';
 import type { Me } from '../api/types';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -9,6 +9,7 @@ import { DueRow } from '../components/DueRow';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBox } from '../components/ErrorBox';
 import { PageHeader } from '../components/Layout';
+import { ScopeBanner } from '../components/ScopeBanner';
 import { Spinner } from '../components/Spinner';
 import { type MessageKey, useI18n, useT } from '../i18n';
 import { formatDateTime } from '../lib/time';
@@ -72,7 +73,40 @@ function UpcomingCard() {
       {due.data && due.data.items.length > 0 && (
         <ul className="due-list">
           {due.data.items.slice(0, 5).map((item) => (
-            <DueRow key={`${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`} item={item} />
+            <DueRow key={`${item.source}-${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`} item={item} />
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+function UpdatesCard() {
+  const { t, lang } = useI18n();
+  const updates = useAsync(() => getUpdates(7));
+  const items = updates.data?.updates.slice(0, 5) ?? [];
+  return (
+    <Card title={t('overview.updates.title')}>
+      {updates.loading && <Spinner label={t('common.loading')} />}
+      {updates.error != null && <ErrorBox error={updates.error} onRetry={updates.reload} />}
+      {updates.data?.updates.length === 0 && <EmptyState>{t('overview.updates.empty')}</EmptyState>}
+      {items.length > 0 && (
+        <ul className="rows update-list">
+          {items.map((u) => (
+            <li key={`${u.cmid}-${u.at}`} className="row">
+              <div className="row-main">
+                <a href={u.url} target="_blank" rel="noopener noreferrer" className="due-name">
+                  {u.name}
+                </a>
+                <div className="row-meta">
+                  <span className={`badge ${u.change === 'new' ? 'badge-ok' : ''}`}>
+                    {t(u.change === 'new' ? 'overview.updates.new' : 'overview.updates.updated')}
+                  </span>
+                  <span>{u.courseName}</span>
+                  <time dateTime={u.at}>{formatDateTime(u.at, lang)}</time>
+                </div>
+              </div>
+            </li>
           ))}
         </ul>
       )}
@@ -165,6 +199,7 @@ export function OverviewPage() {
   return (
     <>
       <PageHeader title={t('overview.title')} />
+      <ScopeBanner />
       {count > 0 && (
         <div className="alert alert-info">
           <span>{t('overview.pending', { count: count >= PENDING_LIMIT ? `${PENDING_LIMIT}+` : count })}</span>
@@ -175,6 +210,7 @@ export function OverviewPage() {
         <ConnectionCard me={me} />
         <UpcomingCard />
       </div>
+      <UpdatesCard />
       <ClientCard />
     </>
   );

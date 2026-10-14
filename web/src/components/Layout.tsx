@@ -10,6 +10,7 @@ import { useToast } from './Toast';
 const NAV: ReadonlyArray<{ to: string; key: MessageKey; end?: boolean }> = [
   { to: '/', key: 'nav.overview', end: true },
   { to: '/due', key: 'nav.due' },
+  { to: '/courses', key: 'nav.courses' },
   { to: '/actions', key: 'nav.actions' },
   { to: '/keys', key: 'nav.keys' },
   { to: '/apps', key: 'nav.apps' },

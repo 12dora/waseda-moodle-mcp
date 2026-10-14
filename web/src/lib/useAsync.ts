@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-interface AsyncState<T> {
+export interface AsyncState<T> {
   data: T | undefined;
   error: unknown;
   loading: boolean;

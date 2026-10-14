@@ -66,7 +66,7 @@ describe('dueGroup', () => {
     expect(dueGroup('2026-10-16T00:00:00+09:00', { now })).toBe('tomorrow');
     expect(dueGroup('2026-10-20T23:59:00+09:00', { now })).toBe('week');
     expect(dueGroup('2026-10-21T10:00:00+09:00', { now })).toBe('later');
-    expect(dueGroup(null, { now })).toBe('later');
+    expect(dueGroup(null, { now })).toBe('undated');
   });
 
   it('keeps opening times on their own day', () => {
