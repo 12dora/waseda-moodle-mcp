@@ -3,12 +3,14 @@ import {
   academicYear,
   currentTerms,
   inCurrentTerm,
+  lookupSeenCourses,
   lookupTerms,
   parseSyllabusTerm,
   type SyllabusInfo,
   syllabusPKey,
   termFit,
 } from '../../src/core/services/syllabus';
+import { parseSchedule } from '../../src/core/services/syllabus-schedule';
 import { makeFakeContext } from '../helpers/fake-context';
 
 const NOW = new Date('2026-10-14T03:00:00Z'); // 2026-10-14 12:00 JST
@@ -60,6 +62,8 @@ describe('parseSyllabusTerm', () => {
       term: '秋クォーター',
       dayPeriod: '月１-２',
       instructors: ['Yamada Taro', 'Suzuki Hanako'],
+      slots: [{ weekday: 1, periodFrom: 1, periodTo: 2, night: false, classroom: null, campus: null }],
+      onDemand: false,
     });
     expect(parseSyllabusTerm(page('秋学期&nbsp;&nbsp;木３時限'))).toMatchObject({
       term: '秋学期',
@@ -171,6 +175,8 @@ describe('lookupTerms', () => {
       term: '秋クォーター',
       dayPeriod: '月１-２',
       instructors: ['Yamada Taro'],
+      slots: [{ weekday: 1, periodFrom: 1, periodTo: 2, night: false, classroom: null, campus: null }],
+      onDemand: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
@@ -192,6 +198,7 @@ describe('lookupTerms', () => {
       term: '冬クォーター',
       dayPeriod: null,
       instructors: [],
+      slots: [],
     };
     t.state.syllabusCache.set(C1.idnumber, { json: JSON.stringify(info), fetchedAt: NOW.getTime() - 30 * DAY });
     t.state.syllabusCache.set(C2.idnumber, { json: 'null', fetchedAt: NOW.getTime() - 30 * DAY });
@@ -290,6 +297,7 @@ describe('lookupTerms', () => {
       term: '春学期',
       dayPeriod: null,
       instructors: [],
+      slots: [],
     };
     t.state.syllabusCache.set(C1.idnumber, { json: JSON.stringify(stale), fetchedAt: NOW.getTime() - 400 * DAY });
     t.state.syllabusCache.set(C2.idnumber, {
@@ -310,6 +318,7 @@ describe('lookupTerms', () => {
       term: '秋クォーター',
       dayPeriod: null,
       instructors: [],
+      slots: [],
     };
     t.state.syllabusCache.set(C1.idnumber, { json: JSON.stringify(info), fetchedAt: NOW.getTime() - 500 * DAY });
     const res = await lookupTerms(t.ctx, [C1, C2], { syllabusLookup: false });
@@ -344,5 +353,183 @@ describe('lookupTerms', () => {
     vi.spyOn(t.store, 'getSyllabusCache').mockRejectedValue(new Error('d1 down'));
     vi.spyOn(t.store, 'putSyllabusCache').mockRejectedValue(new Error('d1 down'));
     expect((await lookupTerms(t.ctx, [C1])).get(1)?.term).toBe('秋クォーター');
+  });
+});
+
+// ------------------------------------------------------------------ schedule (slots, rooms, on-demand)
+
+const slot = (
+  weekday: number,
+  periodFrom: number,
+  periodTo: number,
+  extra: Partial<Parameters<typeof expectSlot>[0]> = {},
+) => expectSlot({ weekday, periodFrom, periodTo, ...extra });
+function expectSlot(s: {
+  weekday: number;
+  periodFrom: number;
+  periodTo: number;
+  night?: boolean;
+  classroom?: string | null;
+  campus?: string | null;
+}) {
+  return { night: false, classroom: null, campus: null, ...s };
+}
+
+describe('parseSchedule', () => {
+  it.each([
+    ['月１-２', [slot(1, 1, 2)]],
+    ['火４時限', [slot(2, 4, 4)]],
+    ['土５-６', [slot(6, 5, 6)]],
+    ['木夜６-７', [slot(4, 6, 7, { night: true })]],
+    ['金夜６時限', [slot(5, 6, 6, { night: true })]],
+    ['Thur.6-7(evening)', [slot(4, 6, 7, { night: true })]],
+    ['Mon.1-2', [slot(1, 1, 2)]],
+    ['Tues.3', [slot(2, 3, 3)]],
+    ['01:月１時限／02:水１時限', [slot(1, 1, 1), slot(3, 1, 1)]],
+    ['月３時限/木３時限', [slot(1, 3, 3), slot(4, 3, 3)]],
+    ['01:金３-４ 02:水３時限', [slot(5, 3, 4), slot(3, 3, 3)]],
+  ])('reads %s', (text, slots) => {
+    expect(parseSchedule({ dayPeriod: text })).toEqual({ slots, onDemand: false });
+  });
+
+  it('keeps the meeting of a hybrid and flags on-demand', () => {
+    expect(parseSchedule({ dayPeriod: '01:無フルOD／02:金１-２' })).toEqual({ slots: [slot(5, 1, 2)], onDemand: true });
+    expect(parseSchedule({ dayPeriod: '無フルOD' })).toEqual({ slots: [], onDemand: true });
+    expect(parseSchedule({ dayPeriod: 'On demand' })).toEqual({ slots: [], onDemand: true });
+    expect(parseSchedule({ dayPeriod: '01:無フルOD／02:火２時限／03:木１-２／04:無フルOD' })).toMatchObject({
+      slots: [slot(2, 2, 2), slot(4, 1, 2)],
+      onDemand: true,
+    });
+  });
+
+  it('has no slot for 無その他, empty and unreadable cells', () => {
+    for (const text of ['無その他', 'othersothers', '', null, '月9時限', '月3-2', '随時 無']) {
+      expect(parseSchedule({ dayPeriod: text })).toEqual({ slots: [], onDemand: false });
+    }
+  });
+
+  it('zips the classroom by slot number, or uses the only room, and adds the campus', () => {
+    expect(
+      parseSchedule({
+        dayPeriod: '01:金３-４／02:水３時限',
+        classroom: '01:２２-２０８／02:２２-７１９',
+        campus: '早稲田',
+      }).slots,
+    ).toEqual([
+      slot(5, 3, 4, { classroom: '22-208', campus: '早稲田' }),
+      slot(3, 3, 3, { classroom: '22-719', campus: '早稲田' }),
+    ]);
+    // the OD part has no room: the number, not the position among meetings, picks the room
+    expect(parseSchedule({ dayPeriod: '01:無フルOD／02:金１-２', classroom: '02:３-２０３' }).slots).toEqual([
+      slot(5, 1, 2, { classroom: '3-203' }),
+    ]);
+    expect(parseSchedule({ dayPeriod: '月１時限／木１時限', classroom: '１１-９０９（馬蹄形）' }).slots).toEqual([
+      slot(1, 1, 1, { classroom: '11-909(馬蹄形)' }),
+      slot(4, 1, 1, { classroom: '11-909(馬蹄形)' }),
+    ]);
+    expect(parseSchedule({ dayPeriod: '火２時限', classroom: '教室未定', campus: '' }).slots).toEqual([slot(2, 2, 2)]);
+  });
+});
+
+describe('parseSyllabusTerm (schedule cells)', () => {
+  const full = (term: string, room: string, campus: string) =>
+    `<html><body><table>${row('学期曜日時限', term)}${row('使用教室', room)}${row('キャンパス', campus)}</table></body></html>`;
+
+  it('reads night slots with room and campus', () => {
+    const parsed = parseSyllabusTerm(full('秋クォーター&nbsp;&nbsp;木夜６-７', '１１-９０９（馬蹄形）', '早稲田'));
+    expect(parsed).toMatchObject({
+      status: 'ok',
+      term: '秋クォーター',
+      onDemand: false,
+      slots: [slot(4, 6, 7, { night: true, classroom: '11-909(馬蹄形)', campus: '早稲田' })],
+    });
+  });
+
+  it('reads a multi-slot cell and an empty room cell (&nbsp;)', () => {
+    const parsed = parseSyllabusTerm(full('秋学期&nbsp;&nbsp;01:無フルOD／02:金１-２', '&nbsp;', '早稲田'));
+    expect(parsed).toMatchObject({ onDemand: true, slots: [slot(5, 1, 2, { campus: '早稲田' })] });
+  });
+
+  it('reads the <BR>-separated search-row form', () => {
+    const parsed = parseSyllabusTerm(
+      full('秋学期&nbsp;&nbsp;01:金３-４<BR>02:水３時限', '01:２２-２０８<BR>02:２２-７１９', '早稲田'),
+    );
+    expect(parsed).toMatchObject({
+      slots: [
+        slot(5, 3, 4, { classroom: '22-208', campus: '早稲田' }),
+        slot(3, 3, 3, { classroom: '22-719', campus: '早稲田' }),
+      ],
+    });
+  });
+
+  it('treats 集中講義（秋学期） as the intensive term with no slot', () => {
+    expect(parseSyllabusTerm(page('集中講義（秋学期）&nbsp;&nbsp;無その他'))).toMatchObject({
+      term: '集中',
+      dayPeriod: '無その他',
+      slots: [],
+      onDemand: false,
+    });
+  });
+});
+
+describe('syllabus cache schema', () => {
+  it('re-parses a pre-schedule row for use and fetches it again, keeping the old answer when the site fails', async () => {
+    const t = makeFakeContext();
+    const legacy = { pKey: PK1, year: 2026, term: '秋クォーター', dayPeriod: '月１-２', instructors: [] };
+    t.state.syllabusCache.set(C1.idnumber, { json: JSON.stringify(legacy), fetchedAt: NOW.getTime() - DAY });
+    const fetchFn = stubFetch({}, 503);
+    const res = await lookupTerms(t.ctx, [C1]);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(res.get(1)?.slots).toEqual([slot(1, 1, 2)]);
+  });
+
+  it('replaces a pre-schedule row by the freshly fetched one', async () => {
+    const t = makeFakeContext();
+    const legacy = { pKey: PK1, year: 2026, term: '秋クォーター', dayPeriod: '月１-２', instructors: [] };
+    t.state.syllabusCache.set(C1.idnumber, { json: JSON.stringify(legacy), fetchedAt: NOW.getTime() - DAY });
+    stubFetch({ [PK1]: page('秋クォーター&nbsp;&nbsp;月３時限') });
+    await lookupTerms(t.ctx, [C1]);
+    expect(JSON.parse(t.state.syllabusCache.get(C1.idnumber)?.json ?? '')).toMatchObject({
+      slots: [slot(1, 3, 3)],
+    });
+  });
+});
+
+describe('lookupSeenCourses', () => {
+  const courses = [1, 2, 3, 4, 5].map((n) => course(n, `202657001000620${n}`));
+
+  it('serves the courses an earlier lookup of the request presented, within the request fetch budget', async () => {
+    const fetchFn = vi.fn(async () => new Response(page('秋学期&nbsp;&nbsp;月１時限')));
+    vi.stubGlobal('fetch', fetchFn);
+    const t = makeFakeContext();
+    await lookupTerms(t.ctx, courses); // the course scope: 3 of 5 fetched
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+
+    const res = await lookupSeenCourses(t.ctx, [1, 4, 5, 99]);
+    expect(fetchFn).toHaveBeenCalledTimes(3); // budget of the request is used up
+    expect(res.get(1)?.slots).toEqual([slot(1, 1, 1)]);
+    expect(res.get(4)).toBeNull();
+    expect(res.has(99)).toBe(false); // never presented: nothing to look up
+  });
+
+  it('a new request (context) has its own list of presented courses and its own budget', async () => {
+    const fetchFn = vi.fn(async () => new Response(page('秋学期&nbsp;&nbsp;月１時限')));
+    vi.stubGlobal('fetch', fetchFn);
+    const first = makeFakeContext();
+    await lookupTerms(first.ctx, courses);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    const second = makeFakeContext();
+    second.state.syllabusCache = first.state.syllabusCache;
+    expect((await lookupSeenCourses(second.ctx, [4])).size).toBe(0);
+    await lookupTerms(second.ctx, courses);
+    expect(fetchFn).toHaveBeenCalledTimes(5);
+  });
+
+  it('does not fetch when the presenting lookup was cache-only', async () => {
+    const fetchFn = stubFetch({});
+    const t = makeFakeContext();
+    await lookupTerms(t.ctx, courses, { syllabusLookup: false });
+    await lookupSeenCourses(t.ctx, [1, 2]);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });

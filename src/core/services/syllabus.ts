@@ -1,6 +1,7 @@
 /**
  * Term lookup from the public Waseda syllabus (www.wsl.waseda.jp): idnumber -> pKey -> detail page -> 学期曜日時限.
- * Moodle cannot tell 秋クォーター from 冬クォーター (all class courses span 9/21-3/31), the syllabus can.
+ * Moodle cannot tell 秋クォーター from 冬クォーター (all class courses span 9/21-3/31), the syllabus can. The same page
+ * carries the weekly meeting slots (day, periods, room, campus) the timetable is built from (syllabus-schedule.ts).
  * Policy: on-demand only (enrolled class courses), sequential, <= 3 fetches and one 3 s deadline per call, results (also
  * "none") cached globally for the academic year, failures cached as "unknown" for an hour. robots.txt disallows
  * crawlers, so there is no search-form scraping.
@@ -9,6 +10,9 @@
 import type { ServiceContext } from '../context';
 import { decodeEntities } from '../html';
 import { isoJst, nowMs } from '../time';
+import { parseSchedule, type Schedule, type SyllabusSlot } from './syllabus-schedule';
+
+export type { SyllabusSlot };
 
 const DETAIL_URL = 'https://www.wsl.waseda.jp/syllabus/JAA104.php';
 const USER_AGENT = 'waseda-moodle-mcp/0.1 (+syllabus term lookup)';
@@ -23,7 +27,9 @@ const UNKNOWN_JSON = '{"unknown":true}';
 /** A term counts as current this long before it starts (pre-course material and deadlines appear earlier). */
 const TERM_LOOKAHEAD_MS = 14 * DAY_MS;
 const EMPTY_MARKER = '参照可能なシラバス情報はありません';
-const TERM_RE = /^(春学期|秋学期|春クォーター|夏クォーター|秋クォーター|冬クォーター|通年|集中)/;
+/** `集中講義（秋学期）` counts as 集中: whether it is an autumn block does not change that it has no weekly slot. */
+const TERM_RE =
+  /^(春学期|秋学期|春クォーター|夏クォーター|秋クォーター|冬クォーター|通年|集中)(?:講義(?:[（(][^）)]*[）)])?)?/;
 
 export interface SyllabusInfo {
   pKey: string;
@@ -31,10 +37,16 @@ export interface SyllabusInfo {
   term: string | null; // 春クォーター, 秋学期, 通年, ...; null when the cell has no recognised term
   dayPeriod: string | null; // e.g. "月１-２"
   instructors: string[];
+  /**
+   * Meeting slots and the on-demand flag. Absent on rows cached before the schedule parser existed (cache schema v1):
+   * those are re-parsed from `dayPeriod` on read and fetched again lazily.
+   */
+  slots?: SyllabusSlot[];
+  onDemand?: boolean;
 }
 
 export type SyllabusParse =
-  | { status: 'ok'; term: string | null; dayPeriod: string | null; instructors: string[] }
+  | ({ status: 'ok'; term: string | null; dayPeriod: string | null; instructors: string[] } & Schedule)
   | { status: 'empty' | 'error' };
 
 // ------------------------------------------------------------------ pKey
@@ -73,12 +85,12 @@ function cellText(html: string, label: string): string | null {
 }
 
 function splitTermCell(text: string): { term: string | null; dayPeriod: string | null } {
-  const term = TERM_RE.exec(text)?.[1] ?? null;
-  const rest = term ? text.slice(term.length).trim() : text;
-  return { term, dayPeriod: rest || null };
+  const m = TERM_RE.exec(text);
+  const rest = m ? text.slice(m[0].length).trim() : text;
+  return { term: m?.[1] ?? null, dayPeriod: rest || null };
 }
 
-/** `学期曜日時限` (ja) -> term + day/period; `担当教員` -> instructors. */
+/** `学期曜日時限` (ja) -> term + day/period + meeting slots (with `使用教室` / `キャンパス`); `担当教員` -> instructors. */
 export function parseSyllabusTerm(html: string): SyllabusParse {
   const cell = cellText(html, '学期曜日時限');
   if (cell === null) return { status: html.includes(EMPTY_MARKER) ? 'empty' : 'error' };
@@ -86,7 +98,13 @@ export function parseSyllabusTerm(html: string): SyllabusParse {
     .split(/[、／,，]/)
     .map((s) => s.trim())
     .filter(Boolean);
-  return { status: 'ok', ...splitTermCell(cell), instructors };
+  const termCell = splitTermCell(cell);
+  const schedule = parseSchedule({
+    dayPeriod: termCell.dayPeriod,
+    classroom: cellText(html, '使用教室'),
+    campus: cellText(html, 'キャンパス'),
+  });
+  return { status: 'ok', ...termCell, instructors, ...schedule };
 }
 
 // ------------------------------------------------------------------ current terms
@@ -174,8 +192,8 @@ async function fetchSyllabus(course: LookupCourse, budget: FetchBudget): Promise
   const pKey = buildPKey({ ...parts, school: parts.courseKey.slice(0, 2) });
   const page = await fetchDetail(pKey, budget);
   if (page.status === 'ok') {
-    const { term, dayPeriod, instructors } = page;
-    return { kind: 'known', info: { pKey, year: parts.year, term, dayPeriod, instructors } };
+    const { term, dayPeriod, instructors, slots, onDemand } = page;
+    return { kind: 'known', info: { pKey, year: parts.year, term, dayPeriod, instructors, slots, onDemand } };
   }
   if (page.status === 'empty') return { kind: 'known', info: null };
   return { kind: page.status === 'skipped' ? 'skipped' : 'unknown' };
@@ -194,9 +212,11 @@ function readCached(idnumber: string, row: { json: string; fetchedAt: number }, 
     const parsed = JSON.parse(row.json) as SyllabusInfo | { unknown: true } | null;
     const age = at - row.fetchedAt;
     if (isUnknownMarker(parsed)) return { info: null, fresh: age < UNKNOWN_TTL_MS };
-    const info = parsed as SyllabusInfo | null;
+    const stored = parsed as SyllabusInfo | null;
+    const legacy = stored !== null && stored.slots === undefined;
+    const info = legacy ? { ...stored, ...parseSchedule({ dayPeriod: stored.dayPeriod }) } : stored;
     const yearOk = info === null || info.year === Number(idnumber.slice(0, 4));
-    return { info, fresh: yearOk && age < CACHE_TTL_MS };
+    return { info, fresh: yearOk && !legacy && age < CACHE_TTL_MS };
   } catch {
     return null;
   }
@@ -215,17 +235,46 @@ async function readCache(ctx: ServiceContext, idnumbers: string[], at: number): 
   return out;
 }
 
+/** What one request (= one ServiceContext) has already asked, so a second service call can build on it. */
+interface RequestState {
+  seen: Map<number, LookupCourse>;
+  spent: number; // fetches made so far in this request
+  enabled: boolean; // whether the last lookup was allowed to fetch
+}
+
+const requests = new WeakMap<ServiceContext, RequestState>();
+
+function requestState(ctx: ServiceContext): RequestState {
+  let state = requests.get(ctx);
+  if (!state) {
+    state = { seen: new Map(), spent: 0, enabled: true };
+    requests.set(ctx, state);
+  }
+  return state;
+}
+
+async function persist(ctx: ServiceContext, idnumber: string, found: LookupResult, at: number): Promise<void> {
+  try {
+    await ctx.store.putSyllabusCache(idnumber, found.kind === 'known' ? JSON.stringify(found.info) : UNKNOWN_JSON, at);
+  } catch {
+    /* best effort */
+  }
+}
+
 /**
- * Term info per course id (`null` = unknown). Never throws: the scope must not depend on a third-party site.
+ * Syllabus info per course id (`null` = unknown). Never throws: the scope must not depend on a third-party site.
  * `syllabusLookup: false` (kill switch, and the scheduled sweep) serves cached rows only and fetches nothing.
- * At most 3 fetches and 3 s in total per call.
+ * At most 3 fetches and 3 s in total per call; `sharedBudget` makes the 3 cover every call of the same request.
  */
 export async function lookupTerms(
   ctx: ServiceContext,
   courses: LookupCourse[],
-  opts: { syllabusLookup?: boolean } = {},
+  opts: { syllabusLookup?: boolean; sharedBudget?: boolean } = {},
 ): Promise<Map<number, SyllabusInfo | null>> {
   const at = nowMs();
+  const state = requestState(ctx);
+  for (const c of courses) state.seen.set(c.id, c);
+  state.enabled = opts.syllabusLookup !== false;
   const eligible = courses.filter((c) => splitIdnumber(c.idnumber));
   const cache = await readCache(
     ctx,
@@ -233,22 +282,27 @@ export async function lookupTerms(
     at,
   );
   const result = new Map<number, SyllabusInfo | null>(courses.map((c) => [c.id, cache.get(c.idnumber)?.info ?? null]));
-  if (opts.syllabusLookup === false) return result;
+  if (!state.enabled) return result;
 
-  const budget: FetchBudget = { left: MAX_FETCHES_PER_CALL, deadline: at + LOOKUP_DEADLINE_MS };
+  const allowed = opts.sharedBudget ? Math.max(0, MAX_FETCHES_PER_CALL - state.spent) : MAX_FETCHES_PER_CALL;
+  const budget: FetchBudget = { left: allowed, deadline: at + LOOKUP_DEADLINE_MS };
   for (const course of eligible.filter((c) => !cache.get(c.idnumber)?.fresh)) {
     const found = await fetchSyllabus(course, budget);
     if (found.kind === 'skipped') break;
     if (found.kind === 'known') result.set(course.id, found.info); // unknown keeps whatever an older row said
-    try {
-      await ctx.store.putSyllabusCache(
-        course.idnumber,
-        found.kind === 'known' ? JSON.stringify(found.info) : UNKNOWN_JSON,
-        at,
-      );
-    } catch {
-      /* best effort */
-    }
+    await persist(ctx, course.idnumber, found, at);
   }
+  state.spent += allowed - budget.left;
   return result;
+}
+
+/**
+ * Info for courses an earlier lookupTerms call of this request (the course scope) already presented, within what is
+ * left of the request's 3 fetches. Ids never presented come back `null`. This is how the timetable reuses the scope's
+ * lookup without a second Moodle call for idnumbers.
+ */
+export function lookupSeenCourses(ctx: ServiceContext, ids: number[]): Promise<Map<number, SyllabusInfo | null>> {
+  const state = requestState(ctx);
+  const courses = ids.flatMap((id) => state.seen.get(id) ?? []);
+  return lookupTerms(ctx, courses, { syllabusLookup: state.enabled, sharedBudget: true });
 }

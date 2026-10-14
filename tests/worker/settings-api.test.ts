@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvalidInput } from '../../src/core/errors';
 import { resolveScope, setMyCourses } from '../../src/core/services/scope';
 import { getCourseUpdates } from '../../src/core/services/sweep';
+import { getTimetable } from '../../src/core/services/timetable';
 import { createApi } from '../../src/worker/api';
 import { SESSION_COOKIE, startSession } from '../../src/worker/auth';
 import type { Env } from '../../src/worker/env';
@@ -11,6 +12,7 @@ import { MemoryKV } from '../helpers/memory-kv';
 
 vi.mock('../../src/core/services/scope', () => ({ resolveScope: vi.fn(), setMyCourses: vi.fn() }));
 vi.mock('../../src/core/services/sweep', () => ({ getCourseUpdates: vi.fn() }));
+vi.mock('../../src/core/services/timetable', () => ({ getTimetable: vi.fn() }));
 
 const ORIGIN = 'https://wasemoodle.example.com';
 const MASTER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).map((_, i) => i + 9)));
@@ -165,5 +167,41 @@ describe('GET /api/courses and /api/updates', () => {
       expect((await call(`/api/updates?days=${days}`)).status, days).toBe(400);
     }
     expect((await call('/api/updates', { signed: false })).status).toBe(401);
+  });
+});
+
+describe('GET /api/timetable', () => {
+  const payload = {
+    from: '2026-10-19',
+    to: '2026-10-19',
+    days: [],
+    onDemand: [],
+    unknown: [],
+    periodTimes: { standard: [], evening: [] },
+    scopeMode: 'mine',
+    approximate: false,
+  };
+
+  it('passes date and days (validated) to getTimetable with a console context', async () => {
+    vi.mocked(getTimetable).mockResolvedValue(payload as never);
+    expect(await (await call('/api/timetable')).json()).toEqual(payload);
+    expect(vi.mocked(getTimetable).mock.calls[0]?.[0]).toMatchObject({
+      source: 'Console',
+      user: { moodleUserId: 1001 },
+    });
+    expect(vi.mocked(getTimetable).mock.calls[0]?.[1]).toEqual({ date: undefined, days: undefined });
+    expect((await call('/api/timetable?date=2026-10-19&days=7')).status).toBe(200);
+    expect(vi.mocked(getTimetable).mock.calls[1]?.[1]).toEqual({ date: '2026-10-19', days: 7 });
+    expect((await call('/api/timetable?date=tomorrow')).status).toBe(200);
+    expect(vi.mocked(getTimetable).mock.calls[2]?.[1]).toEqual({ date: 'tomorrow', days: undefined });
+  });
+
+  it('rejects a bad days value, maps a bad date from the service to 400 and needs a session', async () => {
+    for (const days of ['0', '15', 'abc']) {
+      expect((await call(`/api/timetable?days=${days}`)).status, days).toBe(400);
+    }
+    vi.mocked(getTimetable).mockRejectedValueOnce(new InvalidInput('date must be today, tomorrow or YYYY-MM-DD.'));
+    expect((await call('/api/timetable?date=nope')).status).toBe(400);
+    expect((await call('/api/timetable', { signed: false })).status).toBe(401);
   });
 });

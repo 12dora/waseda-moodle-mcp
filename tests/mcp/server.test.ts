@@ -52,6 +52,7 @@ const READ_TOOLS = [
   'list_courses',
   'set_my_courses',
   'get_course_updates',
+  'get_timetable',
   'get_course',
   'search_course_content',
   'get_activity',
@@ -120,18 +121,18 @@ describe('tool registration', () => {
     expect(names).toEqual([...READ_TOOLS].sort());
   });
 
-  it('adds write tools and create_upload_link for write scope in worker mode (21 tools)', async () => {
+  it('adds write tools and create_upload_link for write scope in worker mode (22 tools)', async () => {
     const client = await connect(fake({ scopes: WRITE }).ctx);
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(names).toEqual([...READ_TOOLS, ...WRITE_TOOLS, 'create_upload_link'].sort());
-    expect(names).toHaveLength(21);
+    expect(names).toHaveLength(22);
   });
 
   it('drops create_upload_link in stdio mode and offers local paths instead of upload ids', async () => {
     const client = await connect(fake({ scopes: WRITE, mode: 'stdio', publicUrl: '' }).ctx);
     const tools = (await client.listTools()).tools;
     expect(tools.map((t) => t.name)).not.toContain('create_upload_link');
-    expect(tools).toHaveLength(20);
+    expect(tools).toHaveLength(21);
     const props = submissionProps(tools);
     expect(props.upload_id).toBeUndefined();
     expect(props.files?.items?.properties?.path).toBeDefined();
