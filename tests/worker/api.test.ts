@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex } from '../../src/core/crypto';
 import { NeedsReconnect, NotFound, RateLimited } from '../../src/core/errors';
 import { cancelAction, confirmAction, listActionRecords } from '../../src/core/services/actions';
-import { listCourses } from '../../src/core/services/courses';
 import { getDueItems } from '../../src/core/services/due';
 import { streamDownload, streamUpload } from '../../src/core/services/files';
 import { createApi } from '../../src/worker/api';
@@ -13,7 +12,6 @@ import { createTestD1, type TestD1 } from '../helpers/d1-sqlite';
 import { MemoryKV } from '../helpers/memory-kv';
 
 vi.mock('../../src/core/services/due', () => ({ getDueItems: vi.fn() }));
-vi.mock('../../src/core/services/courses', () => ({ listCourses: vi.fn() }));
 vi.mock('../../src/core/services/actions', () => ({
   confirmAction: vi.fn(),
   cancelAction: vi.fn(),
@@ -195,7 +193,6 @@ beforeEach(() => {
   env = makeEnv();
   stubMoodle();
   vi.mocked(getDueItems).mockReset();
-  vi.mocked(listCourses).mockReset();
   vi.mocked(confirmAction).mockReset();
   vi.mocked(cancelAction).mockReset();
   vi.mocked(listActionRecords).mockReset();
@@ -323,40 +320,6 @@ describe('connect, session and account', () => {
     expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0');
     expect(await createD1Store(env.DB).getUser(body.user.id)).toBeNull();
     expect((await call('/api/me', { cookie })).status).toBe(401);
-  });
-
-  it('PATCH /api/settings validates and persists', async () => {
-    const { cookie } = await connect();
-    const ok = await call('/api/settings', {
-      method: 'PATCH',
-      cookie,
-      body: JSON.stringify({ writeMode: 'console', hiddenCourseIds: [5, 6], uiLang: 'ja' }),
-    });
-    expect(ok.status).toBe(200);
-    expect(((await ok.json()) as Body).settings).toEqual({
-      writeMode: 'console',
-      hiddenCourseIds: [5, 6],
-      uiLang: 'ja',
-    });
-
-    const partial = await call('/api/settings', { method: 'PATCH', cookie, body: JSON.stringify({ uiLang: 'en' }) });
-    expect(((await partial.json()) as Body).settings).toEqual({
-      writeMode: 'console',
-      hiddenCourseIds: [5, 6],
-      uiLang: 'en',
-    });
-
-    for (const bad of [
-      { writeMode: 'always' },
-      { hiddenCourseIds: ['x'] },
-      { hiddenCourseIds: 'all' },
-      { uiLang: 'fr' },
-    ]) {
-      const r = await call('/api/settings', { method: 'PATCH', cookie, body: JSON.stringify(bad) });
-      expect(r.status, JSON.stringify(bad)).toBe(400);
-    }
-    const me = (await (await call('/api/me', { cookie })).json()) as Body;
-    expect(me.user.settings.writeMode).toBe('console');
   });
 });
 
@@ -567,16 +530,6 @@ describe('Moodle data routes', () => {
     expect((await call('/api/due?days=abc', { cookie })).status).toBe(400);
     expect((await call('/api/due?days=500', { cookie })).status).toBe(400);
     expect((await call('/api/due')).status).toBe(401);
-  });
-
-  it('GET /api/courses lists with hidden courses included', async () => {
-    const { cookie } = await connect();
-    vi.mocked(listCourses).mockResolvedValue([]);
-    expect((await call('/api/courses?classification=all', { cookie })).status).toBe(200);
-    expect(vi.mocked(listCourses).mock.calls[0]?.[1]).toEqual({ classification: 'all', includeHidden: true });
-    expect((await call('/api/courses', { cookie })).status).toBe(200);
-    expect(vi.mocked(listCourses).mock.calls[1]?.[1]).toEqual({ classification: 'inprogress', includeHidden: true });
-    expect((await call('/api/courses?classification=weird', { cookie })).status).toBe(400);
   });
 
   it('maps service errors to HTTP statuses', async () => {

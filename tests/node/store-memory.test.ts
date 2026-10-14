@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ActionRow, CredentialRow } from '../../src/core/context';
+import type { ActionRow, CredentialRow, UserRow } from '../../src/core/context';
 import { DEFAULT_SETTINGS } from '../../src/core/types';
 import { MemoryStore } from '../../src/node/store-memory';
 
@@ -53,11 +53,11 @@ describe('MemoryStore users', () => {
     const a = await s.upsertUser({ moodleUserId: 1001, fullname: 'Taro Yamada', lang: 'ja' });
     expect(a.id).toBe(1);
     expect(a.settings).toEqual(DEFAULT_SETTINGS);
-    a.settings.hiddenCourseIds.push(9); // mutating the copy must not leak
+    a.settings.writeMode = 'off'; // mutating the copy must not leak
     const b = await s.upsertUser({ moodleUserId: 1001, fullname: 'Taro Y.', lang: 'en' });
     expect(b.id).toBe(1);
     expect(b.fullname).toBe('Taro Y.');
-    expect(b.settings.hiddenCourseIds).toEqual([]);
+    expect(b.settings).toEqual(DEFAULT_SETTINGS);
     const c = await s.upsertUser({ moodleUserId: 1002, fullname: 'Hanako', lang: 'ja' });
     expect(c.id).toBe(2);
     expect((await s.getUserByMoodleId(1002))?.id).toBe(2);
@@ -67,18 +67,18 @@ describe('MemoryStore users', () => {
   it('updates settings and deletes every dependent row', async () => {
     const s = new MemoryStore();
     const u = await s.upsertUser({ moodleUserId: 1001, fullname: 'Taro', lang: 'en' });
-    await s.updateSettings(u.id, { ...DEFAULT_SETTINGS, writeMode: 'off', hiddenCourseIds: [5] });
-    expect((await s.getUser(u.id))?.settings).toMatchObject({ writeMode: 'off', hiddenCourseIds: [5] });
+    await s.updateSettings(u.id, { ...DEFAULT_SETTINGS, writeMode: 'off', myCourseIds: [5] });
+    expect((await s.getUser(u.id))?.settings).toMatchObject({ writeMode: 'off', myCourseIds: [5] });
 
     await s.putCredential(credential(u.id));
     await s.createAction(action({ userId: u.id }));
-    await s.putCourseIndex({ userId: u.id, courseId: 1, json: '{}', updatedAt: 1 });
+    await s.putCourseSnapshot({ userId: u.id, courseId: 1, json: '{}', fetchedAt: 1, checkedAt: 1 });
     await s.audit({ userId: u.id, at: 1, actor: 'x', action: 'y', detail: null });
     await s.deleteUser(u.id);
     expect(await s.getUser(u.id)).toBeNull();
     expect(await s.getCredential(u.id)).toBeNull();
     expect(await s.getAction('act_1')).toBeNull();
-    expect(await s.getCourseIndex(u.id)).toEqual([]);
+    expect(await s.getCourseSnapshots(u.id)).toEqual([]);
     expect(await s.listAudit(u.id, { limit: 10 })).toEqual([]);
   });
 });
@@ -185,16 +185,69 @@ describe('MemoryStore actions, uploads, audit', () => {
     expect(d?.totalBytes).toBe(15);
   });
 
-  it('stores one course index row per course and returns audit newest first', async () => {
+  it('returns audit newest first', async () => {
     const s = new MemoryStore();
-    await s.putCourseIndex({ userId: 1, courseId: 7, json: 'old', updatedAt: 1 });
-    await s.putCourseIndex({ userId: 1, courseId: 7, json: 'new', updatedAt: 2 });
-    await s.putCourseIndex({ userId: 2, courseId: 7, json: 'other', updatedAt: 2 });
-    expect((await s.getCourseIndex(1)).map((r) => r.json)).toEqual(['new']);
-
     for (let i = 1; i <= 3; i++) await s.audit({ userId: 1, at: i * 10, actor: 'a', action: `t${i}`, detail: { i } });
     expect((await s.listAudit(1, { limit: 2 })).map((r) => r.action)).toEqual(['t3', 't2']);
     expect((await s.listAudit(1, { limit: 5, before: 30 })).map((r) => r.action)).toEqual(['t2', 't1']);
+  });
+});
+
+describe('MemoryStore course snapshots', () => {
+  const snap = (userId: number, courseId: number, over: Record<string, unknown> = {}) => ({
+    userId,
+    courseId,
+    json: '{}',
+    fetchedAt: 1,
+    checkedAt: 1,
+    ...over,
+  });
+
+  it('upserts one row per (user, course), touches checkedAt only, and isolates users', async () => {
+    const s = new MemoryStore();
+    await s.putCourseSnapshot(snap(1, 7, { json: 'old' }));
+    await s.putCourseSnapshot(snap(1, 7, { json: 'new', fetchedAt: 2, checkedAt: 2 }));
+    await s.putCourseSnapshot(snap(1, 3));
+    await s.putCourseSnapshot(snap(2, 7, { json: 'other' }));
+    await s.touchCourseSnapshot(1, 7, 99);
+    await s.touchCourseSnapshot(1, 404, 99); // unknown course: no-op
+    expect(await s.getCourseSnapshots(1)).toEqual([
+      snap(1, 3),
+      snap(1, 7, { json: 'new', fetchedAt: 2, checkedAt: 99 }),
+    ]);
+    expect((await s.getCourseSnapshots(2)).map((r) => r.json)).toEqual(['other']);
+  });
+
+  it('lists active-credential users, users without snapshots first, then oldest checkedAt', async () => {
+    const s = new MemoryStore();
+    const users = [];
+    for (const id of [1001, 1002, 1003, 1004]) {
+      const u = await s.upsertUser({ moodleUserId: id, fullname: `U${id}`, lang: 'en' });
+      users.push(u);
+      await s.putCredential({ ...credential(u.id), status: id === 1004 ? 'invalid' : 'active' });
+    }
+    const [a, b, c] = users as [UserRow, UserRow, UserRow];
+    await s.putCourseSnapshot(snap(a.id, 1, { checkedAt: 500 }));
+    await s.putCourseSnapshot(snap(a.id, 2, { checkedAt: 900 }));
+    await s.putCourseSnapshot(snap(b.id, 1, { checkedAt: 200 }));
+    expect((await s.listSweepUsers(10)).map((u) => u.id)).toEqual([c.id, b.id, a.id]);
+    expect(await s.listSweepUsers(2)).toHaveLength(2);
+  });
+});
+
+describe('MemoryStore syllabus cache', () => {
+  it('is global, overwrites per idnumber and returns copies of the requested hits', async () => {
+    const s = new MemoryStore();
+    await s.putSyllabusCache('A', '{"v":1}', 1);
+    await s.putSyllabusCache('A', '{"v":2}', 2);
+    await s.putSyllabusCache('B', 'null', 3);
+    const hit = await s.getSyllabusCache(['A', 'B', 'C']);
+    expect([...hit.keys()].sort()).toEqual(['A', 'B']);
+    expect(hit.get('A')).toEqual({ json: '{"v":2}', fetchedAt: 2 });
+    const a = hit.get('A');
+    if (a) a.json = 'mutated';
+    expect((await s.getSyllabusCache(['A'])).get('A')?.json).toBe('{"v":2}');
+    expect((await s.getSyllabusCache([])).size).toBe(0);
   });
 });
 
@@ -203,7 +256,7 @@ describe('MemoryStore persistence', () => {
     const path = join(dir, 'sub', 'state.json');
     const a = new MemoryStore({ persistPath: path });
     const u = await a.upsertUser({ moodleUserId: 1001, fullname: 'Taro', lang: 'en' });
-    await a.updateSettings(u.id, { ...DEFAULT_SETTINGS, writeMode: 'off', hiddenCourseIds: [3] });
+    await a.updateSettings(u.id, { ...DEFAULT_SETTINGS, writeMode: 'off', myCourseIds: [3] });
     await a.createAction(action({ userId: u.id }));
     await a.putCredential(credential(u.id));
     await a.flush();
@@ -215,11 +268,25 @@ describe('MemoryStore persistence', () => {
     const b = new MemoryStore({ persistPath: path });
     const again = await b.upsertUser({ moodleUserId: 1001, fullname: 'Taro', lang: 'en' });
     expect(again.id).toBe(u.id);
-    expect(again.settings).toMatchObject({ writeMode: 'off', hiddenCourseIds: [3] });
+    expect(again.settings).toMatchObject({ writeMode: 'off', myCourseIds: [3] });
     expect((await b.getAction('act_1'))?.title).toBe('Send message');
     expect(await b.getCredential(u.id)).toBeNull();
     const next = await b.upsertUser({ moodleUserId: 1002, fullname: 'Hanako', lang: 'ja' });
     expect(next.id).toBe(u.id + 1);
+  });
+
+  it('drops retired settings fields from an older state file', async () => {
+    const path = join(dir, 'old.json');
+    const legacy = {
+      id: 1,
+      moodleUserId: 5,
+      fullname: 'T',
+      lang: 'en',
+      settings: { writeMode: 'off', hiddenCourseIds: [4] },
+    };
+    await writeFile(path, JSON.stringify({ version: 1, nextUserId: 2, users: [legacy], actions: [] }));
+    const s = new MemoryStore({ persistPath: path });
+    expect((await s.getUser(1))?.settings).toEqual({ writeMode: 'off', myCourseIds: null, uiLang: 'auto' });
   });
 
   it('survives a corrupt file and reports it', async () => {

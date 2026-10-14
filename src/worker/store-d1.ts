@@ -6,6 +6,7 @@ import { type EphemeralMethods, ephemeralMethods } from './store/ephemeral';
 import { type HandoffMethods, handoffMethods } from './store/handoffs';
 import { logMethods, purgeExpired } from './store/logs';
 import { apiKeyMethods, sessionMethods } from './store/sessions';
+import { snapshotMethods } from './store/snapshots';
 import { userMethods } from './store/users';
 
 type SessionMethods = ReturnType<typeof sessionMethods>;
@@ -23,6 +24,7 @@ export function createD1Store(db: D1Database): D1Store {
     ...apiKeyMethods(db),
     ...actionMethods(db),
     ...uploadMethods(db),
+    ...snapshotMethods(db),
     ...logMethods(db),
     ...handoffMethods(db),
     ...ephemeralMethods(db),

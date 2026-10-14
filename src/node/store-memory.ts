@@ -11,7 +11,7 @@ import type {
   ActionRow,
   ApiKeyRow,
   AuditRow,
-  CourseIndexRow,
+  CourseSnapshotRow,
   CredentialRow,
   SessionRow,
   Store,
@@ -47,7 +47,8 @@ export class MemoryStore implements Store {
   private readonly apiKeys = new Map<string, ApiKeyRow>();
   private readonly actions = new Map<string, ActionRow>();
   private readonly uploads = new Map<string, UploadDraftRow>();
-  private readonly courseIndex = new Map<string, CourseIndexRow>();
+  private readonly courseSnapshots = new Map<string, CourseSnapshotRow>();
+  private readonly syllabusCache = new Map<string, { json: string; fetchedAt: number }>();
   private auditRows: AuditRow[] = [];
   private nextUserId = 1;
   private nextAuditId = 1;
@@ -74,7 +75,8 @@ export class MemoryStore implements Store {
     try {
       const data = JSON.parse(raw) as Partial<PersistedState>;
       for (const u of data.users ?? []) {
-        this.users.set(u.id, { ...u, settings: { ...DEFAULT_SETTINGS, ...u.settings } });
+        const { writeMode, myCourseIds, uiLang } = { ...DEFAULT_SETTINGS, ...u.settings }; // drops retired fields
+        this.users.set(u.id, { ...u, settings: { writeMode, myCourseIds: myCourseIds ?? null, uiLang } });
       }
       for (const a of data.actions ?? []) this.actions.set(a.id, a);
       const maxId = Math.max(0, ...this.users.keys());
@@ -143,7 +145,7 @@ export class MemoryStore implements Store {
         moodleUserId: input.moodleUserId,
         fullname: input.fullname,
         lang: input.lang,
-        settings: { ...DEFAULT_SETTINGS, hiddenCourseIds: [] },
+        settings: { ...DEFAULT_SETTINGS },
         createdAt: Date.now(),
         lastSeenAt: null,
       };
@@ -172,7 +174,7 @@ export class MemoryStore implements Store {
     for (const [k, v] of this.apiKeys) if (v.userId === userId) this.apiKeys.delete(k);
     for (const [k, v] of this.actions) if (v.userId === userId) this.actions.delete(k);
     for (const [k, v] of this.uploads) if (v.userId === userId) this.uploads.delete(k);
-    for (const [k, v] of this.courseIndex) if (v.userId === userId) this.courseIndex.delete(k);
+    for (const [k, v] of this.courseSnapshots) if (v.userId === userId) this.courseSnapshots.delete(k);
     this.auditRows = this.auditRows.filter((r) => r.userId !== userId);
     this.persist();
   }
@@ -332,14 +334,48 @@ export class MemoryStore implements Store {
     u.totalBytes += file.size;
   }
 
-  // ------------------------------------------------------------------ course index
+  // ------------------------------------------------------------------ course snapshots
 
-  async getCourseIndex(userId: number): Promise<CourseIndexRow[]> {
-    return [...this.courseIndex.values()].filter((r) => r.userId === userId).map(clone);
+  async getCourseSnapshots(userId: number): Promise<CourseSnapshotRow[]> {
+    return [...this.courseSnapshots.values()]
+      .filter((r) => r.userId === userId)
+      .sort((a, b) => a.courseId - b.courseId)
+      .map(clone);
   }
 
-  async putCourseIndex(row: CourseIndexRow): Promise<void> {
-    this.courseIndex.set(`${row.userId}:${row.courseId}`, clone(row));
+  async putCourseSnapshot(row: CourseSnapshotRow): Promise<void> {
+    this.courseSnapshots.set(`${row.userId}:${row.courseId}`, clone(row));
+  }
+
+  async touchCourseSnapshot(userId: number, courseId: number, checkedAt: number): Promise<void> {
+    const row = this.courseSnapshots.get(`${userId}:${courseId}`);
+    if (row) row.checkedAt = checkedAt;
+  }
+
+  async getSyllabusCache(idnumbers: string[]): Promise<Map<string, { json: string; fetchedAt: number }>> {
+    const out = new Map<string, { json: string; fetchedAt: number }>();
+    for (const id of idnumbers) {
+      const hit = this.syllabusCache.get(id);
+      if (hit) out.set(id, { ...hit });
+    }
+    return out;
+  }
+
+  async putSyllabusCache(idnumber: string, json: string, fetchedAt: number): Promise<void> {
+    this.syllabusCache.set(idnumber, { json, fetchedAt });
+  }
+
+  /** Same order as the D1 store: oldest-checked first, users without snapshots lead. */
+  async listSweepUsers(limit: number): Promise<UserRow[]> {
+    const oldest = new Map<number, number>();
+    for (const r of this.courseSnapshots.values()) {
+      oldest.set(r.userId, Math.min(oldest.get(r.userId) ?? Number.POSITIVE_INFINITY, r.checkedAt));
+    }
+    return [...this.users.values()]
+      .filter((u) => this.credentials.get(u.id)?.status === 'active')
+      .sort((a, b) => (oldest.get(a.id) ?? -1) - (oldest.get(b.id) ?? -1) || a.id - b.id)
+      .slice(0, Math.max(1, Math.floor(limit)))
+      .map(clone);
   }
 
   // ------------------------------------------------------------------ audit

@@ -1,10 +1,12 @@
 /** Sign-in, session and account routes. */
 
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
+import type { UserRow } from '../../core/context';
 import { type MasterKey, sha256Hex } from '../../core/crypto';
 import { InvalidInput } from '../../core/errors';
 import { launchUrl, MOODLE_URL, parseLaunch } from '../../core/moodle/launch';
 import { connectFromLaunch, refreshFromLaunch, toCredentialInfo, toUserInfo } from '../../core/services/account';
+import { setMyCourses } from '../../core/services/scope';
 import type { ConnectVia, UserSettings } from '../../core/types';
 import {
   type AppEnv,
@@ -23,6 +25,7 @@ import type { D1Store } from '../store-d1';
 import { consumeHandoff, peekHandoff } from './handoff';
 import {
   auditConsole,
+  consoleContext,
   EXTENSION_REFRESH_PATH,
   oneOf,
   optionalSessionUser,
@@ -34,6 +37,8 @@ import {
 } from './shared';
 
 const HOUR_MS = 3_600_000;
+const MAX_MY_COURSES = 60;
+const MAX_COURSE_ID = 2_147_483_647;
 const WRITE_MODES: readonly UserSettings['writeMode'][] = ['off', 'chat', 'console'];
 const UI_LANGS: readonly UserSettings['uiLang'][] = ['auto', 'ja', 'en', 'zh-CN'];
 
@@ -44,19 +49,38 @@ const EXTENSION_CORS = {
   'Access-Control-Max-Age': '86400',
 };
 
+/** writeMode / uiLang only: the course scope goes through setMyCourses so enrolment is validated. */
 function applySettingsPatch(current: UserSettings, body: Record<string, unknown>): UserSettings {
   const next: UserSettings = { ...current };
   if (body.writeMode !== undefined) {
     next.writeMode = oneOf(body.writeMode, WRITE_MODES, 'writeMode must be off, chat or console.');
   }
   if (body.uiLang !== undefined) next.uiLang = oneOf(body.uiLang, UI_LANGS, 'uiLang must be auto, ja, en or zh-CN.');
-  if (body.hiddenCourseIds !== undefined) {
-    const ids = body.hiddenCourseIds;
-    const valid = Array.isArray(ids) && ids.length <= 500 && ids.every((n) => Number.isInteger(n) && n > 0);
-    if (!valid) throw new InvalidInput('hiddenCourseIds must be a list of course ids.');
-    next.hiddenCourseIds = ids as number[];
-  }
   return normalizeSettings(next);
+}
+
+/** `null` = back to the automatic suggestion; otherwise at most MAX_MY_COURSES distinct positive ids. */
+function parseMyCourseIds(value: unknown): number[] | null {
+  if (value === null) return null;
+  const valid =
+    Array.isArray(value) &&
+    value.length <= MAX_MY_COURSES &&
+    value.every((n) => Number.isInteger(n) && n > 0 && n <= MAX_COURSE_ID);
+  if (!valid) throw new InvalidInput(`myCourseIds must be null or a list of at most ${MAX_MY_COURSES} course ids.`);
+  return [...new Set(value as number[])];
+}
+
+/** Applies a settings patch. The course scope goes first: it can fail (not enrolled) and must not leave half applied. */
+async function patchSettings(c: Context<AppEnv>, user: UserRow, body: Record<string, unknown>): Promise<UserSettings> {
+  if (body.hiddenCourseIds !== undefined) throw new InvalidInput('hiddenCourseIds is retired: use myCourseIds.');
+  const ids = body.myCourseIds === undefined ? undefined : parseMyCourseIds(body.myCourseIds);
+  const current = ids === undefined ? user.settings : await setMyCourses(await consoleContext(c, user), ids);
+  const settings = applySettingsPatch(current, body);
+  if (body.writeMode !== undefined || body.uiLang !== undefined) {
+    await storeOf(c.env).updateSettings(user.id, settings);
+    auditConsole(c, user, 'settings:update', { fields: ['writeMode', 'uiLang'].filter((k) => k in body) });
+  }
+  return settings;
 }
 
 interface ConnectRequest {
@@ -184,13 +208,7 @@ export function accountRoutes(): Hono<AppEnv> {
 
   app.patch('/api/settings', session, async (c) => {
     const user = c.get('user');
-    const body = await readJson(c);
-    const settings = applySettingsPatch(user.settings, body);
-    await storeOf(c.env).updateSettings(user.id, settings);
-    auditConsole(c, user, 'settings:update', {
-      fields: Object.keys(body).filter((k) => k in settings),
-    });
-    return c.json({ settings });
+    return c.json({ settings: await patchSettings(c, user, await readJson(c)) });
   });
 
   return app;

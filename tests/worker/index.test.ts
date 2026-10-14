@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex } from '../../src/core/crypto';
+import { NeedsReconnect } from '../../src/core/errors';
+import { sweepForCron } from '../../src/core/services/sweep';
 import type { Env } from '../../src/worker/env';
-import worker, { buildProviderOptions, PURGE_CURSOR_KEY, providerFor, runScheduled } from '../../src/worker/index';
+import worker, {
+  buildProviderOptions,
+  isPurgeRun,
+  PURGE_CURSOR_KEY,
+  providerFor,
+  runScheduled,
+} from '../../src/worker/index';
 import { mcpApiHandler } from '../../src/worker/mcp';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
 import { createTestD1 } from '../helpers/d1-sqlite';
@@ -23,6 +31,7 @@ vi.mock('@cloudflare/workers-oauth-provider', () => ({
   },
 }));
 vi.mock('../../src/core/mcp/server', () => ({ buildMcpServer: vi.fn() }));
+vi.mock('../../src/core/services/sweep', () => ({ sweepForCron: vi.fn() }));
 
 const MASTER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).map((_, i) => i + 5)));
 const SECRET = `wmm_${'Qw3rTy9uIo'.repeat(4)}`;
@@ -39,6 +48,7 @@ const execCtx = () => ({ waitUntil: (p: Promise<unknown>) => void deferred.push(
 beforeEach(async () => {
   deferred = [];
   rec.purge.mockReset();
+  vi.mocked(sweepForCron).mockReset().mockResolvedValue({ checked: 0, stale: 0, checkedAt: null });
   const { db } = createTestD1();
   kv = new MemoryKV();
   // unique URL per test: the Worker caches one provider per PUBLIC_URL
@@ -52,6 +62,21 @@ beforeEach(async () => {
   store = createD1Store(db);
   userId = (await store.upsertUser({ moodleUserId: 1001, fullname: 'Taro Yamada', lang: 'ja' })).id;
 });
+
+async function seedCredential(id = userId, tokenHash = 'h1'): Promise<void> {
+  await store.putCredential({
+    userId: id,
+    tokenEnc: 'enc',
+    privateTokenEnc: null,
+    tokenHash,
+    tokenHint: 'tttt',
+    status: 'active',
+    connectedVia: 'paste',
+    connectedAt: 1,
+    lastOkAt: null,
+    lastError: null,
+  });
+}
 
 describe('provider options (contract §10)', () => {
   it('configures routes, scopes, TTLs and metadata', () => {
@@ -189,24 +214,64 @@ describe('resolveExternalToken (API keys)', () => {
 });
 
 describe('scheduled', () => {
-  it('runs D1 retention and persists the OAuth purge cursor between runs', async () => {
+  const PURGE_TIME = Date.UTC(2026, 9, 15, 3, 17); // 03:17 UTC = 12:17 JST
+  const HOURLY_TIME = Date.UTC(2026, 9, 15, 4, 17);
+  const controller = (scheduledTime: number) => ({ scheduledTime }) as ScheduledController;
+
+  it('recognises only the 03:17 UTC run as the daily purge slot', () => {
+    expect(isPurgeRun(PURGE_TIME)).toBe(true);
+    expect(isPurgeRun(HOURLY_TIME)).toBe(false);
+    expect(isPurgeRun(Date.UTC(2026, 9, 15, 3, 16))).toBe(false);
+    expect(isPurgeRun(Date.UTC(2026, 9, 16, 3, 17))).toBe(true); // any day
+  });
+
+  it('runs D1 retention and persists the OAuth purge cursor between purge runs', async () => {
     await store.audit({ userId, at: 1, actor: 'x', action: 'ancient', detail: null });
     rec.purge.mockResolvedValueOnce({ done: false, cursor: 'c1' }).mockResolvedValueOnce({ done: true });
 
-    worker.scheduled({} as ScheduledController, env, execCtx());
+    worker.scheduled(controller(PURGE_TIME), env, execCtx());
     await Promise.all(deferred);
     expect(rec.purge).toHaveBeenLastCalledWith(env, { batchSize: 25, cursor: undefined });
     expect(await kv.get(PURGE_CURSOR_KEY)).toBe('c1');
     expect(await store.listAudit(userId, { limit: 10 })).toEqual([]);
 
-    await runScheduled(env);
+    await runScheduled(env, PURGE_TIME);
     expect(rec.purge).toHaveBeenLastCalledWith(env, { batchSize: 25, cursor: 'c1' });
     expect(await kv.get(PURGE_CURSOR_KEY)).toBeNull();
   });
 
+  it('does not purge on the other hourly runs', async () => {
+    await store.audit({ userId, at: 1, actor: 'x', action: 'ancient', detail: null });
+    await runScheduled(env, HOURLY_TIME);
+    expect(rec.purge).not.toHaveBeenCalled();
+    expect(await store.listAudit(userId, { limit: 10 })).toHaveLength(1);
+  });
+
+  it('sweeps on every run, with a purge failure not blocking the sweep', async () => {
+    await seedCredential();
+    await runScheduled(env, HOURLY_TIME, execCtx());
+    expect(sweepForCron).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sweepForCron).mock.calls[0]?.[1]).toEqual({ maxRefresh: 2 });
+
+    rec.purge.mockRejectedValue(new Error('kv down'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await runScheduled(env, PURGE_TIME, execCtx());
+    expect(sweepForCron).toHaveBeenCalledTimes(2);
+    spy.mockRestore();
+  });
+
+  it('keeps going when one user needs to reconnect', async () => {
+    await seedCredential();
+    const second = await store.upsertUser({ moodleUserId: 1002, fullname: 'Hanako Sato', lang: 'ja' });
+    await seedCredential(second.id, 'h2');
+    vi.mocked(sweepForCron).mockRejectedValueOnce(new NeedsReconnect());
+    await runScheduled(env, HOURLY_TIME);
+    expect(sweepForCron).toHaveBeenCalledTimes(2);
+  });
+
   it('does not touch KV when there is nothing to remember', async () => {
     rec.purge.mockResolvedValue({ done: true });
-    await runScheduled(env);
+    await runScheduled(env, PURGE_TIME);
     expect(kv.ops.put).toBe(0);
     expect(kv.ops.delete).toBe(0);
   });
@@ -214,7 +279,7 @@ describe('scheduled', () => {
   it('survives failures in either half', async () => {
     rec.purge.mockRejectedValue(new Error('kv down'));
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await expect(runScheduled(env)).resolves.toBeUndefined();
+    await expect(runScheduled(env, PURGE_TIME)).resolves.toBeUndefined();
     spy.mockRestore();
   });
 });

@@ -2,15 +2,15 @@
 
 import { Hono } from 'hono';
 import { cancelAction, confirmAction, listActionRecords } from '../../core/services/actions';
-import { listCourses } from '../../core/services/courses';
 import { getDueItems } from '../../core/services/due';
+import { resolveScope } from '../../core/services/scope';
+import { getCourseUpdates } from '../../core/services/sweep';
 import { isoJst } from '../../core/time';
 import type { ActionStatus } from '../../core/types';
 import type { AppEnv } from '../auth';
 import { consoleContext, intParam, oneOf, session, storeOf } from './shared';
 
 const ACTION_STATUSES: readonly ActionStatus[] = ['pending', 'executed', 'cancelled', 'expired', 'failed'];
-const CLASSIFICATIONS = ['inprogress', 'future', 'past', 'all'] as const;
 const MAX_COURSE_ID = 2_147_483_647;
 
 export function dataRoutes(): Hono<AppEnv> {
@@ -28,14 +28,18 @@ export function dataRoutes(): Hono<AppEnv> {
     );
   });
 
+  // every enrolled course with its kind / mine / suggested flags; the SPA's "My courses" page edits the scope
   app.get('/api/courses', session, async (c) => {
     const ctx = await consoleContext(c, c.get('user'));
-    const classification = oneOf(
-      c.req.query('classification') ?? 'inprogress',
-      CLASSIFICATIONS,
-      'classification must be inprogress, future, past or all.',
+    const { mode, courses } = await resolveScope(ctx);
+    return c.json({ mode, courses });
+  });
+
+  app.get('/api/updates', session, async (c) => {
+    const ctx = await consoleContext(c, c.get('user'));
+    return c.json(
+      await getCourseUpdates(ctx, { sinceDays: intParam(c.req.query('days'), 'days', { min: 1, max: 30 }) ?? 7 }),
     );
-    return c.json(await listCourses(ctx, { classification, includeHidden: true }));
   });
 
   app.get('/api/actions', session, async (c) => {

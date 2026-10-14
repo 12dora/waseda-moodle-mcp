@@ -55,7 +55,7 @@ const USER_OWNED_TABLES = [
   'api_keys',
   'actions',
   'upload_drafts',
-  'course_index',
+  'course_snapshots',
   'audit',
 ] as const;
 

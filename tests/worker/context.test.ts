@@ -17,6 +17,7 @@ interface FakeClientOptions {
   moodleUserId: number;
   onTokenInvalid: () => Promise<void>;
   onSuccess: () => void;
+  maxCalls?: number;
 }
 
 const created = vi.hoisted(() => [] as FakeClientOptions[]);
@@ -121,6 +122,17 @@ describe('buildServiceContext', () => {
     expect(Date.now() - ((await store.getUser(userId))?.lastSeenAt ?? 0)).toBeLessThan(5000);
   });
 
+  it('background contexts can skip the last-seen update', async () => {
+    const user = (await store.getUser(userId))!;
+    await store.touchUser(userId, 1);
+    await buildServiceContext(env, execCtx(), consoleProps(user), {
+      user: { ...user, lastSeenAt: 1 },
+      touchUser: false,
+    });
+    expect(deferred).toHaveLength(0);
+    expect((await store.getUser(userId))?.lastSeenAt).toBe(1);
+  });
+
   it('console props carry full scopes and the Console source', async () => {
     const user = (await store.getUser(userId))!;
     expect(consoleProps(user)).toEqual({ userId, scopes: ['moodle:read', 'moodle:write'], source: 'Console' });
@@ -145,6 +157,16 @@ describe('ctx.moodle()', () => {
     expect(a).toBe(b);
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ token: 't'.repeat(32), moodleUserId: 1001 });
+  });
+
+  it('caps the client budget when asked to', async () => {
+    await storeCredential();
+    const props = { userId, scopes: ['moodle:read' as const], source: 'Scheduled sweep' };
+    await (await buildServiceContext(env, execCtx(), props, { maxCalls: 12 })).moodle();
+    expect(created[0]).toMatchObject({ maxCalls: 12 });
+    created.length = 0;
+    await (await buildServiceContext(env, execCtx(), props)).moodle();
+    expect(created[0]?.maxCalls).toBeUndefined(); // the client's own default applies
   });
 
   it('marks the credential invalid when Moodle rejects the token', async () => {

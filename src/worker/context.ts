@@ -60,7 +60,7 @@ export function makeDefer(execCtx: WaitUntil | undefined): Defer {
  * Moodle client for a stored credential. Marks the credential invalid when Moodle rejects the token and refreshes
  * `lastOkAt` lazily (at most once per LAST_OK_INTERVAL_MS) after the first successful call.
  */
-async function createMoodleClient(rt: Runtime, user: UserRow, defer: Defer): Promise<MoodleApi> {
+async function createMoodleClient(rt: Runtime, user: UserRow, defer: Defer, maxCalls?: number): Promise<MoodleApi> {
   const cred = await rt.store.getCredential(user.id);
   if (!cred) throw new NeedsReconnect('Moodle is not connected for this account. Reconnect in the console.');
   if (cred.status === 'invalid') throw new NeedsReconnect();
@@ -69,6 +69,7 @@ async function createMoodleClient(rt: Runtime, user: UserRow, defer: Defer): Pro
   return new MoodleClient({
     token,
     moodleUserId: user.moodleUserId,
+    maxCalls,
     onTokenInvalid: async () => {
       try {
         await rt.store.updateCredentialStatus(user.id, {
@@ -101,6 +102,10 @@ export function makeMoodleFactory(env: Env, execCtx: WaitUntil | undefined): (us
 interface BuildContextOptions {
   /** Already loaded user row (console sessions load it with the session). */
   user?: UserRow;
+  /** Moodle call budget of this context's client (default: the client's own limit). */
+  maxCalls?: number;
+  /** false for background work (scheduled sweep): it must not count as the user being active. Default true. */
+  touchUser?: boolean;
 }
 
 /** `props` come from the OAuth provider (`ctx.props`) or from the console session (source 'Console'). */
@@ -116,7 +121,8 @@ export async function buildServiceContext(
   const defer = makeDefer(execCtx);
 
   const now = Date.now();
-  if (user.lastSeenAt === null || now - user.lastSeenAt > 3_600_000) defer(rt.store.touchUser(user.id, now));
+  const stale = user.lastSeenAt === null || now - user.lastSeenAt > 3_600_000;
+  if (stale && opts.touchUser !== false) defer(rt.store.touchUser(user.id, now));
 
   let moodle: Promise<MoodleApi> | null = null;
   return {
@@ -125,13 +131,14 @@ export async function buildServiceContext(
     signer: rt.signer,
     moodle: () => {
       // one budgeted client per request; a rejected promise is kept so NeedsReconnect is not retried
-      moodle ??= createMoodleClient(rt, user, defer);
+      moodle ??= createMoodleClient(rt, user, defer, opts.maxCalls);
       return moodle;
     },
     publicUrl: publicUrlOf(env),
     mode: 'worker',
     scopes: props.scopes,
     source: props.source,
+    syllabusLookup: env.SYLLABUS_LOOKUP !== 'off',
     defer,
   };
 }

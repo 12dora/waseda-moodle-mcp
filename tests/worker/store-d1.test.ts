@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ActionRow, ApiKeyRow, CredentialRow, UserRow } from '../../src/core/context';
+import type { ActionRow, ApiKeyRow, CourseSnapshotRow, CredentialRow, UserRow } from '../../src/core/context';
 import { AUDIT_RETENTION_MS } from '../../src/worker/store/logs';
 import { normalizeSettings } from '../../src/worker/store/rows';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
@@ -67,15 +67,15 @@ beforeEach(async () => {
 describe('users', () => {
   it('creates a user with default settings and updates profile fields on conflict', async () => {
     expect(user).toMatchObject({ moodleUserId: 1001, fullname: 'Taro Yamada', lang: 'ja' });
-    expect(user.settings).toEqual({ writeMode: 'chat', hiddenCourseIds: [], uiLang: 'auto' });
+    expect(user.settings).toEqual({ writeMode: 'chat', myCourseIds: null, uiLang: 'auto' });
 
-    await store.updateSettings(user.id, { writeMode: 'console', hiddenCourseIds: [7, 9], uiLang: 'zh-CN' });
+    await store.updateSettings(user.id, { writeMode: 'console', myCourseIds: [7, 9], uiLang: 'zh-CN' });
     const again = await store.upsertUser({ moodleUserId: 1001, fullname: 'Taro Y.', lang: 'en' });
     expect(again.id).toBe(user.id);
     expect(again.fullname).toBe('Taro Y.');
     expect(again.lang).toBe('en');
     // settings survive a profile refresh
-    expect(again.settings).toEqual({ writeMode: 'console', hiddenCourseIds: [7, 9], uiLang: 'zh-CN' });
+    expect(again.settings).toEqual({ writeMode: 'console', myCourseIds: [7, 9], uiLang: 'zh-CN' });
     expect((await store.getUserByMoodleId(1001))?.id).toBe(user.id);
     expect(await store.getUser(9999)).toBeNull();
   });
@@ -86,12 +86,19 @@ describe('users', () => {
   });
 
   it('normalizeSettings repairs invalid input', () => {
-    expect(normalizeSettings({ writeMode: 'bogus', hiddenCourseIds: [1, 1, -2, 'x', 3.5, 4], uiLang: 'fr' })).toEqual({
+    expect(normalizeSettings({ writeMode: 'bogus', myCourseIds: [1, 1, -2, 'x', 3.5, 4], uiLang: 'fr' })).toEqual({
       writeMode: 'chat',
-      hiddenCourseIds: [1, 4],
+      myCourseIds: [1, 4],
       uiLang: 'auto',
     });
-    expect(normalizeSettings(null).hiddenCourseIds).toEqual([]);
+    expect(normalizeSettings(null).myCourseIds).toBeNull();
+    expect(normalizeSettings({ myCourseIds: [] }).myCourseIds).toEqual([]); // confirmed "no courses" stays distinct
+    // the retired field is ignored, not migrated
+    expect(normalizeSettings({ hiddenCourseIds: [3] })).toEqual({
+      writeMode: 'chat',
+      myCourseIds: null,
+      uiLang: 'auto',
+    });
   });
 });
 
@@ -238,16 +245,68 @@ describe('upload drafts', () => {
   });
 });
 
-describe('course index', () => {
-  it('upserts per (user, course)', async () => {
-    await store.putCourseIndex({ userId: user.id, courseId: 10, json: '{"a":1}', updatedAt: 1 });
-    await store.putCourseIndex({ userId: user.id, courseId: 11, json: '{"b":1}', updatedAt: 1 });
-    await store.putCourseIndex({ userId: user.id, courseId: 10, json: '{"a":2}', updatedAt: 2 });
-    const rows = await store.getCourseIndex(user.id);
-    expect(rows).toEqual([
-      { userId: user.id, courseId: 10, json: '{"a":2}', updatedAt: 2 },
-      { userId: user.id, courseId: 11, json: '{"b":1}', updatedAt: 1 },
+describe('course snapshots', () => {
+  const snap = (userId: number, courseId: number, over: Partial<CourseSnapshotRow> = {}): CourseSnapshotRow => ({
+    userId,
+    courseId,
+    json: '{}',
+    fetchedAt: 1,
+    checkedAt: 1,
+    ...over,
+  });
+
+  it('upserts per (user, course) and touch only moves checkedAt', async () => {
+    await store.putCourseSnapshot(snap(user.id, 10, { json: '{"a":1}' }));
+    await store.putCourseSnapshot(snap(user.id, 11, { json: '{"b":1}' }));
+    await store.putCourseSnapshot(snap(user.id, 10, { json: '{"a":2}', fetchedAt: 5, checkedAt: 5 }));
+    await store.touchCourseSnapshot(user.id, 11, 50);
+    await store.touchCourseSnapshot(user.id, 404, 50); // unknown course: no-op
+    expect(await store.getCourseSnapshots(user.id)).toEqual([
+      snap(user.id, 10, { json: '{"a":2}', fetchedAt: 5, checkedAt: 5 }),
+      snap(user.id, 11, { json: '{"b":1}', fetchedAt: 1, checkedAt: 50 }),
     ]);
+  });
+
+  it('listSweepUsers: active credentials only, users without snapshots first, then oldest checkedAt', async () => {
+    const mk = async (moodleUserId: number, status: 'active' | 'invalid' | null) => {
+      const u = await store.upsertUser({ moodleUserId, fullname: `U${moodleUserId}`, lang: 'en' });
+      if (status) await store.putCredential(credential(u.id, { status, tokenHash: `h${moodleUserId}` }));
+      return u;
+    };
+    const fresh = await mk(2001, 'active');
+    const stale = await mk(2002, 'active');
+    await mk(2003, 'invalid');
+    await mk(2004, null);
+    const recent = await mk(2005, 'active');
+    await store.putCourseSnapshot(snap(recent.id, 1, { checkedAt: 900 }));
+    await store.putCourseSnapshot(snap(recent.id, 2, { checkedAt: 800 }));
+    await store.putCourseSnapshot(snap(stale.id, 1, { checkedAt: 100 }));
+    await store.putCourseSnapshot(snap(stale.id, 2, { checkedAt: 999 }));
+
+    expect((await store.listSweepUsers(10)).map((u) => u.id)).toEqual([fresh.id, stale.id, recent.id]);
+    const limited = await store.listSweepUsers(2);
+    expect(limited.map((u) => u.id)).toEqual([fresh.id, stale.id]);
+    expect(limited[0]).toMatchObject({ moodleUserId: 2001, settings: { myCourseIds: null } });
+  });
+});
+
+describe('syllabus cache', () => {
+  it('is global, upserts per idnumber and returns only the requested hits (including cached "null")', async () => {
+    await store.putSyllabusCache('2026570010006202', '{"term":"秋クォーター"}', 10);
+    await store.putSyllabusCache('2026920015500116', 'null', 11);
+    await store.putSyllabusCache('2026570010006202', '{"term":"夏クォーター"}', 20);
+
+    const hit = await store.getSyllabusCache(['2026570010006202', '2026920015500116', 'missing', '2026570010006202']);
+    expect(hit.size).toBe(2);
+    expect(hit.get('2026570010006202')).toEqual({ json: '{"term":"夏クォーター"}', fetchedAt: 20 });
+    expect(hit.get('2026920015500116')).toEqual({ json: 'null', fetchedAt: 11 });
+    expect((await store.getSyllabusCache([])).size).toBe(0);
+  });
+
+  it('handles more ids than one statement can bind', async () => {
+    const ids = Array.from({ length: 130 }, (_, i) => `id${i}`);
+    for (const id of ids) await store.putSyllabusCache(id, 'null', 1);
+    expect((await store.getSyllabusCache(ids)).size).toBe(130);
   });
 });
 
@@ -336,13 +395,21 @@ describe('deleteUser', () => {
         createdAt: 1,
         expiresAt: 2,
       });
-      await store.putCourseIndex({ userId: u.id, courseId: 1, json: '{}', updatedAt: 1 });
+      await store.putCourseSnapshot({ userId: u.id, courseId: 1, json: '{}', fetchedAt: 1, checkedAt: 1 });
       await store.audit({ userId: u.id, at: 1, actor: 'console', action: 'x', detail: null });
     }
     await store.deleteUser(user.id);
 
     expect(await store.getUser(user.id)).toBeNull();
-    for (const table of ['credentials', 'sessions', 'api_keys', 'actions', 'upload_drafts', 'course_index', 'audit']) {
+    for (const table of [
+      'credentials',
+      'sessions',
+      'api_keys',
+      'actions',
+      'upload_drafts',
+      'course_snapshots',
+      'audit',
+    ]) {
       expect(count(table, user.id), table).toBe(0);
       expect(count(table, other.id), `${table} (other)`).toBe(1);
     }
@@ -413,6 +480,11 @@ describe('purgeExpired', () => {
       lastUsedAt: null,
       revokedAt: now - 1000,
     });
+    await store.putCourseSnapshot({ userId: user.id, courseId: 1, json: '{}', fetchedAt: 1, checkedAt: 1 });
+    await store.putCourseSnapshot({ userId: user.id, courseId: 2, json: '{}', fetchedAt: 1, checkedAt: now - 1000 });
+
+    await store.putSyllabusCache('old', 'null', now - 401 * 86_400_000);
+    await store.putSyllabusCache('current', 'null', now - 86_400_000);
 
     const res = await store.purgeExpired(now);
     expect(res).toMatchObject({
@@ -425,7 +497,11 @@ describe('purgeExpired', () => {
       revokedKeys: 1,
       actionsExpired: 1,
       actionsDeleted: 1,
+      courseSnapshots: 1,
+      syllabusCache: 1,
     });
+    expect([...(await store.getSyllabusCache(['old', 'current'])).keys()]).toEqual(['current']);
+    expect((await store.getCourseSnapshots(user.id)).map((r) => r.courseId)).toEqual([2]);
     expect(await store.takeHandoff('live', now)).toBe('x');
     expect(await store.getOAuthRequest('live', now)).toBe('x');
     expect((await store.listApiKeys(user.id)).map((k) => k.id)).toEqual(['key_recent']);

@@ -3,7 +3,8 @@ import { changes, parseJson, toJson } from './rows';
 
 export const AUDIT_RETENTION_MS = 90 * 86_400_000;
 const RATE_LIMIT_RETENTION_MS = 86_400_000;
-const COURSE_INDEX_RETENTION_MS = 30 * 86_400_000;
+const COURSE_SNAPSHOT_RETENTION_MS = 30 * 86_400_000;
+const SYLLABUS_RETENTION_MS = 400 * 86_400_000; // a syllabus is valid for its academic year
 
 interface AuditRaw {
   id: number;
@@ -12,13 +13,6 @@ interface AuditRaw {
   actor: string;
   action: string;
   detail: string | null;
-}
-
-interface CourseIndexRaw {
-  user_id: number;
-  course_id: number;
-  json: string;
-  updated_at: number;
 }
 
 const toAudit = (r: AuditRaw): AuditRow => ({
@@ -30,28 +24,10 @@ const toAudit = (r: AuditRaw): AuditRow => ({
   detail: parseJson<Record<string, unknown> | null>(r.detail, null),
 });
 
-type LogMethods = Pick<Store, 'getCourseIndex' | 'putCourseIndex' | 'audit' | 'listAudit'>;
+type LogMethods = Pick<Store, 'audit' | 'listAudit'>;
 
 export function logMethods(db: D1Database): LogMethods {
   return {
-    async getCourseIndex(userId) {
-      const { results } = await db
-        .prepare('SELECT * FROM course_index WHERE user_id = ? ORDER BY course_id')
-        .bind(userId)
-        .all<CourseIndexRaw>();
-      return results.map((r) => ({ userId: r.user_id, courseId: r.course_id, json: r.json, updatedAt: r.updated_at }));
-    },
-
-    async putCourseIndex(row) {
-      await db
-        .prepare(
-          `INSERT INTO course_index (user_id, course_id, json, updated_at) VALUES (?, ?, ?, ?)
-           ON CONFLICT(user_id, course_id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`,
-        )
-        .bind(row.userId, row.courseId, row.json, row.updatedAt)
-        .run();
-    },
-
     async audit(row) {
       await db
         .prepare('INSERT INTO audit (user_id, at, actor, action, detail) VALUES (?, ?, ?, ?, ?)')
@@ -95,6 +71,7 @@ export async function purgeExpired(db: D1Database, now: number): Promise<Record<
       "DELETE FROM actions WHERE status != 'pending' AND created_at < ?",
       now - AUDIT_RETENTION_MS,
     ),
-    courseIndex: await run('DELETE FROM course_index WHERE updated_at < ?', now - COURSE_INDEX_RETENTION_MS),
+    syllabusCache: await run('DELETE FROM syllabus_cache WHERE fetched_at < ?', now - SYLLABUS_RETENTION_MS),
+    courseSnapshots: await run('DELETE FROM course_snapshots WHERE checked_at < ?', now - COURSE_SNAPSHOT_RETENTION_MS),
   };
 }

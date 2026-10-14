@@ -16,6 +16,8 @@ export interface Env {
   /** Comma separated Moodle user ids allowed to register when REGISTRATION is 'allowlist'. */
   ALLOWED_MOODLE_USERIDS: string;
   EXTENSION_URL?: string;
+  /** 'off' disables the public-syllabus term lookup (default on). */
+  SYLLABUS_LOOKUP?: string;
   /** Injected by workers-oauth-provider on every request that reaches our handlers. */
   OAUTH_PROVIDER: OAuthHelpers;
 }

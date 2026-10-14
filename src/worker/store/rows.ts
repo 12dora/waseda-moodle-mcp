@@ -10,10 +10,13 @@ export function normalizeSettings(input: unknown): UserSettings {
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
   const writeMode = WRITE_MODES.find((m) => m === o.writeMode) ?? DEFAULT_SETTINGS.writeMode;
   const uiLang = UI_LANGS.find((l) => l === o.uiLang) ?? DEFAULT_SETTINGS.uiLang;
-  const hidden = Array.isArray(o.hiddenCourseIds)
-    ? [...new Set(o.hiddenCourseIds.filter((n): n is number => Number.isInteger(n) && (n as number) > 0))]
-    : [];
-  return { writeMode, hiddenCourseIds: hidden, uiLang };
+  return { writeMode, myCourseIds: normalizeCourseIds(o.myCourseIds), uiLang };
+}
+
+/** null stays null ("not confirmed yet"); a list is deduplicated and stripped of non-positive / non-integer entries. */
+function normalizeCourseIds(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  return [...new Set(value.filter((n): n is number => Number.isInteger(n) && n > 0))];
 }
 
 export function parseJson<T>(text: string | null | undefined, fallback: T): T {

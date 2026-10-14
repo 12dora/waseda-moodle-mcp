@@ -14,11 +14,14 @@ import { makeDefer } from './context';
 import { type Env, publicUrlOf } from './env';
 import { mcpApiHandler } from './mcp';
 import { createD1Store } from './store-d1';
+import { runCourseSweep } from './sweep-cron';
 
 export const PURGE_CURSOR_KEY = 'purge-cursor';
 const ACCESS_TOKEN_TTL_SEC = 43_200; // 12 h: fewer refreshes = fewer KV writes (Free: 1000/day)
 const REFRESH_TOKEN_TTL_SEC = 7_776_000; // 90 d
 const PURGE_BATCH = 25;
+const PURGE_HOUR_UTC = 3;
+const PURGE_MINUTE_UTC = 17;
 
 const api = createApi();
 
@@ -75,7 +78,7 @@ export function providerFor(env: Env): OAuthProvider<Env> {
 }
 
 /** Daily maintenance: D1 retention, then one bounded sweep of the OAuth KV namespace (cursor persisted in KV). */
-export async function runScheduled(env: Env, now = Date.now()): Promise<void> {
+async function runPurge(env: Env, now = Date.now()): Promise<void> {
   try {
     await createD1Store(env.DB).purgeExpired(now);
   } catch (e) {
@@ -91,6 +94,22 @@ export async function runScheduled(env: Env, now = Date.now()): Promise<void> {
     }
   } catch (e) {
     console.error('purge kv failed:', e instanceof Error ? e.message : 'unknown');
+  }
+}
+
+/** The hourly cron (`17 0-14,22-23 * * *`, UTC) also carries the daily purge, on its 03:17 UTC run only. */
+export function isPurgeRun(scheduledTime: number): boolean {
+  const at = new Date(scheduledTime);
+  return at.getUTCHours() === PURGE_HOUR_UTC && at.getUTCMinutes() === PURGE_MINUTE_UTC;
+}
+
+/** One cron run: the purge when it is the daily slot, then the course sweep. Each half survives the other's failure. */
+export async function runScheduled(env: Env, scheduledTime: number, execCtx?: ExecutionContext): Promise<void> {
+  if (isPurgeRun(scheduledTime)) await runPurge(env);
+  try {
+    await runCourseSweep(env, execCtx);
+  } catch (e) {
+    console.error('course sweep failed:', e instanceof Error ? e.name : 'unknown');
   }
 }
 
@@ -123,7 +142,7 @@ export default {
     executionByRequest.set(request, ctx);
     return providerFor(env).fetch(request, env, ctx);
   },
-  scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
-    ctx.waitUntil(runScheduled(env));
+  scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
+    ctx.waitUntil(runScheduled(env, controller.scheduledTime, ctx));
   },
 } satisfies ExportedHandler<Env>;

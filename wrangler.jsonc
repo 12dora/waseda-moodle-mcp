@@ -33,7 +33,8 @@
   "vars": {
     "PUBLIC_URL": "https://wasemoodle.example.com",
     "REGISTRATION": "allowlist",
-    "ALLOWED_MOODLE_USERIDS": ""
+    "ALLOWED_MOODLE_USERIDS": "",
+    "SYLLABUS_LOOKUP": "on"
   },
-  "triggers": { "crons": ["17 3 * * *"] }
+  "triggers": { "crons": ["17 0-14,22-23 * * *"] }
 }
