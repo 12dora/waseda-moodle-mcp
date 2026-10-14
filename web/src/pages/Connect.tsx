@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
+import { ApiError } from '../api/client';
 import { connect, getMe } from '../api/endpoints';
 import type { ConnectRequest, Me } from '../api/types';
+import { AccountSwitchCard } from '../components/AccountSwitchCard';
 import { ConnectMethods } from '../components/ConnectMethods';
 import { ErrorBox } from '../components/ErrorBox';
 import { PublicShell } from '../components/PublicShell';
@@ -17,6 +19,18 @@ function stripCode(): void {
   history.replaceState(history.state, '', url.pathname + url.search + url.hash);
 }
 
+/** Name of the account a handoff code belongs to, when the server asks to confirm an account switch. */
+function switchTarget(e: unknown): string | null {
+  if (!(e instanceof ApiError) || e.status !== 409 || e.code !== 'account_switch') return null;
+  const name = (e.body as { account?: { fullname?: unknown } } | null)?.account?.fullname;
+  return typeof name === 'string' ? name : '';
+}
+
+interface PendingSwitch {
+  code: string;
+  name: string;
+}
+
 export function ConnectPage() {
   const t = useT();
   const toast = useToast();
@@ -26,6 +40,7 @@ export function ConnectPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeError, setCodeError] = useState<unknown>(null);
+  const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
   const handled = useRef(false);
 
   const doConnect = useCallback(
@@ -50,7 +65,9 @@ export function ConnectPage() {
     setCodeBusy(true);
     doConnect({ code }).catch((e: unknown) => {
       setCodeBusy(false);
-      setCodeError(e);
+      const name = switchTarget(e);
+      if (name === null) setCodeError(e);
+      else setPendingSwitch({ code, name });
     });
   }, [doConnect, returnParam]);
 
@@ -60,6 +77,23 @@ export function ConnectPage() {
         <div className="center-block" role="status">
           <Spinner size={28} />
           <p>{t('connect.connecting')}</p>
+        </div>
+      </PublicShell>
+    );
+  }
+
+  if (pendingSwitch) {
+    return (
+      <PublicShell title={t('connect.switch.title')}>
+        <div className="narrow">
+          <AccountSwitchCard
+            name={pendingSwitch.name}
+            onSwitch={() => doConnect({ code: pendingSwitch.code, switchAccount: true })}
+            onCancel={() => {
+              takeReturn(null);
+              navigate('/', { replace: true });
+            }}
+          />
         </div>
       </PublicShell>
     );

@@ -16,6 +16,7 @@ import { useAsync } from '../lib/useAsync';
 
 const STATUS_BADGE: Record<ActionRecord['status'], string> = {
   pending: 'badge-warn',
+  executing: 'badge-warn',
   executed: 'badge-ok',
   cancelled: '',
   expired: '',

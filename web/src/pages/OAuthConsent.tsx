@@ -76,14 +76,19 @@ function ConsentForm({ reqId, info, onRedirect }: { reqId: string; info: OAuthRe
       location.href = redirectTo;
     } catch (e) {
       setBusy(null);
-      setError(errorText(e, t));
+      // 403 = request started in another browser; the server explains it.
+      setError(isStatus(e, 403) && e instanceof Error ? e.message : errorText(e, t));
     }
   };
 
   return (
     <Card>
-      <p className="consent-lead">{t('consent.lead', { app: info.clientName })}</p>
-      <dl className="kv">
+      <div className="consent-app">
+        <p className="consent-lead">{t('consent.lead', { app: info.clientName })}</p>
+        {info.clientDomain && <p className="muted mono small">{info.clientDomain}</p>}
+        {!info.verified && <span className="badge">{t('consent.unverified')}</span>}
+      </div>
+      <dl className={`kv${info.verified ? '' : ' kv-strong'}`}>
         <dt>{t('consent.redirect')}</dt>
         <dd className="mono">{info.redirectHost}</dd>
       </dl>

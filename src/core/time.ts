@@ -10,8 +10,19 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-/** Shifted Date whose UTC getters read JST wall-clock values. */
-function jstParts(ms: number) {
+export interface JstParts {
+  y: number;
+  mo: number;
+  d: number;
+  h: number;
+  mi: number;
+  s: number;
+  /** Day of week, 0 = Sunday. */
+  wd: number;
+}
+
+/** Wall-clock parts of an instant in JST (shifted Date whose UTC getters read JST values). */
+export function jstParts(ms: number): JstParts {
   const d = new Date(ms + JST_OFFSET_MS);
   return {
     y: d.getUTCFullYear(),
@@ -38,7 +49,6 @@ export function isoJst(ms: number): IsoJst {
   return `${p.y}-${pad(p.mo)}-${pad(p.d)}T${pad(p.h)}:${pad(p.mi)}:${pad(p.s)}+09:00`;
 }
 
-
 /** Moodle unix seconds -> ISO JST; 0/null/undefined (Moodle's "unset") -> null. */
 export function fromTs(ts: number | null | undefined): IsoJst | null {
   if (!ts) return null;
@@ -56,14 +66,29 @@ export function isMidnight(ts: number | null | undefined): boolean {
   return p.h === 0 && p.mi === 0;
 }
 
-/** Compact display for tool text: '2026-10-15 Wed 23:59'; midnight -> '2026-10-14 Tue 24:00'. */
+const isMidnightMs = (ms: number) => {
+  const p = jstParts(ms);
+  return p.h === 0 && p.mi === 0;
+};
+
+/** Compact display for tool text: '2026-10-15 Wed 23:59' (00:00 stays 00:00). Use fmtDue for deadlines. */
 export function fmt(iso: IsoJst | null | undefined): string {
   if (!iso) return '-';
-  const ms = Date.parse(iso);
-  const p = jstParts(ms);
-  if (p.h === 0 && p.mi === 0) {
-    const q = jstParts(ms - 86_400_000);
-    return `${q.y}-${pad(q.mo)}-${pad(q.d)} ${WEEKDAYS[q.wd]} 24:00`;
-  }
+  const p = jstParts(Date.parse(iso));
   return `${p.y}-${pad(p.mo)}-${pad(p.d)} ${WEEKDAYS[p.wd]} ${pad(p.h)}:${pad(p.mi)}`;
+}
+
+/** Deadline display: exactly 00:00 reads as the previous day 24:00 ('2026-10-14 Wed 24:00'). */
+export function fmtDue(iso: IsoJst | null | undefined): string {
+  if (!iso) return '-';
+  const ms = Date.parse(iso);
+  if (!isMidnightMs(ms)) return fmt(iso);
+  const q = jstParts(ms - 86_400_000);
+  return `${q.y}-${pad(q.mo)}-${pad(q.d)} ${WEEKDAYS[q.wd]} 24:00`;
+}
+
+/** The instant a deadline "feels like" (what fmtDue shows): midnight counts as the last millisecond of the day before. */
+export function deadlineMs(iso: IsoJst): number {
+  const ms = Date.parse(iso);
+  return isMidnightMs(ms) ? ms - 1 : ms;
 }

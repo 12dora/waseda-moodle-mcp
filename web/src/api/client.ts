@@ -6,11 +6,14 @@
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
-  constructor(status: number, code: string, message: string) {
+  /** Full JSON error body, for endpoints that attach extra fields (e.g. `account` on account_switch). */
+  readonly body: unknown;
+  constructor(status: number, code: string, message: string, body: unknown = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.body = body;
   }
 }
 
@@ -65,10 +68,10 @@ function parseJson(text: string): unknown {
 
 function readError(status: number, payload: unknown): ApiError {
   const err = (payload as { error?: { code?: unknown; message?: unknown } } | null)?.error;
-  if (!err || typeof err !== 'object') return new ApiError(status, 'http_error', `HTTP ${status}`);
+  if (!err || typeof err !== 'object') return new ApiError(status, 'http_error', `HTTP ${status}`, payload);
   const code = typeof err.code === 'string' ? err.code : 'error';
   const message = typeof err.message === 'string' ? err.message : `HTTP ${status}`;
-  return new ApiError(status, code, message);
+  return new ApiError(status, code, message, payload);
 }
 
 function redirectToConnect(): void {

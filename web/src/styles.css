@@ -1097,3 +1097,14 @@ fieldset {
 .spinner-wrap {
   display: inline-flex;
 }
+
+.consent-app {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.kv-strong dd {
+  font-weight: 650;
+  font-size: 1.05em;
+}

@@ -64,11 +64,15 @@ export interface AuditEntry {
 export interface OAuthRequestInfo {
   clientName: string;
   clientUri: string | null;
+  clientDomain: string | null;
+  verified: boolean;
   redirectHost: string;
   scopes: Scope[];
 }
 
 /** POST /api/connect body (§11): a handoff code, or a pasted launch link. */
-export type ConnectRequest = { code: string } | { launch: string; via: 'paste'; passport?: string };
+export type ConnectRequest =
+  | { code: string; switchAccount?: boolean }
+  | { launch: string; via: 'paste'; passport?: string };
 
 export type SettingsPatch = Partial<UserSettings>;
