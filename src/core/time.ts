@@ -38,9 +38,6 @@ export function isoJst(ms: number): IsoJst {
   return `${p.y}-${pad(p.mo)}-${pad(p.d)}T${pad(p.h)}:${pad(p.mi)}:${pad(p.s)}+09:00`;
 }
 
-export function nowIso(): IsoJst {
-  return isoJst(Date.now());
-}
 
 /** Moodle unix seconds -> ISO JST; 0/null/undefined (Moodle's "unset") -> null. */
 export function fromTs(ts: number | null | undefined): IsoJst | null {

@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "pnpm --dir web build && wrangler deploy",
+    "deploy": "pnpm --filter waseda-moodle-mcp-web run build && wrangler deploy",
     "build:stdio": "esbuild src/node/stdio.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/stdio.js --banner:js='#!/usr/bin/env node'",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json",
     "test": "vitest run",

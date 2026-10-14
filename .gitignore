@@ -7,3 +7,4 @@ web/node_modules/
 *.log
 coverage/
 .DS_Store
+wrangler.local.jsonc
