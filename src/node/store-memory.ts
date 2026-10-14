@@ -49,6 +49,7 @@ export class MemoryStore implements Store {
   private readonly uploads = new Map<string, UploadDraftRow>();
   private readonly courseSnapshots = new Map<string, CourseSnapshotRow>();
   private readonly syllabusCache = new Map<string, { json: string; fetchedAt: number }>();
+  private readonly sweptAt = new Map<number, number>(); // not persisted: a restart sweeps everyone again
   private auditRows: AuditRow[] = [];
   private nextUserId = 1;
   private nextAuditId = 1;
@@ -169,6 +170,7 @@ export class MemoryStore implements Store {
 
   async deleteUser(userId: number): Promise<void> {
     this.users.delete(userId);
+    this.sweptAt.delete(userId);
     this.credentials.delete(userId);
     for (const [k, v] of this.sessions) if (v.userId === userId) this.sessions.delete(k);
     for (const [k, v] of this.apiKeys) if (v.userId === userId) this.apiKeys.delete(k);
@@ -365,17 +367,17 @@ export class MemoryStore implements Store {
     this.syllabusCache.set(idnumber, { json, fetchedAt });
   }
 
-  /** Same order as the D1 store: oldest-checked first, users without snapshots lead. */
+  /** Same order as the D1 store: never swept first, then the least recently swept. */
   async listSweepUsers(limit: number): Promise<UserRow[]> {
-    const oldest = new Map<number, number>();
-    for (const r of this.courseSnapshots.values()) {
-      oldest.set(r.userId, Math.min(oldest.get(r.userId) ?? Number.POSITIVE_INFINITY, r.checkedAt));
-    }
     return [...this.users.values()]
       .filter((u) => this.credentials.get(u.id)?.status === 'active')
-      .sort((a, b) => (oldest.get(a.id) ?? -1) - (oldest.get(b.id) ?? -1) || a.id - b.id)
+      .sort((a, b) => (this.sweptAt.get(a.id) ?? -1) - (this.sweptAt.get(b.id) ?? -1) || a.id - b.id)
       .slice(0, Math.max(1, Math.floor(limit)))
       .map(clone);
+  }
+
+  async markSwept(userId: number, at: number): Promise<void> {
+    if (this.users.has(userId)) this.sweptAt.set(userId, at);
   }
 
   // ------------------------------------------------------------------ audit

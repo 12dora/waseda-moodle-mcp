@@ -32,6 +32,10 @@ vi.mock('@cloudflare/workers-oauth-provider', () => ({
 }));
 vi.mock('../../src/core/mcp/server', () => ({ buildMcpServer: vi.fn() }));
 vi.mock('../../src/core/services/sweep', () => ({ sweepForCron: vi.fn() }));
+vi.mock('../../src/core/services/scope', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/core/services/scope')>()),
+  resolveScope: vi.fn(async () => ({ mode: 'auto', mine: new Set(), courses: [] })),
+}));
 
 const MASTER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).map((_, i) => i + 5)));
 const SECRET = `wmm_${'Qw3rTy9uIo'.repeat(4)}`;

@@ -73,12 +73,14 @@ const ENROLLED = [
 ];
 
 describe('listCourses', () => {
-  const fakes = () => makeFakeContext({ responses: { [TIMELINE]: timeline, [ENROL]: ENROLLED } });
+  const EVENTS = 'core_calendar_get_action_events_by_timesort';
+  const fakes = (events: unknown[] = []) =>
+    makeFakeContext({ responses: { [TIMELINE]: timeline, [ENROL]: ENROLLED, [EVENTS]: { events } } });
 
   it('returns the suggested courses by default, mapped with scope fields', async () => {
     const { ctx, api } = fakes();
     const courses = await listCourses(ctx);
-    expect(api.calls.map((c) => c.fn)).toEqual([TIMELINE, ENROL]);
+    expect(api.calls.map((c) => c.fn)).toEqual([TIMELINE, ENROL, EVENTS]);
     expect(api.calls[0]?.params).toEqual({ classification: 'allincludinghidden', limit: 0 });
     expect(api.calls[1]?.params).toEqual({ userid: 1001, returnusercount: 0 });
     expect(courses).toEqual([
@@ -98,6 +100,11 @@ describe('listCourses', () => {
         lastAccess: '2026-10-13T12:00:00+09:00',
       },
     ]);
+  });
+
+  it('suggests a course with a calendar event in the next 30 days, the same way get_due does', async () => {
+    const courses = await listCourses(fakes([{ id: 1, course: { id: 103 } }]).ctx);
+    expect(courses.map((c) => c.id)).toEqual([101, 103]);
   });
 
   it('lists every enrolled course with scope: all', async () => {

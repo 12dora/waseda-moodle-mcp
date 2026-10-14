@@ -180,6 +180,7 @@ describe('tool registration', () => {
 });
 
 const dueList: DueList = {
+  otherCourses: [],
   generatedAt: '2026-10-14T12:00:00+09:00',
   windowFrom: '2026-10-14T12:00:00+09:00',
   windowTo: '2026-10-21T12:00:00+09:00',

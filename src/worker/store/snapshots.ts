@@ -27,6 +27,7 @@ type SnapshotMethods = Pick<
   | 'getSyllabusCache'
   | 'putSyllabusCache'
   | 'listSweepUsers'
+  | 'markSwept'
 >;
 
 /** D1 allows 100 bound variables per statement. */
@@ -86,20 +87,22 @@ export function snapshotMethods(db: D1Database): SnapshotMethods {
         .run();
     },
 
-    /** Oldest-checked first; users without any snapshot yet (NULL, which SQLite sorts first) lead the queue. */
+    /** Never-swept users first, then the least recently swept; the stamp is set even when a sweep failed. */
     async listSweepUsers(limit) {
       const { results } = await db
         .prepare(
           `SELECT u.* FROM users u
            JOIN credentials c ON c.user_id = u.id AND c.status = 'active'
-           LEFT JOIN (SELECT user_id, MIN(checked_at) AS oldest FROM course_snapshots GROUP BY user_id) s
-             ON s.user_id = u.id
-           ORDER BY s.oldest ASC, u.id ASC
+           ORDER BY u.last_swept_at ASC NULLS FIRST, u.id ASC
            LIMIT ?`,
         )
         .bind(Math.max(1, Math.floor(limit)))
         .all<UserRaw>();
       return results.map(toUser);
+    },
+
+    async markSwept(userId, at) {
+      await db.prepare('UPDATE users SET last_swept_at = ? WHERE id = ?').bind(at, userId).run();
     },
   };
 }

@@ -216,6 +216,7 @@ export function createMemoryStoreForTests(): MemoryStore {
     async listSweepUsers(limit) {
       return [...users.values()].slice(0, limit);
     },
+    async markSwept() {},
 
     async audit(row) {
       auditLog.push({ ...row, id: nextAuditId++ });

@@ -6,6 +6,8 @@ const JST_OFFSET_MS = 9 * 3600 * 1000;
 const DAY_MS = 86_400_000;
 /** Undated activities beyond this many are summarised; they mostly are trackerless material, not tasks. */
 const MAX_NO_DEADLINE_LINES = 5;
+/** Calendar items of courses outside the user's selection: shown last and briefly. */
+const MAX_OTHER_COURSE_LINES = 5;
 
 type DueGroup = 'Overdue' | 'Today' | 'Tomorrow' | 'Next 7 days' | 'Later' | 'No deadline';
 /** Order on screen. */
@@ -129,12 +131,26 @@ function dueFooter(list: DueList): string[] {
     const at = sweep.checkedAt ? `, last check ${fmt(sweep.checkedAt)}` : '';
     lines.push(`Course pages checked: ${sweep.checked}${stale}${at}.`);
   }
+  if (list.otherCourses.length > 0) {
+    lines.push(
+      `${plural(list.otherCourses.length, 'calendar deadline')} in enrolled courses outside your selection ${list.otherCourses.length === 1 ? 'is' : 'are'} listed under "Other enrolled courses"; if one of those courses matters, add it with set_my_courses.`,
+    );
+  }
   if (scope.otherCount > 0) {
     lines.push(
       `${plural(scope.otherCount, 'other enrolled course')} not included (pass course_id to look at one; list_courses with scope "all" shows them).`,
     );
   }
   return lines;
+}
+
+/** Final group: calendar items of enrolled courses outside the scope (never dropped, but at most a few lines). */
+function otherCoursesSection(list: DueList): string[] {
+  const items = list.otherCourses.filter((i) => !i.closed);
+  if (items.length === 0) return [];
+  const shown = items.slice(0, MAX_OTHER_COURSE_LINES).map(dueLine);
+  const more = items.length - shown.length;
+  return ['', `## Other enrolled courses (${items.length})`, ...shown, ...(more > 0 ? [`… ${more} more`] : [])];
 }
 
 export function renderDueList(list: DueList): string {
@@ -144,7 +160,7 @@ export function renderDueList(list: DueList): string {
   const head = [
     'Due items. Times are JST; a deadline at 00:00 is shown as the previous day 24:00.',
     list.items.length === 0
-      ? `Nothing outstanding between ${window}.`
+      ? `Nothing outstanding ${list.otherCourses.length > 0 ? 'in your courses ' : ''}between ${window}.`
       : `${plural(list.items.length, 'item')} between ${window}:`,
   ];
   const notes: string[] = [];
@@ -158,7 +174,8 @@ export function renderDueList(list: DueList): string {
     const g = dueGroup(item, now);
     groups.set(g, [...(groups.get(g) ?? []), item]);
   }
-  const reserved = [...head, ...notes, ...tail].join('\n').length + 160;
+  const other = otherCoursesSection(list);
+  const reserved = [...head, ...notes, ...tail, ...other].join('\n').length + 160;
   const sections = fitSections(groups, MAX_TEXT_CHARS - reserved);
 
   const body: string[] = [];
@@ -169,5 +186,5 @@ export function renderDueList(list: DueList): string {
     if (s.dropped > 0) body.push(`… ${s.dropped} more (use course_id or a smaller days_ahead)`);
     if (s.capped > 0) body.push(`… ${s.capped} more without a deadline (see the console's Due page)`);
   }
-  return hardCap([...head, ...body, ...notes, ...tail].join('\n'));
+  return hardCap([...head, ...body, ...other, ...notes, ...tail].join('\n'));
 }

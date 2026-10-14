@@ -62,6 +62,9 @@ function applySettingsPatch(current: UserSettings, body: Record<string, unknown>
 /** `null` = back to the automatic suggestion; otherwise at most MAX_MY_COURSES distinct positive ids. */
 function parseMyCourseIds(value: unknown): number[] | null {
   if (value === null) return null;
+  if (Array.isArray(value) && value.length === 0) {
+    throw new InvalidInput('Select at least one course, or reset to the suggestion.');
+  }
   const valid =
     Array.isArray(value) &&
     value.length <= MAX_MY_COURSES &&

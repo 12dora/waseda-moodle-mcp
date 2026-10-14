@@ -54,6 +54,7 @@ function dueList(items: DueItem[], patch: Partial<DueList> = {}): DueList {
     windowTo: '2026-10-28T12:00:00+09:00',
     items,
     scope: { mode: 'mine', courseIds: [101], otherCount: 0 },
+    otherCourses: [],
     sweep: { checked: 1, stale: 0, checkedAt: '2026-10-14T11:30:00+09:00' },
     truncated: false,
     ...patch,
@@ -146,6 +147,24 @@ describe('renderDueList', () => {
     expect(t).toContain("… 3 more without a deadline (see the console's Due page)");
     const few = renderDueList(dueList(undated.slice(0, 5)));
     expect(few).not.toContain('more without a deadline');
+  });
+
+  it('lists calendar items of courses outside the selection last (max 5 lines) and mentions them in the footer', () => {
+    const other = (n: number) =>
+      due({ courseId: 300 + n, courseName: `Other ${n}`, name: `Pre-course quiz ${n}`, cmid: 9000 + n });
+    const t = renderDueList(dueList([due({})], { otherCourses: [1, 2, 3, 4, 5, 6, 7].map(other) }));
+    expect(t).toContain('## Other enrolled courses (7)');
+    expect(t).toContain('Pre-course quiz 5');
+    expect(t).not.toContain('Pre-course quiz 6');
+    expect(t).toContain('… 2 more');
+    expect(t.indexOf('## Other enrolled courses')).toBeGreaterThan(t.indexOf('Report 3'));
+    expect(t).toContain('7 calendar deadlines in enrolled courses outside your selection are listed under');
+
+    const one = renderDueList(dueList([], { otherCourses: [other(1)] }));
+    expect(one).toContain('Nothing outstanding in your courses between');
+    expect(one).toContain('## Other enrolled courses (1)');
+    expect(one).not.toContain('… ');
+    expect(renderDueList(dueList([due({})]))).not.toContain('Other enrolled courses');
   });
 
   it('shows the evidence of a date a calendar item took from its own module text', () => {

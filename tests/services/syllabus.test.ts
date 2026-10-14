@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  academicYear,
   currentTerms,
   inCurrentTerm,
   lookupTerms,
@@ -81,6 +82,11 @@ describe('parseSyllabusTerm', () => {
     expect(parseSyllabusTerm(ERROR_PAGE)).toEqual({ status: 'error' });
     expect(parseSyllabusTerm('<html>maintenance</html>')).toEqual({ status: 'error' });
   });
+
+  it('looks for the error marker only when the term cell is missing', () => {
+    const real = page('秋クォーター&nbsp;&nbsp;月１-２').replace('Yamada Taro', 'システムエラー入門担当');
+    expect(parseSyllabusTerm(`${real}<p>システムエラー</p>`)).toMatchObject({ status: 'ok', term: '秋クォーター' });
+  });
 });
 
 describe('currentTerms / termFit', () => {
@@ -110,6 +116,28 @@ describe('currentTerms / termFit', () => {
     expect(termFit('集中', now)).toBe('unknown');
     expect(termFit(null, now)).toBe('unknown');
   });
+
+  it('termFit: a term is current from 14 days before it starts', () => {
+    expect(termFit('冬クォーター', at('2026-11-07'))).toBe('not-current');
+    expect(termFit('冬クォーター', at('2026-11-10'))).toBe('current');
+    expect(termFit('春クォーター', at('2027-03-20'))).toBe('current'); // spring term of the next academic year
+    expect(termFit('春学期', at('2026-03-20'))).toBe('current');
+    expect(termFit('夏クォーター', at('2026-05-21'))).toBe('current');
+    expect(termFit('夏クォーター', at('2026-05-15'))).toBe('not-current');
+  });
+
+  it('termFit: the course academic year must be the current one (Jan-Mar belong to the previous year)', () => {
+    expect(academicYear(at('2026-10-14'))).toBe(2026);
+    expect(academicYear(at('2027-02-10'))).toBe(2026);
+    expect(academicYear(at('2027-04-01'))).toBe(2027);
+    expect(termFit('秋クォーター', at('2026-10-14'), 2026)).toBe('current');
+    expect(termFit('秋クォーター', at('2026-10-14'), 2025)).toBe('not-current');
+    expect(termFit('通年', at('2026-10-14'), 2025)).toBe('not-current');
+    expect(termFit('冬クォーター', at('2027-02-10'), 2026)).toBe('current');
+    expect(termFit('冬クォーター', at('2027-02-10'), 2027)).toBe('not-current');
+    expect(termFit('通年', at('2027-03-25'), 2027)).toBe('current'); // 2027 begins within 14 days
+    expect(termFit(null, at('2026-10-14'), 2020)).toBe('unknown');
+  });
 });
 
 // ------------------------------------------------------------------ lookupTerms
@@ -126,7 +154,7 @@ function stubFetch(pages: Record<string, string | Error | number>, fallback: str
   return fn;
 }
 
-const course = (id: number, idnumber: string, name = `Course ${id}`) => ({ id, idnumber, name });
+const course = (id: number, idnumber: string) => ({ id, idnumber });
 const C1 = course(1, '2026570010006202'); // pKey 5700100062022026570010006257
 const C2 = course(2, '2026570020004801'); // pKey 5700200048012026570020004857
 const PK1 = '5700100062022026570010006257';
@@ -143,7 +171,6 @@ describe('lookupTerms', () => {
       term: '秋クォーター',
       dayPeriod: '月１-２',
       instructors: ['Yamada Taro'],
-      master: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
@@ -165,7 +192,6 @@ describe('lookupTerms', () => {
       term: '冬クォーター',
       dayPeriod: null,
       instructors: [],
-      master: false,
     };
     t.state.syllabusCache.set(C1.idnumber, { json: JSON.stringify(info), fetchedAt: NOW.getTime() - 30 * DAY });
     t.state.syllabusCache.set(C2.idnumber, { json: 'null', fetchedAt: NOW.getTime() - 30 * DAY });
@@ -175,23 +201,62 @@ describe('lookupTerms', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('caches "no syllabus" (empty page) but not server errors, bad statuses or network failures', async () => {
-    stubFetch({ [PK1]: EMPTY_PAGE, [PK2]: ERROR_PAGE });
+  it('caches "no syllabus" (empty page) for the year', async () => {
+    stubFetch({ [PK1]: EMPTY_PAGE });
     const t = makeFakeContext();
-    const res = await lookupTerms(t.ctx, [C1, C2, course(3, '2026570010009901'), course(4, '2026570010009902')]);
-    expect([...res.values()]).toEqual([null, null, null, null]);
+    expect([...(await lookupTerms(t.ctx, [C1])).values()]).toEqual([null]);
     expect(t.state.syllabusCache.get(C1.idnumber)?.json).toBe('null');
-    expect(t.state.syllabusCache.has(C2.idnumber)).toBe(false);
-
-    stubFetch({}, 503);
-    const t2 = makeFakeContext();
-    expect((await lookupTerms(t2.ctx, [C1])).get(1)).toBeNull();
-    stubFetch({ [PK1]: new Error('network down') });
-    expect((await lookupTerms(t2.ctx, [C1])).get(1)).toBeNull();
-    expect(t2.state.syllabusCache.size).toBe(0);
   });
 
-  it('looks up at most 3 uncached courses per call, one after the other', async () => {
+  it('caches server errors, bad statuses and network failures as "unknown" for one hour', async () => {
+    const fetchFn = stubFetch({ [PK1]: ERROR_PAGE, [PK2]: new Error('network down') }, 503);
+    const t = makeFakeContext();
+    const c3 = course(3, '2026570010009901');
+    const res = await lookupTerms(t.ctx, [C1, C2, c3]);
+    expect([...res.values()]).toEqual([null, null, null]);
+    for (const c of [C1, C2, c3]) {
+      expect(JSON.parse(t.state.syllabusCache.get(c.idnumber)?.json ?? '')).toEqual({ unknown: true });
+    }
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+
+    await lookupTerms(t.ctx, [C1, C2, c3]); // within the hour: nothing is asked again
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+
+    vi.setSystemTime(new Date(NOW.getTime() + 61 * 60_000));
+    await lookupTerms(t.ctx, [C1]);
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+  });
+
+  it('a later answer replaces the "unknown" marker', async () => {
+    const t = makeFakeContext();
+    t.state.syllabusCache.set(C1.idnumber, { json: '{"unknown":true}', fetchedAt: NOW.getTime() - 2 * 3_600_000 });
+    stubFetch({ [PK1]: page('秋クォーター&nbsp;&nbsp;月１-２') });
+    expect((await lookupTerms(t.ctx, [C1])).get(1)?.term).toBe('秋クォーター');
+    expect(JSON.parse(t.state.syllabusCache.get(C1.idnumber)?.json ?? '')).toMatchObject({ term: '秋クォーター' });
+  });
+
+  it('one 3 s deadline covers all lookups of a call; courses not reached are not cached', async () => {
+    const fetchFn = vi.fn(async () => {
+      vi.setSystemTime(new Date(Date.now() + 3500)); // the first request hangs past the deadline
+      throw new Error('timeout');
+    });
+    vi.stubGlobal('fetch', fetchFn);
+    const t = makeFakeContext();
+    const res = await lookupTerms(t.ctx, [C1, C2]);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect([...res.values()]).toEqual([null, null]);
+    expect(JSON.parse(t.state.syllabusCache.get(C1.idnumber)?.json ?? '')).toEqual({ unknown: true });
+    expect(t.state.syllabusCache.has(C2.idnumber)).toBe(false);
+  });
+
+  it('passes the remaining time as the abort signal of each fetch', async () => {
+    const fetchFn = stubFetch({ [PK1]: page('秋学期') });
+    await lookupTerms(makeFakeContext().ctx, [C1]);
+    const init = (fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('makes at most 3 fetches per call, one after the other', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
     const fetchFn = vi.fn(async () => {
@@ -225,7 +290,6 @@ describe('lookupTerms', () => {
       term: '春学期',
       dayPeriod: null,
       instructors: [],
-      master: false,
     };
     t.state.syllabusCache.set(C1.idnumber, { json: JSON.stringify(stale), fetchedAt: NOW.getTime() - 400 * DAY });
     t.state.syllabusCache.set(C2.idnumber, {
@@ -246,7 +310,6 @@ describe('lookupTerms', () => {
       term: '秋クォーター',
       dayPeriod: null,
       instructors: [],
-      master: false,
     };
     t.state.syllabusCache.set(C1.idnumber, { json: JSON.stringify(info), fetchedAt: NOW.getTime() - 500 * DAY });
     const res = await lookupTerms(t.ctx, [C1, C2], { syllabusLookup: false });
@@ -267,31 +330,12 @@ describe('lookupTerms', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('falls back to the 総合日本語 master page (秋 = class 99 first in the fall semester)', async () => {
-    const section = course(7, '2026920015500116', '総合日本語３Ｘ');
-    const master = '9200155999992026920015599992';
-    const fetchFn = stubFetch({ [master]: page('秋学期&nbsp;&nbsp;01:無フルOD 02:金１-２') });
+  it("leaves 総合日本語 sections without a page unknown: no master-page guess by today's season", async () => {
+    const fetchFn = stubFetch({});
     const t = makeFakeContext();
-    const res = await lookupTerms(t.ctx, [section]);
-    expect(res.get(7)).toMatchObject({ pKey: master, term: '秋学期', master: true, year: 2026 });
-    expect(fetchFn.mock.calls.map((c) => new URL(c[0] as string).searchParams.get('pKey'))).toEqual([
-      '9200155001162026920015500192', // the section itself: empty
-      master,
-    ]);
-  });
-
-  it('tries the spring master first outside the fall semester and ignores the fallback for other courses', async () => {
-    vi.setSystemTime(new Date('2026-05-10T03:00:00Z'));
-    const spring = '9200155999982026920015599992';
-    const fetchFn = stubFetch({ [spring]: page('春学期&nbsp;&nbsp;月１時限') });
-    const t = makeFakeContext();
-    const res = await lookupTerms(t.ctx, [course(7, '2026920015500116', '総合日本語３Ｘ')]);
-    expect(res.get(7)?.term).toBe('春学期');
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-
-    const other = await lookupTerms(t.ctx, [course(8, '2026920015500216', 'Some Other Course')]);
-    expect(other.get(8)).toBeNull();
-    expect(fetchFn).toHaveBeenCalledTimes(3); // only its own page was asked for
+    const res = await lookupTerms(t.ctx, [course(7, '2026920015500116')]);
+    expect(res.get(7)).toBeNull();
+    expect(fetchFn).toHaveBeenCalledTimes(1); // only the section's own page
   });
 
   it('never throws, even when the cache store fails', async () => {

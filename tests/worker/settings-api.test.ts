@@ -101,7 +101,7 @@ describe('PATCH /api/settings', () => {
     expect((await call('/api/settings', { method: 'PATCH', body: {}, signed: false })).status).toBe(401);
   });
 
-  it('sets, empties and clears myCourseIds through setMyCourses with a console context', async () => {
+  it('sets and clears myCourseIds through setMyCourses with a console context', async () => {
     const set = await patch({ myCourseIds: [5, 6, 5], writeMode: 'off' });
     expect(set.status).toBe(200);
     expect((await json(set)).settings).toEqual({ ...DEFAULTS, writeMode: 'off', myCourseIds: [5, 6] });
@@ -110,10 +110,6 @@ describe('PATCH /api/settings', () => {
     expect(ctx).toMatchObject({ source: 'Console', user: { moodleUserId: 1001 } });
     expect(await myCourseIdsOf()).toEqual([5, 6]);
 
-    expect((await json(await patch({ myCourseIds: [] }))).settings).toMatchObject({
-      myCourseIds: [],
-      writeMode: 'off',
-    });
     expect((await json(await patch({ myCourseIds: null }))).settings).toMatchObject({ myCourseIds: null });
     expect(await myCourseIdsOf()).toBeNull();
   });
@@ -127,6 +123,7 @@ describe('PATCH /api/settings', () => {
       { myCourseIds: [0] },
       { myCourseIds: [-3] },
       { myCourseIds: tooMany },
+      { myCourseIds: [] }, // would hide every calendar item: select something or reset to null
       { hiddenCourseIds: [1] },
       { hiddenCourseIds: null },
     ]) {

@@ -189,8 +189,10 @@ export interface Store {
   // public syllabus cache (global, keyed by Moodle course idnumber; json = SyllabusInfo or "null" for "no syllabus")
   getSyllabusCache(idnumbers: string[]): Promise<Map<string, { json: string; fetchedAt: number }>>;
   putSyllabusCache(idnumber: string, json: string, fetchedAt: number): Promise<void>;
-  /** Users with an active credential, for the scheduled sweep (oldest-checked first). */
+  /** Users with an active credential, for the scheduled sweep (never swept first, then least recently swept). */
   listSweepUsers(limit: number): Promise<UserRow[]>;
+  /** Stamps the user's last scheduled-sweep attempt (also after a failure or with an empty scope). */
+  markSwept(userId: number, at: number): Promise<void>;
 
   // audit log
   audit(row: AuditRow): Promise<void>;

@@ -3,15 +3,18 @@
 import type { MoodleApi, ServiceContext } from '../context';
 import { InvalidInput, MoodleError } from '../errors';
 import { decodeEntities } from '../html';
-import { fromTs, nowMs } from '../time';
+import { fromTs, nowMs, nowSec } from '../time';
 import type { Course, UserSettings } from '../types';
 import { lookupTerms, termFit } from './syllabus';
 import { requirePositiveInt } from './validate';
 
 const TIMELINE_FN = 'core_course_get_enrolled_courses_by_timeline_classification';
 const ENROL_FN = 'core_enrol_get_users_courses';
+const EVENTS_FN = 'core_calendar_get_action_events_by_timesort';
 const DAY_MS = 86_400_000;
 const RECENT_ACCESS_MS = 21 * DAY_MS;
+const EVENTS_HORIZON_SEC = 30 * 86_400;
+const EVENTS_PAGE_SIZE = 50; // Moodle accepts 1..50
 
 export interface CourseScope {
   mode: 'mine' | 'auto';
@@ -90,30 +93,65 @@ async function fetchLastAccess(api: MoodleApi): Promise<Map<number, number>> {
   }
 }
 
-interface Signals {
-  eventCourses: ReadonlySet<number> | null;
-  now: number;
+/** Courses with an action event in the next 30 days. Best effort: null when Moodle refuses the call. */
+async function fetchEventCourses(api: MoodleApi): Promise<ReadonlySet<number> | null> {
+  const from = nowSec();
+  try {
+    const res = await api.call<{ events?: Array<{ course?: { id?: number } | null }> }>(EVENTS_FN, {
+      timesortfrom: from,
+      timesortto: from + EVENTS_HORIZON_SEC,
+      limitnum: EVENTS_PAGE_SIZE,
+      limittononsuspendedevents: 1,
+    });
+    return new Set((res?.events ?? []).flatMap((e) => e.course?.id ?? []));
+  } catch (e) {
+    if (e instanceof MoodleError) return null;
+    throw e;
+  }
 }
+
+/** A course plus the academic year in its idnumber (null when it has none). */
+interface Candidate {
+  course: Course;
+  year: number | null;
+}
+
+const idnumberYear = (idnumber: string | undefined): number | null => {
+  const m = /^(\d{4})/.exec(idnumber ?? '');
+  return m?.[1] ? Number(m[1]) : null;
+};
+
+const recentlyAccessed = (course: Course, now: number) =>
+  course.lastAccess !== null && Date.parse(course.lastAccess) >= now - RECENT_ACCESS_MS;
+
+/** Known term of another academic year -> 'not-current'; no term -> 'unknown'. */
+const fitOf = ({ course, year }: Candidate, now: number) => termFit(course.term, now, year);
 
 /**
- * class course AND (term is current OR (term unknown AND (recent access OR upcoming calendar event))).
- * A known, non-current term (e.g. 冬クォーター in October) is never suggested, even with recent access.
+ * class course AND (term is current in the course's academic year OR (term unknown AND (recent access OR calendar
+ * event in the next 30 days))). A known, non-current term (e.g. 冬クォーター in October, or an old year's 秋クォーター)
+ * is never suggested, even with recent access.
  */
-function isSuggested(course: Course, signals: Signals): boolean {
-  if (course.kind !== 'class') return false;
-  const fit = termFit(course.term, signals.now);
+function isSuggested(c: Candidate, now: number, eventCourses: ReadonlySet<number> | null): boolean {
+  if (c.course.kind !== 'class') return false;
+  const fit = fitOf(c, now);
   if (fit !== 'unknown') return fit === 'current';
-  const accessedAt = course.lastAccess ? Date.parse(course.lastAccess) : 0;
-  return accessedAt >= signals.now - RECENT_ACCESS_MS || signals.eventCourses?.has(course.id) === true;
+  return recentlyAccessed(c.course, now) || eventCourses?.has(c.course.id) === true;
 }
 
+/** The calendar signal only matters for class courses the term and lastaccess rules leave undecided. */
+const needsEventSignal = (candidates: Candidate[], now: number) =>
+  candidates.some((c) => c.course.kind === 'class' && fitOf(c, now) === 'unknown' && !recentlyAccessed(c.course, now));
+
 interface ScopeState {
-  /** Courses with a calendar event in the next 30 days, when a due-events call already ran in this request. */
-  eventCourses: ReadonlySet<number> | null;
-  /** Kill switch for the public syllabus lookup (callers pass it from their env). */
+  /** Kill switch for the public syllabus lookup (callers pass it from their env; the cron serves the cache only). */
   syllabusLookup: boolean;
+  /** Whether the automatic suggestion may spend one calendar call on its event signal (not in the cron). */
+  calendarSignal: boolean;
   scope: Promise<CourseScope> | null;
   terms: Promise<Map<number, string | null>> | null;
+  /** ONE 30-day action-events call per request, shared by every tool that resolves the scope. */
+  events: Promise<ReadonlySet<number> | null> | null;
 }
 
 const states = new WeakMap<ServiceContext, ScopeState>();
@@ -121,14 +159,14 @@ const states = new WeakMap<ServiceContext, ScopeState>();
 function stateOf(ctx: ServiceContext): ScopeState {
   let s = states.get(ctx);
   if (!s) {
-    s = { eventCourses: null, syllabusLookup: ctx.syllabusLookup ?? true, scope: null, terms: null };
+    s = { syllabusLookup: ctx.syllabusLookup ?? true, calendarSignal: true, scope: null, terms: null, events: null };
     states.set(ctx, s);
   }
   return s;
 }
 
 async function lookupCourseTerms(ctx: ServiceContext, raw: RawCourse[], enabled: boolean) {
-  const lookups = raw.map((c) => ({ id: Number(c.id ?? 0), idnumber: c.idnumber ?? '', name: c.fullname ?? '' }));
+  const lookups = raw.map((c) => ({ id: Number(c.id ?? 0), idnumber: c.idnumber ?? '' }));
   const infos = await lookupTerms(ctx, lookups, { syllabusLookup: enabled });
   return new Map([...infos].map(([id, info]) => [id, info?.term ?? null]));
 }
@@ -138,33 +176,37 @@ async function computeScope(ctx: ServiceContext, state: ScopeState): Promise<Cou
   const raw = await fetchRawCourses(api);
   state.terms ??= lookupCourseTerms(ctx, raw, state.syllabusLookup);
   const [access, terms] = await Promise.all([fetchLastAccess(api), state.terms]);
+  const now = nowMs();
+  const candidates = raw.map((r): Candidate => {
+    const course = { ...mapCourse(r, api.baseUrl), lastAccess: fromTs(access.get(Number(r.id))) };
+    return { course: { ...course, term: terms.get(course.id) ?? null }, year: idnumberYear(r.idnumber) };
+  });
+  if (state.calendarSignal && needsEventSignal(candidates, now)) state.events ??= fetchEventCourses(api);
+  const eventCourses = (await state.events) ?? null;
   const confirmed = ctx.user.settings.myCourseIds;
-  const signals = { eventCourses: state.eventCourses, now: nowMs() };
-  const courses = raw.map((r) => {
-    const base = { ...mapCourse(r, api.baseUrl), lastAccess: fromTs(access.get(Number(r.id))) };
-    const course = { ...base, term: terms.get(base.id) ?? null };
-    const suggested = isSuggested(course, signals);
-    return { ...course, suggested, mine: confirmed ? confirmed.includes(course.id) : suggested };
+  const courses = candidates.map((c) => {
+    const suggested = isSuggested(c, now, eventCourses);
+    return { ...c.course, suggested, mine: confirmed ? confirmed.includes(c.course.id) : suggested };
   });
   return { mode: confirmed ? 'mine' : 'auto', mine: new Set(courses.filter((c) => c.mine).map((c) => c.id)), courses };
 }
 
 /**
- * Memoised per ServiceContext (= per request). `syllabusLookup: false` (env kill switch) stops the public syllabus
- * fetches; it applies to the first resolution of a context.
+ * Memoised per ServiceContext (= per request); the options apply to the first resolution of a context.
+ * `syllabusLookup: false` (env kill switch, scheduled sweep) stops the public syllabus fetches (cached rows still
+ * answer); `calendarSignal: false` (scheduled sweep) skips the one 30-day events call of the automatic suggestion.
  */
-export function resolveScope(ctx: ServiceContext, opts: { syllabusLookup?: boolean } = {}): Promise<CourseScope> {
+export function resolveScope(
+  ctx: ServiceContext,
+  opts: { syllabusLookup?: boolean; calendarSignal?: boolean } = {},
+): Promise<CourseScope> {
   const state = stateOf(ctx);
-  if (state.scope === null) state.syllabusLookup = opts.syllabusLookup ?? state.syllabusLookup;
+  if (state.scope === null) {
+    state.syllabusLookup = opts.syllabusLookup ?? state.syllabusLookup;
+    state.calendarSignal = opts.calendarSignal ?? state.calendarSignal;
+  }
   state.scope ??= computeScope(ctx, state);
   return state.scope;
-}
-
-/** Feeds the calendar signal of the automatic suggestion from a due-events call that already happened. */
-export function noteUpcomingEventCourses(ctx: ServiceContext, courseIds: Iterable<number>): void {
-  const state = stateOf(ctx);
-  state.eventCourses = new Set(courseIds);
-  state.scope = null;
 }
 
 function validateIds(ids: number[], enrolled: ReadonlySet<number>): number[] {
@@ -176,6 +218,7 @@ function validateIds(ids: number[], enrolled: ReadonlySet<number>): number[] {
 
 /** `null` returns to the automatic suggestion. Only changes our own filter, never Moodle. */
 export async function setMyCourses(ctx: ServiceContext, ids: number[] | null): Promise<UserSettings> {
+  if (ids?.length === 0) throw new InvalidInput('Select at least one course, or reset to the suggestion.');
   const myCourseIds =
     ids === null ? null : validateIds(ids, new Set((await resolveScope(ctx)).courses.map((c) => c.id)));
   const next: UserSettings = { ...ctx.user.settings, myCourseIds };

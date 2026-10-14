@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceContext } from '../../src/core/context';
 import { NeedsReconnect } from '../../src/core/errors';
+import { resolveScope } from '../../src/core/services/scope';
 import { sweepForCron } from '../../src/core/services/sweep';
 import { getRuntime } from '../../src/worker/context';
 import type { Env } from '../../src/worker/env';
@@ -10,6 +11,7 @@ import { createTestD1 } from '../helpers/d1-sqlite';
 import { MemoryKV } from '../helpers/memory-kv';
 
 vi.mock('../../src/core/services/sweep', () => ({ sweepForCron: vi.fn() }));
+vi.mock('../../src/core/services/scope', () => ({ resolveScope: vi.fn() }));
 
 const MASTER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).map((_, i) => i + 3)));
 const STATS = { checked: 0, stale: 0, checkedAt: null };
@@ -60,6 +62,7 @@ beforeEach(() => {
       return Response.json({});
     }),
   );
+  vi.mocked(resolveScope).mockReset().mockResolvedValue({ mode: 'auto', mine: new Set(), courses: [] });
   vi.mocked(sweepForCron)
     .mockReset()
     .mockImplementation(async (ctx) => {
@@ -76,12 +79,12 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('runCourseSweep', () => {
-  it('sweeps users with an active credential as a read-only system caller, oldest-checked first', async () => {
+  it('sweeps users with an active credential as a read-only system caller, least recently swept first', async () => {
     const stale = await addUser(1001);
     const fresh = await addUser(1002);
     await addUser(1003, 'invalid');
-    await store.putCourseSnapshot({ userId: fresh.id, courseId: 1, json: '{}', fetchedAt: 5, checkedAt: 5 });
-    await store.putCourseSnapshot({ userId: stale.id, courseId: 1, json: '{}', fetchedAt: 1, checkedAt: 1 });
+    await store.markSwept(fresh.id, 5);
+    await store.markSwept(stale.id, 1);
 
     const summary = await runCourseSweep(env);
 
@@ -89,6 +92,33 @@ describe('runCourseSweep', () => {
     expect(seen.map((c) => c.user.moodleUserId)).toEqual([1001, 1002]);
     expect(seen[0]).toMatchObject({ mode: 'worker', source: 'Scheduled sweep', scopes: ['moodle:read'] });
     expect(sweepForCron).toHaveBeenCalledWith(expect.anything(), { maxRefresh: 2 });
+  });
+
+  it('resolves the scope without syllabus fetches or the calendar call, before the sweep uses it', async () => {
+    await addUser(1001);
+    await runCourseSweep(env);
+    expect(resolveScope).toHaveBeenCalledWith(seen[0], { syllabusLookup: false, calendarSignal: false });
+    expect(vi.mocked(resolveScope).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(sweepForCron).mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it('stamps last_swept_at for every attempted user, failures included, and rotates the queue', async () => {
+    const a = await addUser(1001);
+    const b = await addUser(1002);
+    plan.set(1001, new Error('boom'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await runCourseSweep(env);
+    err.mockRestore();
+    expect(seen.map((c) => c.user.id)).toEqual([a.id, b.id]);
+    const row = (id: number) =>
+      env.DB.prepare('SELECT last_swept_at AS t FROM users WHERE id = ?').bind(id).first<{ t: number }>();
+    expect((await row(a.id))?.t).toBeGreaterThan(0);
+    expect((await row(b.id))?.t).toBeGreaterThan(0);
+    seen.length = 0;
+    await store.markSwept(a.id, 1); // a is now the least recently swept
+    await runCourseSweep(env);
+    expect(seen.map((c) => c.user.id)).toEqual([a.id, b.id]);
   });
 
   it('visits at most 20 users per run', async () => {

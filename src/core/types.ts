@@ -128,6 +128,7 @@ export interface DueList {
   windowTo: IsoJst;
   items: DueItem[]; // sorted by dueAt ?? opensAt ascending
   scope: { mode: 'mine' | 'auto'; courseIds: number[]; otherCount: number }; // otherCount = enrolled courses outside the scope
+  otherCourses: DueItem[]; // calendar items of enrolled courses outside the scope
   sweep: { checked: number; stale: number; checkedAt: IsoJst | null }; // course-content sweep coverage
   truncated: boolean; // more events existed than the paging budget allowed
 }

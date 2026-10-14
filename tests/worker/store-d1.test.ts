@@ -267,7 +267,7 @@ describe('course snapshots', () => {
     ]);
   });
 
-  it('listSweepUsers: active credentials only, users without snapshots first, then oldest checkedAt', async () => {
+  it('listSweepUsers: active credentials only, never-swept users first, then the least recently swept', async () => {
     const mk = async (moodleUserId: number, status: 'active' | 'invalid' | null) => {
       const u = await store.upsertUser({ moodleUserId, fullname: `U${moodleUserId}`, lang: 'en' });
       if (status) await store.putCredential(credential(u.id, { status, tokenHash: `h${moodleUserId}` }));
@@ -278,10 +278,10 @@ describe('course snapshots', () => {
     await mk(2003, 'invalid');
     await mk(2004, null);
     const recent = await mk(2005, 'active');
-    await store.putCourseSnapshot(snap(recent.id, 1, { checkedAt: 900 }));
-    await store.putCourseSnapshot(snap(recent.id, 2, { checkedAt: 800 }));
-    await store.putCourseSnapshot(snap(stale.id, 1, { checkedAt: 100 }));
-    await store.putCourseSnapshot(snap(stale.id, 2, { checkedAt: 999 }));
+    // old out-of-scope snapshots no longer decide the order: only the sweep stamp does
+    await store.putCourseSnapshot(snap(fresh.id, 1, { checkedAt: 1 }));
+    await store.markSwept(recent.id, 900);
+    await store.markSwept(stale.id, 100);
 
     expect((await store.listSweepUsers(10)).map((u) => u.id)).toEqual([fresh.id, stale.id, recent.id]);
     const limited = await store.listSweepUsers(2);

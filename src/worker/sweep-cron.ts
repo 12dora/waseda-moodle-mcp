@@ -1,11 +1,13 @@
 /**
- * Scheduled course sweep (contract §12.4): every hourly run walks the users with an active credential, oldest-checked
- * first, and lets the sweep service refresh at most a couple of stale courses each. The whole invocation stays under
- * the Free plan's 50-subrequest limit by capping the Moodle calls it may spend in total.
+ * Scheduled course sweep (contract §12.4): every hourly run walks the users with an active credential (never swept
+ * first, then least recently attempted), and lets the sweep service refresh at most a couple of stale courses each.
+ * The whole invocation stays under the Free plan's 50-subrequest limit by capping the Moodle calls it may spend in
+ * total; it makes no syllabus fetches (cached rows only).
  */
 
-import type { MoodleApi, ServiceContext, UserRow } from '../core/context';
+import type { MoodleApi, ServiceContext, Store, UserRow } from '../core/context';
 import { BudgetExceeded, NeedsReconnect } from '../core/errors';
+import { resolveScope } from '../core/services/scope';
 import { sweepForCron } from '../core/services/sweep';
 import { buildServiceContext, getRuntime, type WaitUntil } from './context';
 import type { Env } from './env';
@@ -50,6 +52,9 @@ async function sweepUser(
         return client;
       },
     };
+    // the scope is memoised per context: the sweep reuses this one. The cron fetches nothing public (syllabus rows come
+    // from the cache only) and skips the calendar signal, so a run stays within its Moodle-call budget.
+    await resolveScope(ctx, { syllabusLookup: false, calendarSignal: false });
     await sweepForCron(ctx, { maxRefresh: SWEEP_MAX_REFRESH });
     return { outcome: 'swept', calls: spent() };
   } catch (e) {
@@ -60,6 +65,15 @@ async function sweepUser(
   }
 }
 
+/** Stamped after every attempt, also failed ones and empty scopes, so the queue always moves on. */
+async function stampSwept(store: Store, userId: number): Promise<void> {
+  try {
+    await store.markSwept(userId, Date.now());
+  } catch {
+    console.error('sweep stamp failed');
+  }
+}
+
 export async function runCourseSweep(env: Env, execCtx?: WaitUntil): Promise<SweepRunSummary> {
   const summary: SweepRunSummary = { swept: 0, skipped: 0, failed: 0, calls: 0 };
   const { store } = await getRuntime(env);
@@ -67,6 +81,7 @@ export async function runCourseSweep(env: Env, execCtx?: WaitUntil): Promise<Swe
     const remaining = SWEEP_CALL_BUDGET - summary.calls;
     if (remaining < MIN_CALLS_PER_USER) break;
     const { outcome, calls } = await sweepUser(env, execCtx, user, remaining);
+    await stampSwept(store, user.id);
     summary.calls += calls;
     if (outcome === 'budget') break;
     summary[outcome] += 1;

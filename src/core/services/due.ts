@@ -5,7 +5,7 @@ import { MoodleError } from '../errors';
 import { decodeEntities } from '../html';
 import { isMidnight, isoJst, nowSec, toMs } from '../time';
 import type { DueItem, DueKind, DueList } from '../types';
-import { noteUpcomingEventCourses, resolveScope } from './scope';
+import { resolveScope } from './scope';
 import { collectSweepItems } from './sweep';
 import { optionalPositiveInt } from './validate';
 
@@ -14,7 +14,6 @@ const BY_COURSE_FN = 'core_calendar_get_action_events_by_course';
 const PAGE_SIZE = 50; // Moodle accepts 1..50
 const MAX_PAGES = 4;
 const DAY = 86_400;
-const SUGGESTION_HORIZON = 30 * DAY; // calendar signal of the automatic course suggestion
 
 export interface RawActionEvent {
   id?: number;
@@ -237,16 +236,13 @@ export async function getDueItems(
   const api = await ctx.moodle();
 
   const { events, truncated } = await collectEvents(pageFetcher(api, { from, to }, courseId));
-  if (courseId === undefined) {
-    const soon = events.filter((e) => eventTime(e) >= now && eventTime(e) <= now + SUGGESTION_HORIZON);
-    noteUpcomingEventCourses(
-      ctx,
-      soon.flatMap((e) => e.course?.id ?? []),
-    );
-  }
   const scope = await resolveScope(ctx);
   const scoped = courseId === undefined ? events : events.filter((e) => e.course?.id === courseId);
-  const calendar = mergeDueEvents(scoped, now).filter((i) => courseId !== undefined || scope.mine.has(i.courseId));
+  // the calendar is authoritative: items of courses outside the scope are listed apart, never dropped
+  const merged = mergeDueEvents(scoped, now);
+  const inScope = (i: DueItem) => courseId !== undefined || scope.mine.has(i.courseId);
+  const calendar = merged.filter(inScope);
+  const otherCourses = merged.filter((i) => !inScope(i));
 
   // an explicit course bypasses the scope, for the sweep too
   const sweepScope = courseId === undefined ? scope : { ...scope, mine: new Set([courseId]) };
@@ -262,6 +258,7 @@ export async function getDueItems(
       courseIds: [...scope.mine],
       otherCount: scope.courses.filter((c) => !scope.mine.has(c.id)).length,
     },
+    otherCourses,
     sweep: sweep.stats,
     truncated,
   };

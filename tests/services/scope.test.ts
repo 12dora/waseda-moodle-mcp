@@ -1,12 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvalidInput, MoodleError } from '../../src/core/errors';
-import {
-  classifyCourse,
-  mapCourse,
-  noteUpcomingEventCourses,
-  resolveScope,
-  setMyCourses,
-} from '../../src/core/services/scope';
+import { classifyCourse, mapCourse, resolveScope, setMyCourses } from '../../src/core/services/scope';
 import { lookupTerms, type SyllabusInfo } from '../../src/core/services/syllabus';
 import { makeFakeContext } from '../helpers/fake-context';
 
@@ -17,6 +11,7 @@ vi.mock('../../src/core/services/syllabus', async (importOriginal) => ({
 
 const TIMELINE = 'core_course_get_enrolled_courses_by_timeline_classification';
 const ENROL = 'core_enrol_get_users_courses';
+const EVENTS = 'core_calendar_get_action_events_by_timesort';
 const NOW = new Date('2026-10-14T03:00:00Z'); // 2026-10-14 12:00 JST
 const NOW_SEC = NOW.getTime() / 1000;
 const DAY = 86_400;
@@ -45,7 +40,12 @@ const ENROLLED = [
   { id: 3, lastaccess: NOW_SEC - DAY },
   { id: 4, lastaccess: 0 },
 ];
-const responses = () => ({ [TIMELINE]: TIMELINE_COURSES, [ENROL]: ENROLLED });
+const eventsOf = (...courseIds: number[]) => ({ events: courseIds.map((id) => ({ id, course: { id } })) });
+const responses = (events: unknown = eventsOf()) => ({
+  [TIMELINE]: TIMELINE_COURSES,
+  [ENROL]: ENROLLED,
+  [EVENTS]: events,
+});
 
 describe('classifyCourse / mapCourse', () => {
   it('treats idnumbers containing ZZ as non-class courses', () => {
@@ -96,6 +96,10 @@ describe('resolveScope (automatic suggestion)', () => {
     expect(api.calls).toEqual([
       { fn: TIMELINE, params: { classification: 'allincludinghidden', limit: 0 } },
       { fn: ENROL, params: { userid: 1001, returnusercount: 0 } },
+      {
+        fn: EVENTS,
+        params: { timesortfrom: NOW_SEC, timesortto: NOW_SEC + 30 * DAY, limitnum: 50, limittononsuspendedevents: 1 },
+      },
     ]);
   });
 
@@ -104,23 +108,48 @@ describe('resolveScope (automatic suggestion)', () => {
     const [a, b] = await Promise.all([resolveScope(ctx), resolveScope(ctx)]);
     expect(a).toBe(b);
     expect(await resolveScope(ctx)).toBe(a);
-    expect(api.calls).toHaveLength(2);
+    expect(api.calls).toHaveLength(3);
     const other = makeFakeContext({ responses: responses() });
     expect(await resolveScope(other.ctx)).not.toBe(a);
   });
 
-  it('adds courses with a calendar event in the next 30 days when that call already ran', async () => {
-    const { ctx } = makeFakeContext({ responses: responses() });
-    noteUpcomingEventCourses(ctx, [2, 3]); // 3 is a non-class course: never suggested
+  it('adds courses with a calendar event in the next 30 days (one shared call)', async () => {
+    const { ctx, api } = makeFakeContext({ responses: responses(eventsOf(2, 3, 3)) }); // 3 is non-class: never suggested
     const scope = await resolveScope(ctx);
     expect([...scope.mine].sort()).toEqual([1, 2]);
+    expect(api.count(EVENTS)).toBe(1);
   });
 
-  it('recomputes when the calendar signal arrives after the scope was resolved', async () => {
-    const { ctx } = makeFakeContext({ responses: responses() });
+  it('asks for the events once per request, also when the scope is recomputed after setMyCourses', async () => {
+    const t = makeFakeContext({ responses: responses(eventsOf(4)) });
+    expect([...(await resolveScope(t.ctx)).mine].sort()).toEqual([1, 4]);
+    await setMyCourses(t.ctx, [2]);
+    expect([...(await resolveScope(t.ctx)).mine]).toEqual([2]);
+    expect(t.api.count(EVENTS)).toBe(1);
+  });
+
+  it('does not ask for events when terms and lastaccess already decide every class course', async () => {
+    vi.mocked(lookupTerms).mockResolvedValue(
+      new Map([
+        [2, info('秋クォーター')],
+        [4, info('冬クォーター')],
+      ]),
+    );
+    const { ctx, api } = makeFakeContext({ responses: responses() });
+    await resolveScope(ctx);
+    expect(api.count(EVENTS)).toBe(0);
+  });
+
+  it('calendarSignal: false (scheduled sweep) skips the events call', async () => {
+    const { ctx, api } = makeFakeContext({ responses: responses(eventsOf(2)) });
+    const scope = await resolveScope(ctx, { calendarSignal: false });
+    expect([...scope.mine]).toEqual([1]);
+    expect(api.count(EVENTS)).toBe(0);
+  });
+
+  it('survives a refused events call', async () => {
+    const { ctx } = makeFakeContext({ responses: responses(new MoodleError('denied', 'accessexception')) });
     expect([...(await resolveScope(ctx)).mine]).toEqual([1]);
-    noteUpcomingEventCourses(ctx, [4]);
-    expect([...(await resolveScope(ctx)).mine].sort()).toEqual([1, 4]);
   });
 
   it('still works when lastaccess is unavailable', async () => {
@@ -144,7 +173,6 @@ const info = (term: string | null): SyllabusInfo => ({
   term,
   dayPeriod: null,
   instructors: [],
-  master: false,
 });
 
 describe('resolveScope (syllabus terms)', () => {
@@ -156,10 +184,10 @@ describe('resolveScope (syllabus terms)', () => {
     const [lookupCtx, lookups, opts] = vi.mocked(lookupTerms).mock.calls[0] ?? [];
     expect(lookupCtx).toBe(ctx);
     expect(lookups).toEqual([
-      { id: 1, idnumber: '2026570010006202', name: 'Course 1' },
-      { id: 2, idnumber: '2026920015500116', name: 'Course 2' },
-      { id: 3, idnumber: '2020ZZT900001408', name: 'Course 3' },
-      { id: 4, idnumber: '2026570010009999', name: 'Course 4' },
+      { id: 1, idnumber: '2026570010006202' },
+      { id: 2, idnumber: '2026920015500116' },
+      { id: 3, idnumber: '2020ZZT900001408' },
+      { id: 4, idnumber: '2026570010009999' },
     ]);
     expect(opts).toEqual({ syllabusLookup: true });
     expect(vi.mocked(lookupTerms)).toHaveBeenCalledTimes(1);
@@ -183,8 +211,7 @@ describe('resolveScope (syllabus terms)', () => {
         [4, info('春学期')],
       ]),
     );
-    const { ctx } = makeFakeContext({ responses: responses() });
-    noteUpcomingEventCourses(ctx, [4]);
+    const { ctx } = makeFakeContext({ responses: responses(eventsOf(4)) });
     const scope = await resolveScope(ctx);
     expect(scope.mine.size).toBe(0);
     expect(scope.courses[0]).toMatchObject({ term: '冬クォーター', suggested: false, lastAccess: expect.any(String) });
@@ -197,17 +224,55 @@ describe('resolveScope (syllabus terms)', () => {
         [2, info(null)],
       ]),
     );
-    const { ctx } = makeFakeContext({ responses: responses() });
-    noteUpcomingEventCourses(ctx, [2]);
+    const { ctx } = makeFakeContext({ responses: responses(eventsOf(2)) });
     expect([...(await resolveScope(ctx)).mine].sort()).toEqual([1, 2]);
   });
 
   it('looks terms up once per request even when the scope is recomputed', async () => {
-    const { ctx } = makeFakeContext({ responses: responses() });
-    await resolveScope(ctx);
-    noteUpcomingEventCourses(ctx, [4]);
-    await resolveScope(ctx);
+    const t = makeFakeContext({ responses: responses() });
+    await resolveScope(t.ctx);
+    await setMyCourses(t.ctx, [1]);
+    await resolveScope(t.ctx);
     expect(vi.mocked(lookupTerms)).toHaveBeenCalledTimes(1);
+  });
+
+  it('only a term of the current academic year counts (idnumber year; January-March belong to the previous year)', async () => {
+    const t = {
+      [TIMELINE]: { courses: [raw(1, '2025570010006202'), raw(2, '2025570010006203'), raw(3, '2026570010006204')] },
+      [ENROL]: [],
+      [EVENTS]: eventsOf(),
+    };
+    vi.mocked(lookupTerms).mockResolvedValue(
+      new Map([
+        [1, info('秋クォーター')], // last year's 秋Q, still enrolled
+        [2, info('通年')], // last year's 通年
+        [3, info('秋クォーター')],
+      ]),
+    );
+    const { ctx } = makeFakeContext({ responses: t });
+    expect([...(await resolveScope(ctx)).mine]).toEqual([3]);
+
+    // 2027-02-10 is still academic year 2026: the 2026 冬クォーター course is current, the 2027 one is not (yet)
+    vi.setSystemTime(new Date('2027-02-10T03:00:00Z'));
+    vi.mocked(lookupTerms).mockResolvedValue(
+      new Map([
+        [1, info('冬クォーター')],
+        [3, info('冬クォーター')],
+      ]),
+    );
+    const winter = makeFakeContext({
+      responses: { ...t, [TIMELINE]: { courses: [raw(1, '2027570010006202'), raw(3, '2026570010006204')] } },
+    });
+    expect([...(await resolveScope(winter.ctx)).mine]).toEqual([3]);
+  });
+
+  it('a term is current from 14 days before it starts (pre-course quiz before the 冬クォーター)', async () => {
+    vi.mocked(lookupTerms).mockResolvedValue(new Map([[1, info('冬クォーター')]]));
+    const early = makeFakeContext({ responses: responses() });
+    expect([...(await resolveScope(early.ctx)).mine]).toEqual([]); // 2026-10-14: 5+ weeks away
+    vi.setSystemTime(new Date('2026-11-10T03:00:00Z')); // 12 days before 11/22
+    const soon = makeFakeContext({ responses: responses() });
+    expect([...(await resolveScope(soon.ctx)).mine]).toEqual([1]);
   });
 
   it('forwards the syllabus kill switch', async () => {
@@ -264,6 +329,7 @@ describe('setMyCourses', () => {
     await expect(setMyCourses(t.ctx, [1, 99])).rejects.toBeInstanceOf(InvalidInput);
     await expect(setMyCourses(t.ctx, [0])).rejects.toBeInstanceOf(InvalidInput);
     await expect(setMyCourses(t.ctx, [1.5])).rejects.toBeInstanceOf(InvalidInput);
+    await expect(setMyCourses(t.ctx, [])).rejects.toThrow('Select at least one course, or reset to the suggestion.');
     expect(t.ctx.user.settings.myCourseIds).toBeNull();
     expect(t.state.audit).toHaveLength(0);
   });

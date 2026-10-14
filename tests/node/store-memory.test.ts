@@ -218,7 +218,7 @@ describe('MemoryStore course snapshots', () => {
     expect((await s.getCourseSnapshots(2)).map((r) => r.json)).toEqual(['other']);
   });
 
-  it('lists active-credential users, users without snapshots first, then oldest checkedAt', async () => {
+  it('lists active-credential users, never-swept first, then the least recently swept', async () => {
     const s = new MemoryStore();
     const users = [];
     for (const id of [1001, 1002, 1003, 1004]) {
@@ -227,9 +227,10 @@ describe('MemoryStore course snapshots', () => {
       await s.putCredential({ ...credential(u.id), status: id === 1004 ? 'invalid' : 'active' });
     }
     const [a, b, c] = users as [UserRow, UserRow, UserRow];
-    await s.putCourseSnapshot(snap(a.id, 1, { checkedAt: 500 }));
-    await s.putCourseSnapshot(snap(a.id, 2, { checkedAt: 900 }));
-    await s.putCourseSnapshot(snap(b.id, 1, { checkedAt: 200 }));
+    await s.putCourseSnapshot(snap(c.id, 1, { checkedAt: 1 })); // snapshots do not matter
+    await s.markSwept(a.id, 900);
+    await s.markSwept(b.id, 200);
+    await s.markSwept(999, 5); // unknown user: ignored
     expect((await s.listSweepUsers(10)).map((u) => u.id)).toEqual([c.id, b.id, a.id]);
     expect(await s.listSweepUsers(2)).toHaveLength(2);
   });

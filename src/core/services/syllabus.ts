@@ -1,8 +1,9 @@
 /**
  * Term lookup from the public Waseda syllabus (www.wsl.waseda.jp): idnumber -> pKey -> detail page -> 学期曜日時限.
  * Moodle cannot tell 秋クォーター from 冬クォーター (all class courses span 9/21-3/31), the syllabus can.
- * Policy: on-demand only (enrolled class courses), sequential, <= 3 uncached lookups per call, results (also "none")
- * cached globally for the academic year. robots.txt disallows crawlers, so there is no search-form scraping.
+ * Policy: on-demand only (enrolled class courses), sequential, <= 3 fetches and one 3 s deadline per call, results (also
+ * "none") cached globally for the academic year, failures cached as "unknown" for an hour. robots.txt disallows
+ * crawlers, so there is no search-form scraping.
  */
 
 import type { ServiceContext } from '../context';
@@ -11,11 +12,17 @@ import { isoJst, nowMs } from '../time';
 
 const DETAIL_URL = 'https://www.wsl.waseda.jp/syllabus/JAA104.php';
 const USER_AGENT = 'waseda-moodle-mcp/0.1 (+syllabus term lookup)';
-const FETCH_TIMEOUT_MS = 8000;
-const MAX_UNCACHED_PER_CALL = 3;
-const CACHE_TTL_MS = 365 * 86_400_000;
+/** One deadline for every fetch of a lookup call, so a hanging site costs a request at most this much. */
+const LOOKUP_DEADLINE_MS = 3000;
+const MAX_FETCHES_PER_CALL = 3;
+const DAY_MS = 86_400_000;
+const CACHE_TTL_MS = 365 * DAY_MS;
+/** Server errors, timeouts and システムエラー pages: remembered as "unknown" so a blocked / hanging site is not retried per request. */
+const UNKNOWN_TTL_MS = 3_600_000;
+const UNKNOWN_JSON = '{"unknown":true}';
+/** A term counts as current this long before it starts (pre-course material and deadlines appear earlier). */
+const TERM_LOOKAHEAD_MS = 14 * DAY_MS;
 const EMPTY_MARKER = '参照可能なシラバス情報はありません';
-const ERROR_MARKER = 'システムエラー';
 const TERM_RE = /^(春学期|秋学期|春クォーター|夏クォーター|秋クォーター|冬クォーター|通年|集中)/;
 
 export interface SyllabusInfo {
@@ -24,7 +31,6 @@ export interface SyllabusInfo {
   term: string | null; // 春クォーター, 秋学期, 通年, ...; null when the cell has no recognised term
   dayPeriod: string | null; // e.g. "月１-２"
   instructors: string[];
-  master: boolean; // taken from the 総合日本語 master page: day/period covers several sections
 }
 
 export type SyllabusParse =
@@ -74,7 +80,6 @@ function splitTermCell(text: string): { term: string | null; dayPeriod: string |
 
 /** `学期曜日時限` (ja) -> term + day/period; `担当教員` -> instructors. */
 export function parseSyllabusTerm(html: string): SyllabusParse {
-  if (html.includes(ERROR_MARKER)) return { status: 'error' };
   const cell = cellText(html, '学期曜日時限');
   if (cell === null) return { status: html.includes(EMPTY_MARKER) ? 'empty' : 'error' };
   const instructors = (cellText(html, '担当教員') ?? '')
@@ -105,77 +110,93 @@ export function inCurrentTerm(term: string | null, at: number): boolean {
   return term !== null && currentTerms(at).has(term);
 }
 
-/** 'unknown' for no term and for 集中 (intensive blocks): the lastaccess / calendar signals decide those. */
-export function termFit(term: string | null, at: number): 'current' | 'not-current' | 'unknown' {
+/** Academic year containing `at` (JST): January-March still belong to the year that began the previous April. */
+export function academicYear(at: number): number {
+  const iso = isoJst(at);
+  return Number(iso.slice(0, 4)) - (Number(iso.slice(5, 7)) <= 3 ? 1 : 0);
+}
+
+/**
+ * 'unknown' for no term and for 集中 (intensive blocks): the lastaccess / calendar signals decide those.
+ * `year` = the course's academic year (idnumber); a term only fits when that is the current one (null = not known).
+ * A term is current from 14 days before it starts.
+ */
+export function termFit(
+  term: string | null,
+  at: number,
+  year: number | null = null,
+): 'current' | 'not-current' | 'unknown' {
   if (term === null || term === '集中') return 'unknown';
-  return inCurrentTerm(term, at) ? 'current' : 'not-current';
+  const fits = (t: number) => inCurrentTerm(term, t) && (year === null || year === academicYear(t));
+  return fits(at) || fits(at + TERM_LOOKAHEAD_MS) ? 'current' : 'not-current';
 }
 
 // ------------------------------------------------------------------ fetching
 
-async function fetchDetail(pKey: string): Promise<SyllabusParse | null> {
+interface FetchBudget {
+  left: number; // fetches still allowed in this call
+  deadline: number; // epoch ms
+}
+
+type Page = SyllabusParse | { status: 'failed' | 'skipped' };
+
+/** `skipped` = budget or deadline used up, nothing was requested; `failed` = HTTP error / timeout / network. */
+async function fetchDetail(pKey: string, budget: FetchBudget): Promise<Page> {
+  const remaining = budget.deadline - nowMs();
+  if (budget.left <= 0 || remaining <= 0) return { status: 'skipped' };
+  budget.left--;
   try {
     const res = await fetch(`${DETAIL_URL}?pKey=${pKey}&pLng=jp`, {
       headers: { 'User-Agent': USER_AGENT, 'Accept-Language': 'ja' },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(remaining),
     });
-    return res.ok ? parseSyllabusTerm(await res.text()) : null;
+    return res.ok ? parseSyllabusTerm(await res.text()) : { status: 'failed' };
   } catch {
-    return null;
+    return { status: 'failed' };
   }
 }
 
 export interface LookupCourse {
   id: number;
   idnumber: string;
-  name: string;
 }
 
-/** 総合日本語 sections have no per-class page; the master pages (class 99 = 秋, 98 = 春) carry the term. */
-async function fetchMaster(parts: IdnumberParts, at: number): Promise<SyllabusInfo | null> {
-  const courseKey = `${parts.courseKey.slice(0, 7)}999`;
-  const fall = currentTerms(at).has('秋学期');
-  for (const classCode of fall ? ['99', '98'] : ['98', '99']) {
-    const pKey = buildPKey({ ...parts, courseKey, classCode, school: courseKey.slice(0, 2) });
-    const page = await fetchDetail(pKey);
-    if (page?.status === 'ok') return toInfo(pKey, parts.year, page, true);
-  }
-  return null;
-}
+/**
+ * `unknown` = the site could not tell (error / timeout): cached for an hour. `skipped` = not asked (budget): try again
+ * next call. 総合日本語 sections have no per-class page and stay unknown: the master pages cover both seasons, and
+ * nothing on the course (all start 9/21) says which one the section belongs to.
+ */
+type LookupResult = { kind: 'known'; info: SyllabusInfo | null } | { kind: 'unknown' | 'skipped' };
 
-type LookupResult = { cache: true; info: SyllabusInfo | null } | { cache: false };
-
-/** `cache: false` = could not be determined (network / server problem): try again next time. */
-async function fetchSyllabus(course: LookupCourse, at: number): Promise<LookupResult> {
+async function fetchSyllabus(course: LookupCourse, budget: FetchBudget): Promise<LookupResult> {
   const parts = splitIdnumber(course.idnumber);
-  if (!parts) return { cache: true, info: null };
+  if (!parts) return { kind: 'known', info: null };
   const pKey = buildPKey({ ...parts, school: parts.courseKey.slice(0, 2) });
-  const page = await fetchDetail(pKey);
-  if (!page || page.status === 'error') return { cache: false };
-  if (page.status === 'ok') return { cache: true, info: toInfo(pKey, parts.year, page, false) };
-  const isJapaneseMaster = parts.courseKey.startsWith('92') && course.name.startsWith('総合日本語');
-  return { cache: true, info: isJapaneseMaster ? await fetchMaster(parts, at) : null };
-}
-
-function toInfo(
-  pKey: string,
-  year: number,
-  page: Extract<SyllabusParse, { status: 'ok' }>,
-  master: boolean,
-): SyllabusInfo {
-  return { pKey, year, term: page.term, dayPeriod: page.dayPeriod, instructors: page.instructors, master };
+  const page = await fetchDetail(pKey, budget);
+  if (page.status === 'ok') {
+    const { term, dayPeriod, instructors } = page;
+    return { kind: 'known', info: { pKey, year: parts.year, term, dayPeriod, instructors } };
+  }
+  if (page.status === 'empty') return { kind: 'known', info: null };
+  return { kind: page.status === 'skipped' ? 'skipped' : 'unknown' };
 }
 
 // ------------------------------------------------------------------ cache + lookup
 
 type Cached = { info: SyllabusInfo | null; fresh: boolean };
 
+function isUnknownMarker(parsed: unknown): boolean {
+  return typeof parsed === 'object' && parsed !== null && 'unknown' in parsed;
+}
+
 function readCached(idnumber: string, row: { json: string; fetchedAt: number }, at: number): Cached | null {
   try {
-    const info = JSON.parse(row.json) as SyllabusInfo | null;
-    const year = Number(idnumber.slice(0, 4));
-    const yearOk = info === null || info.year === year;
-    return { info, fresh: yearOk && at - row.fetchedAt < CACHE_TTL_MS };
+    const parsed = JSON.parse(row.json) as SyllabusInfo | { unknown: true } | null;
+    const age = at - row.fetchedAt;
+    if (isUnknownMarker(parsed)) return { info: null, fresh: age < UNKNOWN_TTL_MS };
+    const info = parsed as SyllabusInfo | null;
+    const yearOk = info === null || info.year === Number(idnumber.slice(0, 4));
+    return { info, fresh: yearOk && age < CACHE_TTL_MS };
   } catch {
     return null;
   }
@@ -196,7 +217,8 @@ async function readCache(ctx: ServiceContext, idnumbers: string[], at: number): 
 
 /**
  * Term info per course id (`null` = unknown). Never throws: the scope must not depend on a third-party site.
- * `syllabusLookup: false` (kill switch) serves cached rows only and fetches nothing.
+ * `syllabusLookup: false` (kill switch, and the scheduled sweep) serves cached rows only and fetches nothing.
+ * At most 3 fetches and 3 s in total per call.
  */
 export async function lookupTerms(
   ctx: ServiceContext,
@@ -213,13 +235,17 @@ export async function lookupTerms(
   const result = new Map<number, SyllabusInfo | null>(courses.map((c) => [c.id, cache.get(c.idnumber)?.info ?? null]));
   if (opts.syllabusLookup === false) return result;
 
-  const missing = eligible.filter((c) => !cache.get(c.idnumber)?.fresh).slice(0, MAX_UNCACHED_PER_CALL);
-  for (const course of missing) {
-    const found = await fetchSyllabus(course, at);
-    if (!found.cache) continue;
-    result.set(course.id, found.info);
+  const budget: FetchBudget = { left: MAX_FETCHES_PER_CALL, deadline: at + LOOKUP_DEADLINE_MS };
+  for (const course of eligible.filter((c) => !cache.get(c.idnumber)?.fresh)) {
+    const found = await fetchSyllabus(course, budget);
+    if (found.kind === 'skipped') break;
+    if (found.kind === 'known') result.set(course.id, found.info); // unknown keeps whatever an older row said
     try {
-      await ctx.store.putSyllabusCache(course.idnumber, JSON.stringify(found.info), at);
+      await ctx.store.putSyllabusCache(
+        course.idnumber,
+        found.kind === 'known' ? JSON.stringify(found.info) : UNKNOWN_JSON,
+        at,
+      );
     } catch {
       /* best effort */
     }

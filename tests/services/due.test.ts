@@ -240,7 +240,7 @@ describe('getDueItems', () => {
     expect(list.items.map((i) => i.name)).toEqual(ALL_NAMES);
   });
 
-  it('drops calendar items outside the scope and reports the rest as otherCount', async () => {
+  it('lists calendar items of courses outside the scope apart (never dropped); otherCount counts courses', async () => {
     const { ctx } = makeFakeContext({
       responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES },
       user: { settings: { myCourseIds: [101, 102, 104] } },
@@ -248,6 +248,19 @@ describe('getDueItems', () => {
     const list = await getDueItems(ctx);
     expect(list.scope).toEqual({ mode: 'mine', courseIds: [101, 102, 104], otherCount: 1 });
     expect(list.items.map((i) => i.name)).toEqual(ALL_NAMES.filter((n) => n !== 'Elective Essay'));
+    expect(list.otherCourses.map((i) => [i.name, i.courseId, i.source])).toEqual([['Elective Essay', 103, 'calendar']]);
+  });
+
+  it('has no other-course group when everything is in scope or one course is asked for', async () => {
+    const all = makeFakeContext({ responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES } });
+    expect((await getDueItems(all.ctx)).otherCourses).toEqual([]);
+    const one = makeFakeContext({
+      responses: { [BY_COURSE]: eventsFixture, [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES },
+      user: { settings: { myCourseIds: [101] } },
+    });
+    const list = await getDueItems(one.ctx, { courseId: 103 });
+    expect(list.otherCourses).toEqual([]);
+    expect(list.items.map((i) => i.courseId)).toEqual([103]);
   });
 
   it('feeds the sweep with the in-scope calendar items and the window, and merges its items by date', async () => {
@@ -294,19 +307,20 @@ describe('getDueItems', () => {
     expect(list.items.at(-1)?.name).toBe('Quiz A');
   });
 
-  it('uses calendar events of the next 30 days as a signal of the automatic suggestion', async () => {
+  it('uses a shared 30-day events call as the signal of the automatic suggestion; later events stay listed apart', async () => {
     const soon = event(1, 1, { course: { id: 102, fullname: 'Seminar' }, timesort: NOW_SEC + 20 * DAY });
     const later = event(2, 2, { course: { id: 104, fullname: 'Elective' }, timesort: NOW_SEC + 40 * DAY });
-    const { ctx } = makeFakeContext({
-      responses: {
-        [GLOBAL]: { events: [soon, later] },
-        [TIMELINE]: timeline,
-        [ENROL]: [{ id: 101, lastaccess: 0 }],
-      },
+    const feed = (params: Record<string, unknown>) => ({
+      events: [soon, later].filter((e) => (e.timesort ?? 0) <= Number(params.timesortto)),
+    });
+    const { ctx, api } = makeFakeContext({
+      responses: { [GLOBAL]: feed, [TIMELINE]: timeline, [ENROL]: [{ id: 101, lastaccess: 0 }] },
     });
     const list = await getDueItems(ctx, { daysAhead: 120 });
     expect(list.scope.courseIds).toEqual([102]);
     expect(list.items.map((i) => i.courseId)).toEqual([102]);
+    expect(list.otherCourses.map((i) => i.courseId)).toEqual([104]); // beyond the 30-day signal: still not lost
+    expect(api.count(GLOBAL)).toBe(2); // the due window + the shared signal call
   });
 
   it('clamps the window (max 120 days ahead, 60 days back) and honours small values', async () => {

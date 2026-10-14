@@ -101,6 +101,7 @@ interface FakeStoreState {
   /** Every putCourseSnapshot call, in order. */
   snapshotWrites: CourseSnapshotRow[];
   syllabusCache: Map<string, { json: string; fetchedAt: number }>;
+  sweptAt: Map<number, number>;
 }
 
 interface FakeStore {
@@ -117,6 +118,7 @@ function makeFakeStore(): FakeStore {
     audit: [],
     snapshotWrites: [],
     syllabusCache: new Map(),
+    sweptAt: new Map(),
   };
 
   const impl: Partial<Store> = {
@@ -135,7 +137,11 @@ function makeFakeStore(): FakeStore {
       return out;
     },
     putSyllabusCache: async (idnumber, json, fetchedAt) => void state.syllabusCache.set(idnumber, { json, fetchedAt }),
-    listSweepUsers: async (limit) => [...state.users.values()].slice(0, limit),
+    listSweepUsers: async (limit) =>
+      [...state.users.values()]
+        .sort((a, b) => (state.sweptAt.get(a.id) ?? -1) - (state.sweptAt.get(b.id) ?? -1) || a.id - b.id)
+        .slice(0, limit),
+    markSwept: async (userId, at) => void state.sweptAt.set(userId, at),
 
     getCourseSnapshots: async (userId) => [...state.courseSnapshots.values()].filter((r) => r.userId === userId),
     putCourseSnapshot: async (row) => {
