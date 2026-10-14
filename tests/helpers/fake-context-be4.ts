@@ -148,6 +148,12 @@ export function createMemoryStoreForTests(): MemoryStore {
       const a = actions.get(id);
       return a ? { ...a } : null;
     },
+    async claimAction(id, userId, now) {
+      const a = actions.get(id);
+      if (!a || a.userId !== userId || a.status !== 'pending' || a.expiresAt <= now) return false;
+      a.status = 'executing';
+      return true;
+    },
     async updateAction(id, patch) {
       const a = actions.get(id);
       if (a) Object.assign(a, patch);
@@ -171,6 +177,12 @@ export function createMemoryStoreForTests(): MemoryStore {
     async getUploadDraft(id) {
       const u = uploads.get(id);
       return u ? { ...u, files: [...u.files] } : null;
+    },
+    async consumeUploadDraft(id) {
+      const u = uploads.get(id);
+      if (!u || u.expiresAt <= Date.now()) return false;
+      u.expiresAt = 0;
+      return true;
     },
     async appendUploadedFile(id, file: UploadedDraftFile) {
       const u = uploads.get(id);

@@ -62,20 +62,10 @@ export function guessMime(name: string): string | null {
   return MIME_BY_EXT.get(fileExt(name)) ?? null;
 }
 
+/** Only groups whose Moodle (core_filetypes) membership is known exactly; every other group is left to Moodle. */
 const GROUPS = new Map(
   Object.entries({
-    image: ['gif', 'jpe', 'jpeg', 'jpg', 'png', 'svg', 'webp', 'bmp', 'tif', 'tiff', 'heic'],
-    web_image: ['gif', 'jpe', 'jpeg', 'jpg', 'png', 'svg', 'webp'],
-    document: ['doc', 'docx', 'odt', 'pdf', 'rtf', 'txt', 'pages', 'tex', 'md'],
-    spreadsheet: ['xls', 'xlsx', 'ods', 'csv', 'numbers'],
-    presentation: ['ppt', 'pptx', 'odp', 'key'],
-    audio: ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'],
-    video: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'mpg', 'mpeg'],
-    archive: ['zip', 'tar', 'gz', '7z', 'rar', 'tgz'],
-    text: ['txt', 'csv', 'md', 'rtf', 'html', 'htm'],
-    html_audio: ['mp3', 'ogg', 'wav'],
-    html_video: ['mp4', 'webm', 'ogg'],
-    source: ['py', 'java', 'c', 'cpp', 'h', 'js', 'ts', 'r', 'rb', 'go', 'rs', 'sql', 'ipynb'],
+    document: ['doc', 'docx', 'epub', 'gdoc', 'odt', 'oth', 'ott', 'pdf', 'rtf'],
   }),
 );
 
@@ -105,4 +95,11 @@ export function fileTypeAccepted(name: string, accepted: string[]): boolean {
   const file = { ext: fileExt(name), mime: guessMime(name) };
   const verdicts = accepted.map((t) => tokenVerdict(t.trim().toLowerCase(), file));
   return verdicts.includes('match') || verdicts.includes('unknown');
+}
+
+/** Accepted-type tokens this service cannot check itself (unsupported groups); Moodle still enforces them. */
+export function unverifiableTypes(accepted: string[]): string[] {
+  return accepted
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t && t !== '*' && !t.startsWith('.') && !t.includes('/') && !GROUPS.has(t));
 }

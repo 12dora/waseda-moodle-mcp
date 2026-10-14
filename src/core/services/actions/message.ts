@@ -11,11 +11,11 @@ import {
   isSet,
   num,
   positiveInt,
+  previewText,
   type Raw,
   requireText,
   savePreview,
   str,
-  truncate,
   tryCall,
 } from './shared';
 import { plainTextToHtml } from './text';
@@ -90,7 +90,7 @@ export async function prepareMessage(ctx: ServiceContext, input: PrepareMessageI
   return savePreview(ctx, {
     kind: 'message',
     title: `Message to ${recipient}`,
-    details: [`To: ${recipient}`, `Message: ${truncate(text, 1500)}`],
+    details: [`To: ${recipient}`, `Message: ${previewText(text)}`],
     warnings: ['Messages cannot be unsent.'],
     payload,
   });

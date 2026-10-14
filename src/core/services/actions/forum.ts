@@ -11,6 +11,7 @@ import {
   isSet,
   num,
   positiveInt,
+  previewText,
   type Raw,
   refusal,
   requireText,
@@ -29,6 +30,8 @@ export interface PrepareForumPostInput {
   forumType: ForumType;
   replyToPostId?: number;
   forumId?: number;
+  /** hsuforum only: lets the preview look the parent post up (Moodle has no lookup by post id there). */
+  discussionId?: number;
   subject?: string;
   message: string;
 }
@@ -46,6 +49,7 @@ interface ForumRequest {
   type: ForumType;
   replyTo: number | null;
   forumId: number | null;
+  discussionId: number | null;
   subject: string;
   message: string;
 }
@@ -70,6 +74,7 @@ function parseRequest(input: PrepareForumPostInput): ForumRequest {
     type,
     replyTo: input.replyToPostId ?? null,
     forumId: input.forumId ?? null,
+    discussionId: input.discussionId ?? null,
     subject: input.subject?.trim() ?? '',
     message,
   };
@@ -82,20 +87,38 @@ interface ParentPost {
   canReply: boolean;
 }
 
-/** Best effort: only mod_forum can look a post up by id. */
-async function lookupParent(api: MoodleApi, postId: number): Promise<ParentPost | null> {
+const decoded = (v: unknown): string | null => {
+  const text = str(v);
+  return text ? decodeEntities(text) : null;
+};
+
+/** mod_forum can look a post up by id. */
+async function lookupForumPost(api: MoodleApi, postId: number): Promise<ParentPost | null> {
   const r = await tryCall<Raw>(api, 'mod_forum_get_discussion_post', { postid: postId });
   const post = r && isRec(r.post) ? r.post : null;
   if (!post) return null;
-  const subject = str(post.subject);
-  const author = isRec(post.author) ? str(post.author.fullname) : null;
   const caps = isRec(post.capabilities) ? post.capabilities : null;
   return {
-    subject: subject ? decodeEntities(subject) : null,
+    subject: decoded(post.subject),
     discussionId: num(post.discussionid),
-    author: author ? decodeEntities(author) : null,
+    author: isRec(post.author) ? decoded(post.author.fullname) : null,
     canReply: caps?.reply !== false,
   };
+}
+
+/** mod_hsuforum only lists a discussion's posts, so the caller must know the discussion. */
+async function lookupHsuforumPost(api: MoodleApi, postId: number, discussionId: number): Promise<ParentPost | null> {
+  const r = await tryCall<Raw>(api, 'mod_hsuforum_get_forum_discussion_posts', { discussionid: discussionId });
+  const posts = r && Array.isArray(r.posts) ? r.posts : [];
+  const post = posts.find((p): p is Raw => isRec(p) && num(p.id) === postId);
+  if (!post) return null;
+  const author = isRec(post.author) ? post.author.fullname : post.userfullname;
+  return { subject: decoded(post.subject), discussionId, author: decoded(author), canReply: true };
+}
+
+async function lookupParent(api: MoodleApi, req: ForumRequest, postId: number): Promise<ParentPost | null> {
+  if (req.type === 'forum') return lookupForumPost(api, postId);
+  return req.discussionId === null ? null : lookupHsuforumPost(api, postId, req.discussionId);
 }
 
 const replySubject = (parentSubject: string | null) => {
@@ -104,7 +127,7 @@ const replySubject = (parentSubject: string | null) => {
 };
 
 async function replyTarget(api: MoodleApi, req: ForumRequest, postId: number): Promise<Target> {
-  const parent = req.type === 'forum' ? await lookupParent(api, postId) : null;
+  const parent = await lookupParent(api, req, postId);
   if (parent && !parent.canReply) throw new InvalidInput("You can't reply to that post.");
   const parentSubject = parent?.subject ?? null;
   const by = parent?.author ? ` by ${parent.author}` : '';
@@ -113,7 +136,7 @@ async function replyTarget(api: MoodleApi, req: ForumRequest, postId: number): P
     title: parentSubject ? `Reply to "${truncate(parentSubject, 60)}"` : `Reply to post ${postId}`,
     line: parent ? `Replying to: "${parentSubject ?? `post ${postId}`}"${by}` : `Replying to post ${postId}`,
     subject: req.subject || replySubject(parentSubject),
-    discussionId: parent?.discussionId ?? null,
+    discussionId: parent?.discussionId ?? req.discussionId,
   };
 }
 
@@ -154,7 +177,7 @@ export async function prepareForumPost(ctx: ServiceContext, input: PrepareForumP
   return savePreview(ctx, {
     kind: target.kind,
     title: target.title,
-    details: [target.line, `Subject: ${target.subject}`, `Message: ${truncate(req.message, 1500)}`],
+    details: [target.line, `Subject: ${target.subject}`, `Message: ${previewText(req.message)}`],
     warnings: ['This post will be visible to other course members.'],
     payload,
   });

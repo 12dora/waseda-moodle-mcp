@@ -180,6 +180,34 @@ describe('connectFromLaunch', () => {
   });
 });
 
+describe('launch signature and private token handling', () => {
+  it('rejects a link whose signature belongs to another passport', async () => {
+    const { deps, clients } = setup();
+    const link = launchUrl(TOKEN_A, 'p1');
+    await expect(connectFromLaunch(deps, { launch: link, via: 'bookmarklet', passport: 'p2' })).rejects.toThrow(
+      'This link was created for a different sign-in. Generate a new one.',
+    );
+    expect(clients).toHaveLength(0);
+    await expect(connectFromLaunch(deps, { launch: link, via: 'bookmarklet', passport: 'p1' })).resolves.toBeTruthy();
+    await expect(refreshFromLaunch(deps, { launch: link, passport: 'p2' })).rejects.toBeInstanceOf(InvalidInput);
+  });
+
+  it('a silent refresh with the same token keeps a newly supplied private token', async () => {
+    const { deps, store } = setup();
+    const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'bookmarklet' });
+    await store.updateCredentialStatus(first.user.id, { status: 'invalid', lastError: 'old' });
+    const res = await refreshFromLaunch(deps, { launch: launchUrl(TOKEN_A, 'p1', 'P'.repeat(64)) });
+    expect(res.tokenChanged).toBe(false);
+    expect(store.credentials.get(first.user.id)).toMatchObject({
+      tokenEnc: `enc(${TOKEN_A})`,
+      privateTokenEnc: `enc(${'P'.repeat(64)})`,
+      status: 'active',
+      lastError: null,
+      connectedVia: 'bookmarklet',
+    });
+  });
+});
+
 describe('refreshFromLaunch', () => {
   it('never creates users', async () => {
     const { deps, store } = setup();

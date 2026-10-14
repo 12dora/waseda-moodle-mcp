@@ -3,6 +3,7 @@ import { Forbidden, InvalidInput, NeedsReconnect, NotFound } from '../../src/cor
 import {
   cancelAction,
   confirmAction,
+  countCjkChars,
   countWords,
   fileTypeAccepted,
   listActionRecords,
@@ -14,6 +15,7 @@ import {
   prepareMessage,
   prepareSubmission,
   sanitizeFileName,
+  unverifiableTypes,
 } from '../../src/core/services/actions';
 import { getActivity } from '../../src/core/services/activity';
 import { listCourses } from '../../src/core/services/courses';
@@ -63,10 +65,14 @@ describe('text helpers', () => {
     expect(plainTextToHtml('a < b\nc *d*')).toBe('a &lt; b<br>c *d*');
   });
 
-  it('counts words, CJK characters one each', () => {
+  it("counts words like Moodle's count_words (whitespace runs, not CJK characters)", () => {
     expect(countWords('Hello brave new world')).toBe(4);
-    expect(countWords('これは日本語です')).toBe(8);
-    expect(countWords('Valuation は 重要 です.')).toBe(1 + 1 + 2 + 2);
+    expect(countWords('これは日本語です')).toBe(1);
+    expect(countWords('Valuation は 重要 です.')).toBe(4);
+    expect(countWords('one—two – three')).toBe(3);
+    expect(countWords('First paragraph\n\nSecond one')).toBe(4);
+    expect(countWords('a &amp; b <b>bold</b>text')).toBe(4);
+    expect(countCjkChars('これは日本語です abc')).toBe(8);
     expect(countWords('')).toBe(0);
     expect(countWords('see [the docs](https://example.com/very/long/path)')).toBe(3);
   });
@@ -83,8 +89,13 @@ describe('text helpers', () => {
   it('matches accepted file types', () => {
     expect(fileTypeAccepted('a.PDF', ['.pdf', '.docx'])).toBe(true);
     expect(fileTypeAccepted('a.zip', ['.pdf', '.docx'])).toBe(false);
-    expect(fileTypeAccepted('a.xlsx', ['spreadsheet'])).toBe(true);
-    expect(fileTypeAccepted('a.xlsx', ['image'])).toBe(false);
+    expect(fileTypeAccepted('a.EPUB', ['document'])).toBe(true);
+    expect(fileTypeAccepted('a.zip', ['document'])).toBe(false);
+    expect(fileTypeAccepted('a.xlsx', ['spreadsheet'])).toBe(true); // group not mirrored: Moodle decides
+    expect(unverifiableTypes(['document', 'image', '.pdf', 'application/pdf', '*', 'Spreadsheet'])).toEqual([
+      'image',
+      'spreadsheet',
+    ]);
     expect(fileTypeAccepted('a.png', ['image/*'])).toBe(true);
     expect(fileTypeAccepted('a.bin', ['mysterygroup'])).toBe(true); // cannot verify unknown groups
     expect(fileTypeAccepted('a.bin', [])).toBe(true);
@@ -119,7 +130,7 @@ describe('prepareSubmission', () => {
     expect(preview.approveUrl).toBeNull();
     expect(preview.expiresAt).toBe('2026-10-14T12:30:00+09:00');
     expect(preview.details.join('\n')).toContain('Due: 2026-10-20 Tue 23:59');
-    expect(preview.details.join('\n')).toContain('Online text (4 words): My memo Second paragraph');
+    expect(preview.details.join('\n')).toContain('Online text (4 words): My memo\n\nSecond paragraph');
     expect(preview.details.join('\n')).toContain('Submit for grading: yes');
     expect(moodle.uploads).toHaveLength(0);
 
@@ -241,7 +252,9 @@ describe('prepareSubmission', () => {
     await expect(prepareSubmission(ctx, { cmid: ASSIGN_CMID, uploadId: 'upl_other_cm' })).rejects.toBeInstanceOf(
       InvalidInput,
     );
-    await expect(prepareSubmission(ctx, { cmid: ASSIGN_CMID, uploadId: 'upl_old' })).rejects.toBeInstanceOf(NotFound);
+    await expect(prepareSubmission(ctx, { cmid: ASSIGN_CMID, uploadId: 'upl_old' })).rejects.toThrow(
+      'already used or has expired',
+    );
     await expect(prepareSubmission(ctx, { cmid: ASSIGN_CMID, uploadId: 'upl_missing' })).rejects.toBeInstanceOf(
       NotFound,
     );
@@ -416,9 +429,15 @@ describe('confirmAction (assign_submit)', () => {
     expect(moodle.callsTo('mod_assign_submit_for_grading')).toEqual([
       { assignmentid: ASSIGN_INSTANCE, acceptsubmissionstatement: true },
     ]);
-    expect(moodle.callsTo('mod_assign_get_submission_status')).toEqual([{ assignid: ASSIGN_INSTANCE, userid: 1001 }]);
+    expect(moodle.callsTo('mod_assign_get_submission_status')).toEqual([
+      { assignid: ASSIGN_INSTANCE, userid: 1001, groupid: 0 },
+    ]);
     const row = store.actions.get(preview.actionId)!;
-    expect(row).toMatchObject({ status: 'executed', result: 'Submitted. Status: submitted.', error: null });
+    expect(row).toMatchObject({
+      status: 'executed',
+      result: `Submitted. Status: submitted.\n${BASE_URL}/mod/assign/view.php?id=${ASSIGN_CMID}`,
+      error: null,
+    });
     expect(row.executedAt).toBe(NOW.getTime());
     expect(store.auditLog.map((a) => a.action)).toEqual(['action:prepare', 'action:execute']);
     expect(store.auditLog[1]!.actor).toBe('mcp:Test Client');
@@ -437,12 +456,17 @@ describe('confirmAction (assign_submit)', () => {
   it('executes once when confirmed concurrently', async () => {
     const { ctx, moodle } = await setup();
     const preview = await prepareSubmission(ctx, { cmid: ASSIGN_CMID, onlineText: 'x' });
-    const [a, b] = await Promise.all([
+    const outcomes = await Promise.allSettled([
       confirmAction(ctx, preview.actionId, 'mcp'),
       confirmAction(ctx, preview.actionId, 'mcp'),
     ]);
-    expect(a).toEqual(b);
     expect(moodle.callsTo('mod_assign_save_submission')).toHaveLength(1);
+    const done = outcomes.filter((o) => o.status === 'fulfilled');
+    expect(done.length).toBeGreaterThanOrEqual(1);
+    for (const o of outcomes) {
+      if (o.status === 'rejected') expect(String(o.reason)).toContain('already running');
+      else expect(o.value.status).toBe('executed');
+    }
   });
 
   it('skips submit_for_grading when the assignment has no draft stage or the user keeps a draft', async () => {

@@ -2,7 +2,7 @@
 
 import { InvalidInput } from '../../errors';
 import { formatBytes } from '../../format';
-import { fmt, isoJst, toMs } from '../../time';
+import { fmt, fmtDue, isoJst, toMs } from '../../time';
 import type { AssignDetail, FileRef } from '../../types';
 import { fileTypeAccepted } from './filenames';
 import type { FileInfo } from './inline-files';
@@ -19,7 +19,7 @@ export function checkSubmissionWindow(a: AssignDetail, now: number): string[] {
   const cutoff = a.cutoffAt ? toMs(a.cutoffAt) : null;
   const extended = ext !== null && now < ext;
   if (cutoff !== null && now > cutoff && !extended) {
-    throw new InvalidInput(`Submissions closed at ${fmt(a.cutoffAt)} (JST).`);
+    throw new InvalidInput(`Submissions closed at ${fmtDue(a.cutoffAt)} (JST).`);
   }
   if (!s.canEdit) {
     throw new InvalidInput(
@@ -27,7 +27,7 @@ export function checkSubmissionWindow(a: AssignDetail, now: number): string[] {
     );
   }
   const due = ext ?? (a.dueAt ? toMs(a.dueAt) : null);
-  if (due !== null && now > due) warnings.push(`Late submission: the deadline (${fmt(isoJst(due))}) has passed.`);
+  if (due !== null && now > due) warnings.push(`Late submission: the deadline (${fmtDue(isoJst(due))}) has passed.`);
   if (a.teamSubmission) warnings.push('Team submission: this submits for your whole group.');
   return warnings;
 }
@@ -86,4 +86,18 @@ export function checkStatement(act: AssignDetail, submitForGrading: boolean, acc
   throw new InvalidInput(
     `This assignment requires a submission statement. Show the statement to the user${text} and, only after they accept it, call again with accept_statement=true.`,
   );
+}
+
+/** Writing must not leave the submission with neither text nor files (Moodle half-saves and then refuses). */
+export function checkResultNotEmpty(
+  act: AssignDetail,
+  newText: string | null,
+  files: { touchesFiles: boolean; finalCount: number },
+): void {
+  const sub = act.submission;
+  const hasText = !!newText || (act.submissionTypes.includes('onlinetext') && !!sub.onlineText?.trim());
+  const fileCount = files.touchesFiles ? files.finalCount : sub.files.length;
+  if (!hasText && fileCount === 0) {
+    throw new InvalidInput('This would leave the submission empty. Keep or add at least one file or some online text.');
+  }
 }

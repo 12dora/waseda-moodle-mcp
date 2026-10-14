@@ -2,8 +2,8 @@
 
 export { prepareCompletion } from './completion';
 export { cancelAction, confirmAction, listActionRecords } from './confirm';
-export { fileTypeAccepted, sanitizeFileName } from './filenames';
+export { fileTypeAccepted, sanitizeFileName, unverifiableTypes } from './filenames';
 export { prepareForumPost } from './forum';
 export { prepareMessage } from './message';
 export { type PrepareSubmissionInput, prepareSubmission } from './submission';
-export { countWords, markdownToSimpleHtml, plainTextToHtml } from './text';
+export { countCjkChars, countWords, markdownToSimpleHtml, plainTextToHtml } from './text';

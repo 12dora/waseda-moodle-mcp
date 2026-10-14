@@ -26,6 +26,14 @@ export const num = (v: unknown): number | null => (typeof v === 'number' && Numb
 export const isSet = (v: unknown): boolean => v !== undefined && v !== null;
 export const truncate = (s: string, max: number) => (s.length > max ? `${s.slice(0, max)}…` : s);
 
+const MAX_PREVIEW_CHARS = 4000;
+
+/** The text the user is about to send, in full (console approval needs it), bounded for sanity. */
+export function previewText(text: string): string {
+  if (text.length <= MAX_PREVIEW_CHARS) return text;
+  return `${text.slice(0, MAX_PREVIEW_CHARS)}… (${text.length - MAX_PREVIEW_CHARS} more chars)`;
+}
+
 export function positiveInt(v: unknown, name: string): number {
   if (typeof v !== 'number' || !Number.isInteger(v) || v <= 0) {
     throw new InvalidInput(`${name} must be a positive integer.`);
@@ -55,8 +63,9 @@ export function approveUrlFor(ctx: ServiceContext, actionId: string): string {
   return `${ctx.publicUrl}/actions?focus=${encodeURIComponent(actionId)}`;
 }
 
+/** The actor follows how the action arrived (`via`), never the display label of the caller. */
 function actorOf(ctx: ServiceContext, via?: 'mcp' | 'console'): string {
-  return via === 'console' || ctx.source === 'Console' ? 'console' : `mcp:${ctx.source}`;
+  return via === 'console' ? 'console' : `mcp:${ctx.source}`;
 }
 
 /** Audit must never break the user-visible flow. */
@@ -86,7 +95,11 @@ export interface PreviewParts {
 export async function savePreview(ctx: ServiceContext, parts: PreviewParts): Promise<ActionPreview> {
   const now = nowMs();
   const approval = ctx.user.settings.writeMode === 'console' && canApproveInConsole(ctx) ? 'console' : 'chat';
-  const { kind, title, details, warnings, payload } = parts;
+  const { kind, title, details, payload } = parts;
+  const warnings =
+    ctx.user.settings.writeMode === 'console' && approval === 'chat'
+      ? [...parts.warnings, 'Console approval is unavailable locally; confirming in chat.']
+      : parts.warnings;
   const row: ActionRow = {
     id: randomId('act'),
     userId: ctx.user.id,

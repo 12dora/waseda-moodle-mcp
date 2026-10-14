@@ -6,13 +6,17 @@ import { formatBytes } from '../../format';
 import type { InlineFile } from '../../types';
 import { guessMime, sanitizeFileName } from './filenames';
 
-/** Inline (base64) files in the Worker are decoded in memory; keep them small (CPU + RAM). */
-const MAX_INLINE_WORKER_BYTES = 5 * 1024 * 1024;
+/** Inline files in the Worker cost CPU (decode) and RAM; anything bigger goes through an upload link. */
+const MAX_INLINE_WORKER_BYTES = 1024 * 1024;
+/** Characters per atob() call in the fallback decoder (a multiple of 4). */
+const B64_CHUNK = 32 * 1024;
 
 export interface FileInfo {
   name: string;
   size: number;
   mime: string | null;
+  /** Local mode: the real (symlink-resolved) path the bytes came from, shown in the preview. */
+  source?: string;
 }
 
 export interface InlineUpload extends FileInfo {
@@ -21,6 +25,26 @@ export interface InlineUpload extends FileInfo {
 
 type Source = { kind: 'text' | 'base64' | 'path'; value: string };
 
+interface Loaded {
+  bytes: Uint8Array;
+  source?: string;
+}
+
+type NativeBase64 = { fromBase64?: (s: string, o?: { lastChunkHandling: 'loose' }) => Uint8Array };
+
+/** Native Uint8Array.fromBase64 when the runtime has it; otherwise chunked atob (no giant intermediate string). */
+function bytesFromBase64(clean: string): Uint8Array {
+  const native = (Uint8Array as unknown as NativeBase64).fromBase64;
+  if (native) return native.call(Uint8Array, clean, { lastChunkHandling: 'loose' });
+  const out = new Uint8Array(Math.ceil((clean.length * 3) / 4));
+  let n = 0;
+  for (let i = 0; i < clean.length; i += B64_CHUNK) {
+    const bin = atob(clean.slice(i, i + B64_CHUNK));
+    for (let j = 0; j < bin.length; j++) out[n++] = bin.charCodeAt(j);
+  }
+  return out.subarray(0, n);
+}
+
 function decodeBase64(b64: string, limit: number, name: string): Uint8Array {
   const clean = b64.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
   if ((clean.length * 3) / 4 > limit + 3) {
@@ -28,22 +52,39 @@ function decodeBase64(b64: string, limit: number, name: string): Uint8Array {
       `File '${name}' is larger than ${formatBytes(limit)}. Use create_upload_link for big files.`,
     );
   }
-  let bin: string;
   try {
-    bin = atob(clean);
+    return bytesFromBase64(clean);
   } catch {
     throw new InvalidInput(`File '${name}': content_base64 is not valid base64.`);
   }
-  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 }
 
-async function readLocalFile(path: string, limit: number, name: string): Promise<Uint8Array> {
+/** Local mode guard: never upload hidden files/folders (keys, .env) or anything in our own config folder. */
+async function assertReadablePath(requested: string, real: string, name: string): Promise<void> {
+  const hidden = (p: string) => p.split(/[\\/]+/).some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..');
+  if (hidden(requested) || hidden(real)) {
+    throw new InvalidInput(`File '${name}': hidden files and folders cannot be submitted.`);
+  }
+  const { homedir } = await import('node:os');
+  const { join, sep } = await import('node:path');
+  const fs = await import('node:fs/promises');
+  const configDir = process.env.WMM_CONFIG_DIR || join(homedir(), '.config', 'waseda-moodle-mcp');
+  const realConfig = await fs.realpath(configDir).catch(() => configDir);
+  if (real === realConfig || real.startsWith(realConfig + sep)) {
+    throw new InvalidInput(`File '${name}': files in the config folder cannot be submitted.`);
+  }
+}
+
+async function readLocalFile(path: string, limit: number, name: string): Promise<Loaded> {
   if (!/^(\/|[A-Za-z]:[\\/])/.test(path)) throw new InvalidInput(`File '${name}': path must be absolute.`);
   const fs = await import('node:fs/promises');
-  const st = await fs.stat(path).catch(() => null);
+  const real = await fs.realpath(path).catch(() => null);
+  if (!real) throw new NotFound(`Local file not found: ${path}`);
+  await assertReadablePath(path, real, name);
+  const st = await fs.stat(real).catch(() => null);
   if (!st?.isFile()) throw new NotFound(`Local file not found: ${path}`);
   if (st.size > limit) throw new InvalidInput(`File '${name}' is larger than ${formatBytes(limit)}.`);
-  return new Uint8Array(await fs.readFile(path));
+  return { bytes: new Uint8Array(await fs.readFile(real)), source: real };
 }
 
 function pickSource(f: InlineFile, name: string): Source {
@@ -65,9 +106,9 @@ interface Caps {
   inlineCap: number;
 }
 
-async function readSource(ctx: ServiceContext, source: Source, name: string, caps: Caps): Promise<Uint8Array> {
-  if (source.kind === 'text') return new TextEncoder().encode(source.value);
-  if (source.kind === 'base64') return decodeBase64(source.value, caps.inlineCap, name);
+async function readSource(ctx: ServiceContext, source: Source, name: string, caps: Caps): Promise<Loaded> {
+  if (source.kind === 'text') return { bytes: new TextEncoder().encode(source.value) };
+  if (source.kind === 'base64') return { bytes: decodeBase64(source.value, caps.inlineCap, name) };
   if (ctx.mode !== 'stdio') throw new InvalidInput(`File '${name}': path is only supported in local (stdio) mode.`);
   return readLocalFile(source.value, caps.limit, name);
 }
@@ -94,9 +135,9 @@ export async function resolveInlineFiles(
   for (const f of files) {
     const name = sanitizeFileName(typeof f?.name === 'string' ? f.name : '');
     if (!name) throw new InvalidInput('Every file needs a name.');
-    const bytes = await readSource(ctx, pickSource(f, name), name, caps);
+    const { bytes, source } = await readSource(ctx, pickSource(f, name), name, caps);
     assertSize(name, bytes.length, caps);
-    out.push({ name, size: bytes.length, mime: guessMime(name), bytes });
+    out.push({ name, size: bytes.length, mime: guessMime(name), bytes, ...(source ? { source } : {}) });
   }
   return out;
 }

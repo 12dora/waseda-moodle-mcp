@@ -54,3 +54,13 @@ export function makeAssign(overrides: Partial<AssignDetail> = {}): AssignDetail 
 export function statusResponse(status: 'new' | 'draft' | 'submitted') {
   return { lastattempt: { submission: { id: 11, status, plugins: [] }, canedit: true }, warnings: [] };
 }
+
+/** Status response whose submission holds online text (raw HTML + format) and a status. */
+export function statusWithText(status: 'draft' | 'submitted', html: string, format = 1) {
+  const plugin = {
+    type: 'onlinetext',
+    name: 'Online text',
+    editorfields: [{ name: 'onlinetext', text: html, format }],
+  };
+  return { lastattempt: { submission: { id: 11, status, plugins: [plugin] }, canedit: true }, warnings: [] };
+}

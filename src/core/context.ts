@@ -160,6 +160,11 @@ export interface Store {
   // write actions
   createAction(row: ActionRow): Promise<void>;
   getAction(id: string): Promise<ActionRow | null>;
+  /**
+   * Atomically move a pending, unexpired action owned by userId to 'executing'. Returns true only for the single
+   * caller that won the claim (D1: UPDATE … WHERE status='pending' AND expires_at > now, changes === 1).
+   */
+  claimAction(id: string, userId: number, now: number): Promise<boolean>;
   updateAction(
     id: string,
     patch: Partial<Pick<ActionRow, 'status' | 'executedAt' | 'result' | 'error'>>,
@@ -170,6 +175,11 @@ export interface Store {
   createUploadDraft(row: UploadDraftRow): Promise<void>;
   getUploadDraft(id: string): Promise<UploadDraftRow | null>;
   appendUploadedFile(id: string, file: UploadedDraftFile): Promise<void>;
+  /**
+   * Atomically retire an upload link (expires_at = now) so no further file can reach its draft. Returns true only for
+   * the single caller that consumed a still-valid draft.
+   */
+  consumeUploadDraft(id: string): Promise<boolean>;
 
   // course outline cache for search
   getCourseIndex(userId: number): Promise<CourseIndexRow[]>;

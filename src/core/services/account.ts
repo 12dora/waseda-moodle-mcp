@@ -34,6 +34,9 @@ const trimSlash = (s: string) => s.replace(/\/+$/, '').toLowerCase();
 /** Validates the token against the site and returns who it belongs to. Never stores anything. */
 async function identify(deps: ConnectDeps, launch: string, passport?: string) {
   const parsed = parseLaunch(launch, passport);
+  if (parsed.signatureOk === false) {
+    throw new InvalidInput('This link was created for a different sign-in. Generate a new one.');
+  }
   let info: SiteInfo;
   try {
     info = await deps.makeClient(parsed.token, 0).call<SiteInfo>('core_webservice_get_site_info');
@@ -67,6 +70,25 @@ async function privateTokenFor(
   return tokenChanged ? null : (previous?.privateTokenEnc ?? null);
 }
 
+/** Silent refresh with the same token: confirm it still works and keep a private token that newly arrived. */
+async function confirmSameToken(
+  deps: ConnectDeps,
+  previous: CredentialRow,
+  privateToken: string | null,
+): Promise<false> {
+  const confirmed = { status: 'active' as const, lastOkAt: nowMs(), lastError: null };
+  if (privateToken) {
+    await deps.store.putCredential({
+      ...previous,
+      ...confirmed,
+      privateTokenEnc: await deps.key.encrypt(privateToken),
+    });
+  } else {
+    await deps.store.updateCredentialStatus(previous.userId, confirmed);
+  }
+  return false;
+}
+
 /** Writes the credential. Returns whether the stored token differs from the previous one. */
 async function storeCredential(
   deps: ConnectDeps,
@@ -78,11 +100,7 @@ async function storeCredential(
   const { token } = launch;
   const [tokenHash, previous] = await Promise.all([sha256Hex(token), deps.store.getCredential(userId)]);
   const tokenChanged = !previous || previous.tokenHash !== tokenHash;
-  if (!tokenChanged && opts.silent) {
-    // silent refresh with the same token: just confirm it still works
-    await deps.store.updateCredentialStatus(userId, { status: 'active', lastOkAt: now, lastError: null });
-    return false;
-  }
+  if (previous && !tokenChanged && opts.silent) return confirmSameToken(deps, previous, launch.privateToken);
   await deps.store.putCredential({
     userId,
     tokenEnc: await deps.key.encrypt(token),

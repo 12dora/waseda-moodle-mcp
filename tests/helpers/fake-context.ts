@@ -132,6 +132,12 @@ export function makeFakeStore(init: { courseIndex?: CourseIndexRow[]; users?: Us
       const cur = state.actions.get(id);
       if (cur) state.actions.set(id, { ...cur, ...patch });
     },
+    claimAction: async (id, userId, now) => {
+      const cur = state.actions.get(id);
+      if (!cur || cur.userId !== userId || cur.status !== 'pending' || cur.expiresAt <= now) return false;
+      state.actions.set(id, { ...cur, status: 'executing' });
+      return true;
+    },
     listActions: async (userId, o) =>
       [...state.actions.values()]
         .filter((a) => a.userId === userId && (!o.status || a.status === o.status))
@@ -140,6 +146,12 @@ export function makeFakeStore(init: { courseIndex?: CourseIndexRow[]; users?: Us
 
     createUploadDraft: async (row) => void state.uploadDrafts.set(row.id, row),
     getUploadDraft: async (id) => state.uploadDrafts.get(id) ?? null,
+    consumeUploadDraft: async (id) => {
+      const cur = state.uploadDrafts.get(id);
+      if (!cur || cur.expiresAt <= Date.now()) return false;
+      state.uploadDrafts.set(id, { ...cur, expiresAt: 0 });
+      return true;
+    },
     appendUploadedFile: async (id, file) => {
       const cur = state.uploadDrafts.get(id);
       if (cur) {

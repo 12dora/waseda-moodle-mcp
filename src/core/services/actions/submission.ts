@@ -1,11 +1,12 @@
 /** Assignment submission: prepare (validate, stage files in a draft, preview) and execute (save + submit). */
 
 import type { MoodleApi, ServiceContext, UploadDraftRow } from '../../context';
-import { InvalidInput, MoodleError, MoodleUnavailable, NeedsReconnect, NotFound } from '../../errors';
+import { InvalidInput, MoodleError, MoodleUnavailable, NotFound } from '../../errors';
 import { formatBytes } from '../../format';
-import { fmt, nowMs } from '../../time';
+import { fmtDue, nowMs } from '../../time';
 import type { ActionPreview, AssignDetail, FileRef, InlineFile } from '../../types';
 import { getActivity } from '../activity';
+import { unverifiableTypes } from './filenames';
 import { type FileInfo, type InlineUpload, resolveInlineFiles } from './inline-files';
 import {
   type ActionOutcome,
@@ -14,22 +15,23 @@ import {
   isRec,
   num,
   positiveInt,
+  previewText,
   type Raw,
   refusal,
   savePreview,
   str,
-  truncate,
 } from './shared';
 import {
   checkFileCount,
   checkNewFiles,
   checkOnlineText,
+  checkResultNotEmpty,
   checkStatement,
   checkSubmissionWindow,
   checkSubmittable,
   fileSizeLimit,
 } from './submission-checks';
-import { countWords, markdownToSimpleHtml } from './text';
+import { countCjkChars, countWords, markdownToSimpleHtml } from './text';
 
 export interface PrepareSubmissionInput {
   cmid: number;
@@ -46,8 +48,13 @@ type SubmitPayload = {
   assignId: number;
   assignName: string;
   assignUrl: string;
+  /** Draft area holding exactly the files to save; null = files untouched. */
   draftItemId: number | null;
+  /** Number of files in that draft (0 when the submission's files are being cleared). */
+  draftFileCount: number;
   onlineText: string | null;
+  /** The assignment takes online text: it must be sent along with every save or Moodle blanks it. */
+  textPluginEnabled: boolean;
   submitForGrading: boolean;
   draftsEnabled: boolean;
   acceptStatement: boolean;
@@ -59,6 +66,8 @@ interface FilePlan {
   clearsFiles: boolean;
   touchesFiles: boolean;
   keptFiles: FileRef[];
+  /** Files in the submission after this action (when touched). */
+  finalCount: number;
 }
 
 interface Plan extends FilePlan {
@@ -72,11 +81,12 @@ interface Plan extends FilePlan {
 
 // ------------------------------------------------------------------ prepare
 
+const USED_UPLOAD = 'This upload link was already used or has expired; create a new one.';
+
 async function loadUploadRow(ctx: ServiceContext, uploadId: string, cmid: number): Promise<UploadDraftRow> {
   const row = await ctx.store.getUploadDraft(uploadId);
-  if (!row || row.userId !== ctx.user.id || row.expiresAt <= nowMs()) {
-    throw new NotFound('Upload not found or expired. Create a new upload link.');
-  }
+  if (!row || row.userId !== ctx.user.id) throw new NotFound('Upload not found. Create a new upload link.');
+  if (row.expiresAt <= nowMs()) throw new InvalidInput(USED_UPLOAD);
   if (row.cmid !== cmid) throw new InvalidInput('That upload belongs to a different assignment.');
   return row;
 }
@@ -89,8 +99,9 @@ function planFiles(act: AssignDetail, newFiles: FileInfo[], keepExisting: boolea
   const touchesFiles = newFiles.length > 0 || clearsFiles;
   const keptFiles =
     touchesFiles && canFile && keepExisting ? existing.filter((f) => !names.has(f.name.toLowerCase())) : [];
-  if (touchesFiles) checkFileCount(act, newFiles.length + keptFiles.length, keptFiles);
-  return { names, clearsFiles, touchesFiles, keptFiles };
+  const finalCount = newFiles.length + keptFiles.length;
+  if (touchesFiles) checkFileCount(act, finalCount, keptFiles);
+  return { names, clearsFiles, touchesFiles, keptFiles, finalCount };
 }
 
 async function planSubmission(ctx: ServiceContext, act: AssignDetail, input: PrepareSubmissionInput): Promise<Plan> {
@@ -102,7 +113,9 @@ async function planSubmission(ctx: ServiceContext, act: AssignDetail, input: Pre
   const inlineFiles = await resolveInlineFiles(ctx, input.files ?? [], fileSizeLimit(act));
   const newFiles: FileInfo[] = [...(uploadRow?.files ?? []), ...inlineFiles];
   const files = planFiles(act, newFiles, keepExisting);
-  checkSubmittable(act, !!onlineText || files.touchesFiles, submitForGrading);
+  const hasChange = !!onlineText || files.touchesFiles;
+  checkSubmittable(act, hasChange, submitForGrading);
+  if (hasChange) checkResultNotEmpty(act, onlineText, files);
   checkStatement(act, submitForGrading, input.acceptStatement);
   return { ...files, onlineText, keepExisting, submitForGrading, uploadRow, inlineFiles, newFiles };
 }
@@ -138,9 +151,6 @@ async function stageDraft(ctx: ServiceContext, plan: Plan): Promise<number | nul
   for (const f of plan.inlineFiles) {
     const uploaded = await api.uploadToDraft({ name: f.name, body: f.bytes, size: f.size, mime: f.mime }, itemId ?? 0);
     itemId = uploaded.itemid;
-    if (plan.uploadRow) {
-      await ctx.store.appendUploadedFile(plan.uploadRow.id, { name: f.name, size: f.size, mime: f.mime });
-    }
   }
   if (plan.newFiles.length > 0) {
     const have = new Set((plan.uploadRow?.files ?? []).map((f) => f.name.toLowerCase()));
@@ -162,13 +172,16 @@ function previewDetails(act: AssignDetail, plan: Plan): string[] {
   const ext = act.submission.extensionDue;
   const details = [
     `Assignment: ${act.name} (${act.courseName})`,
-    `Due: ${fmt(ext ?? act.dueAt)}${ext ? ' (extended)' : ''}`,
+    `Due: ${fmtDue(ext ?? act.dueAt)}${ext ? ' (extended)' : ''}`,
   ];
-  for (const f of plan.newFiles) details.push(`File: ${f.name} (${formatBytes(f.size)})`);
+  for (const f of plan.newFiles) {
+    details.push(`File: ${f.name} (${formatBytes(f.size)})${f.source ? ` — from ${f.source}` : ''}`);
+  }
   for (const f of plan.keptFiles) details.push(`Kept from current submission: ${f.name} (${formatBytes(f.size)})`);
   if (plan.onlineText) {
-    const excerpt = truncate(plan.onlineText.replace(/\s+/g, ' ').trim(), 200);
-    details.push(`Online text (${countWords(plan.onlineText)} words): ${excerpt}`);
+    const cjk = countCjkChars(plan.onlineText);
+    const count = `${countWords(plan.onlineText)} words${cjk ? `, ${cjk} CJK characters` : ''}`;
+    details.push(`Online text (${count}): ${previewText(plan.onlineText)}`);
   }
   details.push(`Submit for grading: ${gradingLabel(act.draftsEnabled, plan.submitForGrading)}`);
   if (act.requiresStatement && act.statement) details.push(`Submission statement (accepted by user): ${act.statement}`);
@@ -201,6 +214,9 @@ function previewWarnings(act: AssignDetail, plan: Plan, base: string[]): string[
   if (plan.clearsFiles) warnings.push('Removes all files from the current submission.');
   if (plan.onlineText && sub.onlineText?.trim()) warnings.push('Overwrites the current online text.');
   warnings.push(...draftWarnings(act, plan.submitForGrading));
+  const unverified = plan.newFiles.length > 0 ? unverifiableTypes(act.acceptedTypes) : [];
+  if (unverified.length)
+    warnings.push(`File types (${unverified.join(', ')}) could not be checked here; Moodle will check them.`);
   return warnings;
 }
 
@@ -213,6 +229,9 @@ export async function prepareSubmission(ctx: ServiceContext, input: PrepareSubmi
   }
   const windowWarnings = checkSubmissionWindow(act, nowMs());
   const plan = await planSubmission(ctx, act, { ...input, cmid });
+  if (plan.uploadRow && !(await ctx.store.consumeUploadDraft(plan.uploadRow.id))) {
+    throw new InvalidInput(USED_UPLOAD); // from here on the draft belongs to this action alone
+  }
   const draftItemId = await stageDraft(ctx, plan);
   const payload: SubmitPayload = {
     cmid,
@@ -220,7 +239,9 @@ export async function prepareSubmission(ctx: ServiceContext, input: PrepareSubmi
     assignName: act.name,
     assignUrl: act.url,
     draftItemId,
+    draftFileCount: plan.finalCount,
     onlineText: plan.onlineText,
+    textPluginEnabled: act.submissionTypes.includes('onlinetext'),
     submitForGrading: plan.submitForGrading,
     draftsEnabled: act.draftsEnabled,
     acceptStatement: !act.requiresStatement || input.acceptStatement === true,
@@ -243,17 +264,38 @@ function submissionNode(status: Raw): Raw | null {
   return isRec(last.submission) ? last.submission : null;
 }
 
+async function readSubmission(api: MoodleApi, assignId: number, fresh: boolean): Promise<Raw | null> {
+  // The client memoises reads per request; an extra (default) param makes the post-write read really fresh.
+  const params = { assignid: assignId, userid: api.moodleUserId, ...(fresh ? { groupid: 0 } : {}) };
+  return submissionNode(await api.call<Raw>('mod_assign_get_submission_status', params));
+}
+
+/** Status after the write; the write already happened, so a failing re-read never fails the action. */
 async function readStatus(api: MoodleApi, assignId: number): Promise<string | null> {
   try {
-    const st = await api.call<Raw>('mod_assign_get_submission_status', {
-      assignid: assignId,
-      userid: api.moodleUserId,
-    });
-    return str(submissionNode(st)?.status);
-  } catch (e) {
-    if (e instanceof NeedsReconnect) throw e;
+    return str((await readSubmission(api, assignId, true))?.status);
+  } catch {
     return null;
   }
+}
+
+/** The raw online text (HTML + format) currently stored in the user's submission. */
+function currentOnlineText(submission: Raw | null): { text: string; format: number } {
+  const plugins = submission && Array.isArray(submission.plugins) ? submission.plugins : [];
+  const plugin = plugins.find((pl): pl is Raw => isRec(pl) && pl.type === 'onlinetext');
+  const fields = plugin && Array.isArray(plugin.editorfields) ? plugin.editorfields : [];
+  const field = fields.find((f): f is Raw => isRec(f) && f.name === 'onlinetext');
+  return { text: str(field?.text) ?? '', format: num(field?.format) ?? 1 };
+}
+
+/**
+ * onlinetext_editor for the save, or null when the assignment takes no online text. A save without it blanks the
+ * text, so a files-only submission sends the current text back unchanged.
+ */
+async function onlineTextEditor(api: MoodleApi, p: SubmitPayload): Promise<Raw | null> {
+  if (p.onlineText) return { text: markdownToSimpleHtml(p.onlineText), format: 1, itemid: 0 };
+  if (!p.textPluginEnabled) return null;
+  return { ...currentOnlineText(await readSubmission(api, p.assignId, false)), itemid: 0 };
 }
 
 function statusMessage(status: string | null): string {
@@ -262,9 +304,15 @@ function statusMessage(status: string | null): string {
   return `Saved. Status: ${status}${status === 'draft' ? ' (not yet submitted for grading)' : ''}.`;
 }
 
+/** Everything is checked before the first write, so a refusal never leaves a half-saved submission. */
 async function saveSubmission(api: MoodleApi, p: SubmitPayload): Promise<void> {
+  const editor = await onlineTextEditor(api, p);
+  const hasText = typeof editor?.text === 'string' && editor.text.trim() !== '';
+  if (p.draftItemId !== null && p.draftFileCount === 0 && !hasText) {
+    throw new InvalidInput('This would leave the submission empty. Keep or add at least one file or some online text.');
+  }
   const plugindata: Raw = {};
-  if (p.onlineText) plugindata.onlinetext_editor = { text: markdownToSimpleHtml(p.onlineText), format: 1, itemid: 0 };
+  if (editor) plugindata.onlinetext_editor = editor;
   if (p.draftItemId !== null) plugindata.files_filemanager = p.draftItemId;
   const saved = await api.call<unknown>('mod_assign_save_submission', { assignmentid: p.assignId, plugindata });
   if (hasWarnings(saved)) throw refusal('refused the submission', saved);

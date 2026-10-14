@@ -1,5 +1,7 @@
 /** Text conversion for what we send to Moodle (HTML) and word counting for assignment limits. */
 
+import { decodeEntities } from '../../html';
+
 const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -90,15 +92,22 @@ export function plainTextToHtml(text: string): string {
   return escapeHtml(text.replace(/\r\n?/g, '\n').trim()).replace(/\n/g, '<br>');
 }
 
-const CJK = /[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]/gu;
+const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/gu;
 
-/** Latin words by whitespace, every CJK character counts as one word. */
+/** CJK characters (informational: Moodle's word limit does not split them). */
+export function countCjkChars(text: string): number {
+  return text.match(CJK)?.length ?? 0;
+}
+
+// Closing tags (except inline ones) and <br> delimit words even though they leave no whitespace behind.
+const WORD_BREAK_TAGS = /(<\/(?!(?:a|b|del|em|i|ins|s|small|strong|sub|sup|u)>)\w+>|<br\s?\/?>)/gi;
+
+/**
+ * Moodle's count_words: HTML -> text, then runs of Unicode separators / control characters / dashes split words.
+ * The text is converted exactly as it will be sent, so the count matches what Moodle checks against the limit.
+ */
 export function countWords(text: string): number {
-  const plain = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
-  const cjk = plain.match(CJK)?.length ?? 0;
-  const rest = plain
-    .replace(CJK, ' ')
-    .split(/\s+/)
-    .filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
-  return cjk + rest;
+  const html = markdownToSimpleHtml(text).replace(WORD_BREAK_TAGS, '$1 ');
+  const plain = decodeEntities(html.replace(/<[^>]*>/g, ''));
+  return plain.split(/[\p{Z}\p{Cc}\u2014\u2013]+/u).filter(Boolean).length;
 }

@@ -353,7 +353,7 @@ export interface Notification {
 // ------------------------------------------------------------------ write actions
 
 export type ActionKind = 'assign_submit' | 'forum_reply' | 'forum_discussion' | 'message' | 'completion';
-export type ActionStatus = 'pending' | 'executed' | 'cancelled' | 'expired' | 'failed';
+export type ActionStatus = 'pending' | 'executing' | 'executed' | 'cancelled' | 'expired' | 'failed';
 export type Approval = 'chat' | 'console';
 
 export interface InlineFile {

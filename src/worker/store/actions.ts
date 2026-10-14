@@ -1,6 +1,6 @@
 import type { ActionRow, Store, UploadDraftRow } from '../../core/context';
 import type { UploadedDraftFile } from '../../core/types';
-import { parseJson, toJson, updateColumns } from './rows';
+import { changes, parseJson, toJson, updateColumns } from './rows';
 
 interface ActionRaw {
   id: string;
@@ -60,7 +60,7 @@ const toUpload = (r: UploadRaw): UploadDraftRow => ({
   expiresAt: r.expires_at,
 });
 
-type ActionMethods = Pick<Store, 'createAction' | 'getAction' | 'updateAction' | 'listActions'>;
+type ActionMethods = Pick<Store, 'createAction' | 'getAction' | 'claimAction' | 'updateAction' | 'listActions'>;
 
 export function actionMethods(db: D1Database): ActionMethods {
   return {
@@ -96,6 +96,18 @@ export function actionMethods(db: D1Database): ActionMethods {
       return r ? toAction(r) : null;
     },
 
+    /** Single-winner claim: only a pending, unexpired action of this user can move to 'executing'. */
+    async claimAction(id, userId, now) {
+      const n = await changes(
+        db
+          .prepare(
+            `UPDATE actions SET status = 'executing' WHERE id = ? AND user_id = ? AND status = 'pending' AND expires_at > ?`,
+          )
+          .bind(id, userId, now),
+      );
+      return n === 1;
+    },
+
     async updateAction(id, patch) {
       await updateColumns(
         db,
@@ -124,7 +136,7 @@ export function actionMethods(db: D1Database): ActionMethods {
   };
 }
 
-type UploadMethods = Pick<Store, 'createUploadDraft' | 'getUploadDraft' | 'appendUploadedFile'>;
+type UploadMethods = Pick<Store, 'createUploadDraft' | 'getUploadDraft' | 'appendUploadedFile' | 'consumeUploadDraft'>;
 
 export function uploadMethods(db: D1Database): UploadMethods {
   return {
@@ -161,6 +173,14 @@ export function uploadMethods(db: D1Database): UploadMethods {
         )
         .bind(toJson(file), Math.max(0, Math.floor(file.size)), id)
         .run();
+    },
+
+    /** Atomic: a second caller (or a draft that already expired) gets false. */
+    async consumeUploadDraft(id) {
+      const n = await changes(
+        db.prepare('UPDATE upload_drafts SET expires_at = 0 WHERE id = ? AND expires_at > ?').bind(id, Date.now()),
+      );
+      return n === 1;
     },
   };
 }
