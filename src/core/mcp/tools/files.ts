@@ -3,10 +3,24 @@ import * as z from 'zod';
 import { createFileLink, createUploadLink } from '../../services/files';
 import type { FileLink } from '../../types';
 import { renderFileLink, renderUploadLink } from '../render/files';
+import { getFileDescription } from '../wording';
 import { defineTool, id, PREPARE_HINTS, READ_HINTS } from './define';
 
+/** Image types MCP clients and models reliably render; every other image goes out as a binary resource. */
+const IMAGE_BLOCK_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+type Inline = NonNullable<FileLink['inline']>;
+
+function inlineBlock(link: FileLink, inl: Inline): ContentBlock {
+  if ('text' in inl) {
+    return { type: 'resource', resource: { uri: link.downloadUrl, mimeType: inl.mime, text: inl.text } };
+  }
+  if (IMAGE_BLOCK_MIMES.has(inl.mime)) return { type: 'image', data: inl.base64, mimeType: inl.mime };
+  return { type: 'resource', resource: { uri: link.downloadUrl, mimeType: inl.mime, blob: inl.base64 } };
+}
+
 /** resource_link first, then the inline payload (text, image or binary resource) when it was requested. */
-function fileContent(link: FileLink): ContentBlock[] {
+function fileContent(link: FileLink, stdio: boolean): ContentBlock[] {
   const blocks: ContentBlock[] = [
     {
       type: 'resource_link',
@@ -14,46 +28,36 @@ function fileContent(link: FileLink): ContentBlock[] {
       name: link.name,
       ...(link.mime ? { mimeType: link.mime } : {}),
       ...(link.size !== null ? { size: link.size } : {}),
-      description: 'Short-lived download link',
+      description: stdio ? 'Local copy of the file' : 'Short-lived download link',
     },
   ];
-  const inl = link.inline;
-  if (!inl) return blocks;
-  if ('text' in inl) {
-    blocks.push({ type: 'resource', resource: { uri: link.downloadUrl, mimeType: inl.mime, text: inl.text } });
-  } else if (inl.mime.startsWith('image/')) {
-    blocks.push({ type: 'image', data: inl.base64, mimeType: inl.mime });
-  } else {
-    blocks.push({ type: 'resource', resource: { uri: link.downloadUrl, mimeType: inl.mime, blob: inl.base64 } });
-  }
+  if (link.inline) blocks.push(inlineBlock(link, link.inline));
   return blocks;
 }
 
-export const getFileTool = defineTool({
-  name: 'get_file',
-  title: 'Get a Moodle file',
-  description:
-    'Creates a short-lived download link for a Moodle file (slides, PDFs, assignment attachments, submitted files, forum attachments). ' +
-    'Pass the file url exactly as listed by get_activity or other tools; download the link with your own tools (e.g. curl) and read the file locally. ' +
-    'With inline=true, small files (up to 1 MiB) are also attached directly: text as text, images and PDFs as binary content.',
-  annotations: READ_HINTS,
-  input: z.object({
-    url: z
-      .string()
-      .min(1)
-      .describe('Moodle file URL as returned by the other tools (pluginfile URL, without a token).'),
-    inline: z
-      .boolean()
-      .describe('Also attach the content to the result when the file is small (<= 1 MiB). Default false.')
-      .optional(),
-  }),
-  async run(ctx, a) {
-    const link = await createFileLink(ctx, a.url, { inline: a.inline });
-    // the inline payload already travels in `content`; do not duplicate it in structuredContent
-    const data = { ...link, inline: link.inline ? { mime: link.inline.mime, attached: true } : null };
-    return { text: renderFileLink(link), data, extra: fileContent(link) };
-  },
-});
+export const getFileTool = (stdio: boolean) =>
+  defineTool({
+    name: 'get_file',
+    title: 'Get a Moodle file',
+    description: getFileDescription(stdio ? 'stdio' : 'worker'),
+    annotations: READ_HINTS,
+    input: z.object({
+      url: z
+        .string()
+        .min(1)
+        .describe('Moodle file URL as returned by the other tools (pluginfile URL, without a token).'),
+      inline: z
+        .boolean()
+        .describe('Also attach the content to the result when the file is small (<= 1 MiB). Default false.')
+        .optional(),
+    }),
+    async run(ctx, a) {
+      const link = await createFileLink(ctx, a.url, { inline: a.inline });
+      // the inline payload already travels in `content`; do not duplicate it in structuredContent
+      const data = { ...link, inline: link.inline ? { mime: link.inline.mime, attached: true } : null };
+      return { text: renderFileLink(link, stdio), data, extra: fileContent(link, stdio) };
+    },
+  });
 
 export const createUploadLinkTool = defineTool({
   name: 'create_upload_link',

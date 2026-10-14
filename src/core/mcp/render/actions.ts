@@ -20,8 +20,10 @@ export function renderActionPreview(p: ActionPreview): string {
   return hardCap(lines.join('\n'));
 }
 
+const STATUS_LABEL: Partial<Record<ActionResult['status'], string>> = { executing: 'running' };
+
 export function renderActionResult(r: ActionResult): string {
-  const lines = [`Action ${r.actionId}: ${r.status}. ${clip(r.message, 600)}`];
+  const lines = [`Action ${r.actionId}: ${STATUS_LABEL[r.status] ?? r.status}. ${clip(r.message, 600)}`];
   if (r.url) lines.push(r.url);
   return lines.join('\n');
 }

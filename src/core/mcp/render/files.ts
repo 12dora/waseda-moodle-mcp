@@ -9,11 +9,16 @@ function safeName(name: string): string {
   return cleaned || 'download';
 }
 
-export function renderFileLink(link: FileLink): string {
+const NOT_DOWNLOADED_NOTE =
+  'This file is too large to download automatically. Open the Moodle address below in a browser where the user is signed in to Moodle.';
+
+export function renderFileLink(link: FileLink, stdio = false): string {
   const meta = [link.mime, link.size !== null ? formatBytes(link.size) : null].filter(Boolean).join(', ');
   const lines = [`File: ${oneLine(link.name, 120)}${meta ? ` (${meta})` : ''}`];
   if (link.downloadUrl.startsWith('file://')) {
     lines.push(`Saved locally: ${link.downloadUrl}`);
+  } else if (stdio) {
+    lines.push(NOT_DOWNLOADED_NOTE, link.downloadUrl);
   } else {
     lines.push(`Download URL (valid until ${fmt(link.expiresAt)} JST, single-user, do not share): ${link.downloadUrl}`);
     lines.push(`Example: curl -fL -o '${safeName(link.name)}' '${link.downloadUrl}'`);

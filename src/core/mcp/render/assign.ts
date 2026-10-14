@@ -1,5 +1,5 @@
 import { formatBytes } from '../../format';
-import { fmt } from '../../time';
+import { fmt, fmtDue } from '../../time';
 import type { AssignDetail, Feedback, SubmissionState } from '../../types';
 import { clip, fileLines, hardCap, MAX_TEXT_CHARS, oneLine } from './common';
 
@@ -33,7 +33,7 @@ function statusLine(a: AssignDetail): string {
   if (s.gradingStatus) status += ` (grading: ${s.gradingStatus})`;
   if (s.lastModified) status += `, last modified ${fmt(s.lastModified)}`;
   status += editability(s);
-  if (s.extensionDue) status += ` · extension until ${fmt(s.extensionDue)}`;
+  if (s.extensionDue) status += ` · extension until ${fmtDue(s.extensionDue)}`;
   if (a.draftsEnabled) status += ' · drafts must be submitted for grading';
   return status;
 }
@@ -57,7 +57,7 @@ export function assignText(a: AssignDetail): string {
     `# ${oneLine(a.name, 100)} — assignment (cmid ${a.cmid})`,
     `Course: ${oneLine(a.courseName, 80)} (course_id ${a.courseId})`,
     `Link: ${a.url}`,
-    `Opens: ${fmt(a.opensAt)} · Due: ${fmt(a.dueAt)} · Cut-off: ${fmt(a.cutoffAt)}`,
+    `Opens: ${fmt(a.opensAt)} · Due: ${fmtDue(a.dueAt)} · Cut-off: ${fmtDue(a.cutoffAt)}`,
     acceptsLine(a),
     statusLine(a),
     ...submissionLines(a.submission),

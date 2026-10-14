@@ -2,6 +2,7 @@ import type { CallToolResult, McpServer, StandardSchemaWithJSON } from '@modelco
 import type * as z from 'zod';
 import type { ServiceContext } from '../../context';
 import { NeedsReconnect, WmmError } from '../../errors';
+import { RECONNECT_STDIO } from '../wording';
 import type { ToolDef } from './define';
 
 const asSchema = (s: z.ZodType) => s as unknown as StandardSchemaWithJSON;
@@ -19,18 +20,14 @@ function auditDetail(args: unknown): Record<string, unknown> {
   return out;
 }
 
-function reconnectHint(ctx: ServiceContext): string {
-  if (ctx.mode === 'stdio' || !ctx.publicUrl) {
-    return 'Ask the user to run "waseda-moodle-mcp connect" in a terminal to reconnect, then restart this MCP server.';
-  }
-  return `Ask the user to reconnect at ${ctx.publicUrl}/connect, then try again.`;
-}
-
 /** WmmError messages are user-safe and pass through; anything else is replaced by a generic message. */
 function toToolError(ctx: ServiceContext, e: unknown): Error {
   if (e instanceof NeedsReconnect) {
-    const hinted = e.message.includes('/connect') || e.message.includes('waseda-moodle-mcp connect');
-    return hinted ? e : new NeedsReconnect(`${e.message.trimEnd()} ${reconnectHint(ctx)}`);
+    if (ctx.mode === 'stdio' || !ctx.publicUrl) return new NeedsReconnect(RECONNECT_STDIO);
+    if (e.message.includes('/connect')) return e;
+    return new NeedsReconnect(
+      `${e.message.trimEnd()} Ask the user to reconnect at ${ctx.publicUrl}/connect, then try again.`,
+    );
   }
   if (e instanceof WmmError) return e;
   console.error('[waseda-moodle] unexpected tool error:', e instanceof Error ? e.name : typeof e);
@@ -55,6 +52,21 @@ function audit(ctx: ServiceContext, name: string, args: unknown, error?: unknown
   }
 }
 
+/**
+ * One tool invocation = one Moodle client: the first ctx.moodle() call is shared by every service call of the
+ * invocation, so its call budget and memoised reads never leak into the next invocation (stdio is long-lived).
+ */
+export function callScoped(ctx: ServiceContext): ServiceContext {
+  let api: ReturnType<ServiceContext['moodle']> | undefined;
+  return {
+    ...ctx,
+    moodle: () => {
+      api ??= ctx.moodle();
+      return api;
+    },
+  };
+}
+
 export function registerTool(server: McpServer, ctx: ServiceContext, def: ToolDef): void {
   server.registerTool(
     def.name,
@@ -62,7 +74,7 @@ export function registerTool(server: McpServer, ctx: ServiceContext, def: ToolDe
     async (raw: unknown): Promise<CallToolResult> => {
       const args = raw ?? {};
       try {
-        const out = await def.run(ctx, args);
+        const out = await def.run(callScoped(ctx), args);
         audit(ctx, def.name, args);
         return {
           content: [{ type: 'text', text: out.text }, ...(out.extra ?? [])],

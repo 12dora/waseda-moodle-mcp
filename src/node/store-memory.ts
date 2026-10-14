@@ -21,6 +21,8 @@ import type {
 import { type ActionStatus, DEFAULT_SETTINGS, type UploadedDraftFile, type UserSettings } from '../core/types';
 
 const MAX_AUDIT_ROWS = 1000;
+/** Finished actions (executed, cancelled, expired, failed) are dropped from the state file after this long. */
+const FINISHED_ACTION_TTL_MS = 30 * 24 * 3600 * 1000;
 
 interface PersistedState {
   version: 1;
@@ -82,9 +84,19 @@ export class MemoryStore implements Store {
     }
   }
 
+  private pruneActions(): void {
+    const cutoff = Date.now() - FINISHED_ACTION_TTL_MS;
+    for (const [id, a] of this.actions) if (a.status !== 'pending' && a.createdAt < cutoff) this.actions.delete(id);
+  }
+
+  /**
+   * Snapshot to disk (tmp file + rename). The file is owned by one process: when two servers share it, the last
+   * writer wins and the other one's changes are lost on its next write.
+   */
   private persist(): void {
     const path = this.persistPath;
     if (!path) return;
+    this.pruneActions();
     const state: PersistedState = {
       version: 1,
       nextUserId: this.nextUserId,
@@ -256,6 +268,14 @@ export class MemoryStore implements Store {
     return a ? clone(a) : null;
   }
 
+  async claimAction(id: string, userId: number, now: number): Promise<boolean> {
+    const a = this.actions.get(id);
+    if (!a || a.userId !== userId || a.status !== 'pending' || a.expiresAt <= now) return false;
+    a.status = 'executing'; // single-threaded: check and set cannot interleave
+    this.persist();
+    return true;
+  }
+
   async updateAction(
     id: string,
     patch: Partial<Pick<ActionRow, 'status' | 'executedAt' | 'result' | 'error'>>,
@@ -294,6 +314,15 @@ export class MemoryStore implements Store {
   async getUploadDraft(id: string): Promise<UploadDraftRow | null> {
     const u = this.uploads.get(id);
     return u ? clone(u) : null;
+  }
+
+  /** Expires the draft now; true only for the single caller that consumed it. */
+  async consumeUploadDraft(id: string): Promise<boolean> {
+    const u = this.uploads.get(id);
+    const now = Date.now();
+    if (!u || u.expiresAt <= now) return false;
+    u.expiresAt = now;
+    return true;
   }
 
   async appendUploadedFile(id: string, file: UploadedDraftFile): Promise<void> {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceContext } from '../../src/core/context';
 import { MoodleError, NeedsReconnect } from '../../src/core/errors';
 import { buildMcpServer } from '../../src/core/mcp/server';
+import { callScoped } from '../../src/core/mcp/tools/register';
 import {
   cancelAction,
   confirmAction,
@@ -82,6 +83,9 @@ function submissionProps(tools: Array<{ name: string; inputSchema: unknown }>): 
   const sub = tools.find((t) => t.name === 'prepare_submission');
   return (sub?.inputSchema as { properties?: SchemaProps } | undefined)?.properties ?? {};
 }
+
+/** Tools receive a per-invocation copy of the context; match it by its user. */
+const sameUser = (ctx: ServiceContext) => expect.objectContaining({ user: ctx.user });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -278,8 +282,9 @@ describe('read tools', () => {
     const client = await connect(f.ctx);
     const r = await client.callTool({ name: 'list_courses', arguments: {} });
     expect(r.isError).toBe(true);
-    expect(textOf(r)).toContain('Token expired.');
+    expect(textOf(r)).not.toContain('Token expired.'); // replaced, not appended
     expect(textOf(r)).toContain('waseda-moodle-mcp connect');
+    expect(textOf(r)).not.toContain('console');
   });
 
   it('does not let a failing audit break the tool', async () => {
@@ -309,7 +314,9 @@ describe('read tools', () => {
       arguments: { url: 'https://moodle.example.edu/webservice/pluginfile.php/1/notes.txt', inline: true },
     });
     expect(r.isError).toBeFalsy();
-    expect(createFileLink).toHaveBeenCalledWith(f.ctx, expect.stringContaining('notes.txt'), { inline: true });
+    expect(createFileLink).toHaveBeenCalledWith(sameUser(f.ctx), expect.stringContaining('notes.txt'), {
+      inline: true,
+    });
     const types = (r.content as Array<{ type: string }>).map((c) => c.type);
     expect(types).toEqual(['text', 'resource_link', 'resource']);
     expect(textOf(r)).toContain('curl');
@@ -317,24 +324,71 @@ describe('read tools', () => {
     expect(JSON.stringify(r.structuredContent)).not.toContain('hello');
   });
 
-  it('get_file sends images as image content', async () => {
-    vi.mocked(createFileLink).mockResolvedValue({
-      name: 'fig.png',
-      mime: 'image/png',
+  it('get_file sends only png/jpeg/gif/webp as image blocks; other images are binary resources', async () => {
+    const link = (mime: string) => ({
+      name: 'fig',
+      mime,
       size: 3,
       downloadUrl: 'https://wasemoodle.example.com/f/t',
       expiresAt: '2026-10-14T12:15:00+09:00',
-      inline: { mime: 'image/png', base64: 'AAEC' },
+      inline: { mime, base64: 'AAEC' },
     });
     const client = await connect(fake().ctx);
-    const r = await client.callTool({
-      name: 'get_file',
-      arguments: { url: 'https://moodle.example.edu/webservice/pluginfile.php/1/fig.png', inline: true },
-    });
-    const img = (r.content as Array<{ type: string; data?: string; mimeType?: string }>).find(
-      (c) => c.type === 'image',
-    );
-    expect(img).toMatchObject({ data: 'AAEC', mimeType: 'image/png' });
+    const call = async (mime: string) => {
+      vi.mocked(createFileLink).mockResolvedValue(link(mime));
+      const r = await client.callTool({
+        name: 'get_file',
+        arguments: { url: 'https://moodle.example.edu/x', inline: true },
+      });
+      return (r.content as Array<{ type: string; data?: string; mimeType?: string; resource?: { blob?: string } }>)[2];
+    };
+    for (const mime of ['image/png', 'image/jpeg', 'image/gif', 'image/webp']) {
+      expect(await call(mime), mime).toMatchObject({ type: 'image', data: 'AAEC', mimeType: mime });
+    }
+    for (const mime of ['image/svg+xml', 'image/tiff', 'image/bmp']) {
+      expect(await call(mime), mime).toMatchObject({ type: 'resource', resource: { mimeType: mime, blob: 'AAEC' } });
+    }
+  });
+
+  it('describes get_file for the mode', async () => {
+    const worker = await connect(fake().ctx);
+    const workerTool = (await worker.listTools()).tools.find((t) => t.name === 'get_file');
+    expect(workerTool?.description).toMatch(/download link/);
+    const local = await connect(fake({ mode: 'stdio', publicUrl: '' }).ctx);
+    const localTool = (await local.listTools()).tools.find((t) => t.name === 'get_file');
+    expect(localTool?.description).toMatch(/temporary local file/);
+    expect(local.getInstructions()).toMatch(/temporary local path/);
+    expect(worker.getInstructions()).toMatch(/curl/);
+  });
+});
+
+describe('per-invocation Moodle client', () => {
+  it('callScoped hands every service call of one invocation the same client', async () => {
+    const f = fake();
+    let created = 0;
+    f.ctx.moodle = async () => {
+      created++;
+      return f.api;
+    };
+    const first = callScoped(f.ctx);
+    expect(await first.moodle()).toBe(await first.moodle());
+    expect(created).toBe(1);
+    await callScoped(f.ctx).moodle();
+    expect(created).toBe(2);
+  });
+
+  it('a tool call asks the context for one client per invocation', async () => {
+    const f = fake({ responses: { core_course_get_contents: [] } });
+    let created = 0;
+    const original = f.ctx.moodle;
+    f.ctx.moodle = async () => {
+      created++;
+      return original();
+    };
+    const client = await connect(f.ctx);
+    await client.callTool({ name: 'list_courses', arguments: {} }).catch(() => undefined);
+    await client.callTool({ name: 'list_courses', arguments: {} }).catch(() => undefined);
+    expect(created).toBe(2);
   });
 });
 
@@ -356,7 +410,11 @@ describe('write tools', () => {
     const client = await connect(f.ctx);
     const r = await client.callTool({ name: 'prepare_message', arguments: { conversation_id: 12, text: 'Hello' } });
     expect(r.isError).toBeFalsy();
-    expect(prepareMessage).toHaveBeenCalledWith(f.ctx, { conversationId: 12, toUserId: undefined, text: 'Hello' });
+    expect(prepareMessage).toHaveBeenCalledWith(sameUser(f.ctx), {
+      conversationId: 12,
+      toUserId: undefined,
+      text: 'Hello',
+    });
     expect(textOf(r)).toContain('Call confirm_action with action_id "act_1" only after they agree');
     expect(r.structuredContent).toMatchObject({ actionId: 'act_1', approval: 'chat' });
 
@@ -385,7 +443,7 @@ describe('write tools', () => {
         accept_statement: true,
       },
     });
-    expect(prepareSubmission).toHaveBeenCalledWith(f.ctx, {
+    expect(prepareSubmission).toHaveBeenCalledWith(sameUser(f.ctx), {
       cmid: 5001,
       onlineText: 'Answer',
       files: [
@@ -408,7 +466,7 @@ describe('write tools', () => {
       name: 'prepare_forum_post',
       arguments: { forum_type: 'hsuforum', reply_to_post_id: 7, message: 'Thanks' },
     });
-    expect(prepareForumPost).toHaveBeenCalledWith(f.ctx, {
+    expect(prepareForumPost).toHaveBeenCalledWith(sameUser(f.ctx), {
       forumType: 'hsuforum',
       replyToPostId: 7,
       forumId: undefined,
@@ -416,7 +474,7 @@ describe('write tools', () => {
       message: 'Thanks',
     });
     await client.callTool({ name: 'prepare_completion', arguments: { cmid: 9, completed: true } });
-    expect(prepareCompletion).toHaveBeenCalledWith(f.ctx, { cmid: 9, completed: true });
+    expect(prepareCompletion).toHaveBeenCalledWith(sameUser(f.ctx), { cmid: 9, completed: true });
   });
 
   it('confirm_action calls the service via mcp; cancel_action cancels', async () => {
@@ -435,11 +493,11 @@ describe('write tools', () => {
     const f = fake({ scopes: WRITE });
     const client = await connect(f.ctx);
     const ok = await client.callTool({ name: 'confirm_action', arguments: { action_id: 'act_1' } });
-    expect(confirmAction).toHaveBeenCalledWith(f.ctx, 'act_1', 'mcp');
+    expect(confirmAction).toHaveBeenCalledWith(sameUser(f.ctx), 'act_1', 'mcp');
     expect(textOf(ok)).toBe('Action act_1: executed. Message sent.');
     expect(ok.structuredContent).toMatchObject({ status: 'executed' });
     const no = await client.callTool({ name: 'cancel_action', arguments: { action_id: 'act_2' } });
-    expect(cancelAction).toHaveBeenCalledWith(f.ctx, 'act_2');
+    expect(cancelAction).toHaveBeenCalledWith(sameUser(f.ctx), 'act_2');
     expect(textOf(no)).toContain('cancelled');
   });
 

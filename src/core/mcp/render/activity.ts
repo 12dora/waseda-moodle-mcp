@@ -1,4 +1,4 @@
-import { fmt } from '../../time';
+import { fmt, fmtDue } from '../../time';
 import type { ActivityDetail, ContentDetail, ForumDetail, QuizDetail } from '../../types';
 import { assignText } from './assign';
 import { assemble, clip, fileLines, hardCap, MAX_TEXT_CHARS, oneLine } from './common';
@@ -9,7 +9,7 @@ function quizText(q: QuizDetail): string {
     `# ${oneLine(q.name, 100)} — quiz (cmid ${q.cmid})`,
     `Course: ${oneLine(q.courseName, 80)} (course_id ${q.courseId})`,
     `Link: ${q.url}`,
-    `Opens: ${fmt(q.opensAt)} · Closes: ${fmt(q.closesAt)}`,
+    `Opens: ${fmt(q.opensAt)} · Closes: ${fmtDue(q.closesAt)}`,
     `Time limit: ${q.timeLimitMinutes ? `${q.timeLimitMinutes} min` : 'none'} · Attempts allowed: ${q.attemptsAllowed ?? 'unlimited'}`,
   ];
   if (q.attempts.length > 0) {
@@ -34,7 +34,7 @@ function forumText(f: ForumDetail): string {
     `Course: ${oneLine(f.courseName, 80)} (course_id ${f.courseId})`,
     `Link: ${f.url}`,
   ];
-  if (f.dueAt) head.push(`Due: ${fmt(f.dueAt)}`);
+  if (f.dueAt) head.push(`Due: ${fmtDue(f.dueAt)}`);
   if (f.description.trim()) head.push(clip(f.description, 600));
   head.push(f.discussions.length ? 'Recent discussions:' : 'No discussions yet.');
   const entries = f.discussions.map((d) => ({ text: discussionLine(d), item: true }));

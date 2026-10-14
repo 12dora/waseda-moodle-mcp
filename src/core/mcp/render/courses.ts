@@ -1,6 +1,9 @@
-import { fmt } from '../../time';
+import { fmt, fmtDue } from '../../time';
 import type { Course, CourseOutline, ModuleSummary, SearchHit } from '../../types';
 import { assemble, type Entry, oneLine, plural } from './common';
+
+/** Date keys that are deadlines (midnight reads as the previous day 24:00); the rest are plain times. */
+const DEADLINE_KEY = /due|clos|cutoff|cut-off|end|until|deadline/i;
 
 export function renderCourses(courses: Course[]): string {
   if (courses.length === 0) return 'No courses found for this filter.';
@@ -15,7 +18,7 @@ export function renderCourses(courses: Course[]): string {
 }
 
 function moduleLine(m: ModuleSummary): string {
-  const parts = Object.entries(m.dates).map(([k, v]) => `${k} ${fmt(v)}`);
+  const parts = Object.entries(m.dates).map(([k, v]) => `${k} ${DEADLINE_KEY.test(k) ? fmtDue(v) : fmt(v)}`);
   if (m.completed !== null) parts.push(m.completed ? 'done' : 'not done');
   if (m.files.length > 0) {
     const names = m.files.slice(0, 3).map((f) => oneLine(f.name, 40));

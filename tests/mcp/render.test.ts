@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderActionPreview, renderActionResult } from '../../src/core/mcp/render/actions';
 import { renderActivity } from '../../src/core/mcp/render/activity';
-import { clip, MAX_TEXT_CHARS } from '../../src/core/mcp/render/common';
+import { assembleTail, clip, MAX_TEXT_CHARS } from '../../src/core/mcp/render/common';
 import { renderCourses, renderOutline, renderSearch } from '../../src/core/mcp/render/courses';
 import { renderDueList } from '../../src/core/mcp/render/due';
 import { renderFileLink, renderUploadLink } from '../../src/core/mcp/render/files';
@@ -19,7 +19,6 @@ import type {
   QuizDetail,
 } from '../../src/core/types';
 
-const NOW = Date.parse('2026-10-14T12:00:00+09:00');
 const LIMIT = MAX_TEXT_CHARS + 200;
 
 function due(patch: Partial<DueItem>): DueItem {
@@ -53,6 +52,21 @@ function dueList(items: DueItem[], patch: Partial<DueList> = {}): DueList {
   };
 }
 
+describe('assembleTail', () => {
+  it('clips an oversized newest block so the footer survives and drops older blocks', () => {
+    const t = assembleTail({
+      head: ['head'],
+      blocks: ['old block', 'x'.repeat(9000)],
+      footer: ['FOOTER LINE'],
+      noun: 'posts',
+    });
+    expect(t.length).toBeLessThanOrEqual(LIMIT);
+    expect(t).toContain('… 1 earlier posts omitted');
+    expect(t.endsWith('FOOTER LINE')).toBe(true);
+    expect(t).not.toContain('old block');
+  });
+});
+
 describe('clip', () => {
   it('cuts with an ellipsis and keeps short text', () => {
     expect(clip('  hello  ', 10)).toBe('hello');
@@ -78,7 +92,7 @@ describe('renderDueList', () => {
       cmid: 6,
     }),
   ];
-  const text = renderDueList(dueList(items), NOW);
+  const text = renderDueList(dueList(items));
 
   it('groups by urgency in order', () => {
     const order = ['## Overdue (1)', '## Today (2)', '## Tomorrow (1)', '## Next 7 days (2)', '## Later (1)'].map((h) =>
@@ -97,20 +111,94 @@ describe('renderDueList', () => {
   });
 
   it('reports hidden courses and truncation, and says when nothing is due', () => {
-    const t = renderDueList(dueList([due({})], { hiddenCourseCount: 2, truncated: true }), NOW);
+    const t = renderDueList(dueList([due({})], { hiddenCourseCount: 2, truncated: true }));
     expect(t).toContain('2 items from hidden courses');
     expect(t).toContain('narrow with course_id');
-    expect(renderDueList(dueList([]), NOW)).toContain('Nothing outstanding');
-    expect(renderDueList(dueList([due({ overdue: true, closed: true })]), NOW)).toContain('CLOSED');
+    expect(renderDueList(dueList([]))).toContain('Nothing outstanding');
+    expect(renderDueList(dueList([due({ overdue: true, closed: true })]))).toContain(
+      '1 closed item no longer accepted',
+    );
   });
 
   it('truncates long lists with a "more" line', () => {
     const many = Array.from({ length: 200 }, (_, i) =>
       due({ name: `Assignment number ${i}`, dueAt: '2026-10-20T23:59:00+09:00', cmid: 9000 + i }),
     );
-    const t = renderDueList(dueList(many), NOW);
+    const t = renderDueList(dueList(many));
     expect(t.length).toBeLessThanOrEqual(LIMIT);
     expect(t).toMatch(/… \d+ more \(use course_id or a smaller days_ahead\)/);
+  });
+});
+
+describe('renderDueList budget order', () => {
+  it('keeps today and tomorrow when a long overdue list overflows, and puts closed items last', () => {
+    const overdue = Array.from({ length: 80 }, (_, i) =>
+      due({ name: `Old assignment number ${i}`, dueAt: '2026-10-01T23:59:00+09:00', overdue: true, cmid: 100 + i }),
+    );
+    const closed = due({
+      name: 'Expired quiz',
+      kind: 'quiz',
+      dueAt: '2026-09-20T23:59:00+09:00',
+      overdue: true,
+      closed: true,
+    });
+    const items = [
+      ...overdue,
+      closed,
+      due({ name: 'Due today', dueAt: '2026-10-14T20:00:00+09:00', cmid: 1 }),
+      due({ name: 'Due tomorrow', dueAt: '2026-10-15T20:00:00+09:00', cmid: 2 }),
+      due({ name: 'Due next week', dueAt: '2026-10-20T20:00:00+09:00', cmid: 3 }),
+    ];
+    const t = renderDueList(dueList(items));
+    expect(t.length).toBeLessThanOrEqual(LIMIT);
+    expect(t).toContain('Due today');
+    expect(t).toContain('Due tomorrow');
+    expect(t).toContain('Due next week');
+    expect(t).toMatch(/## Overdue \(80\)[\s\S]*… \d+ more/);
+    expect(t.indexOf('## Overdue')).toBeLessThan(t.indexOf('## Today'));
+    const last = t.trimEnd().split('\n').at(-1) ?? '';
+    expect(last).toMatch(/^1 closed item no longer accepted: Expired quiz/);
+    expect(t).not.toContain('- [quiz] Expired quiz');
+  });
+
+  it('puts open items without a deadline into a final "No deadline" group', () => {
+    const items = [
+      due({ name: 'Open survey', kind: 'questionnaire', dueAt: null, opensAt: '2026-10-10T09:00:00+09:00', cmid: 7 }),
+      due({
+        name: 'Survey opening tomorrow',
+        kind: 'questionnaire',
+        dueAt: null,
+        opensAt: '2026-10-15T09:00:00+09:00',
+        notOpenYet: true,
+        cmid: 8,
+      }),
+      due({ name: 'Due today', dueAt: '2026-10-14T20:00:00+09:00', cmid: 1 }),
+      due({ name: 'Far away', dueAt: '2026-11-30T20:00:00+09:00', cmid: 2 }),
+    ];
+    const t = renderDueList(dueList(items));
+    expect(t).toContain('## No deadline (1)');
+    expect(t).toContain('Open survey — Strategic Marketing — open since 2026-10-10 Sat 09:00, no deadline (cmid 7)');
+    expect(t.indexOf('## No deadline')).toBeGreaterThan(t.indexOf('## Later'));
+    expect(t.indexOf('Open survey')).toBeGreaterThan(t.indexOf('## No deadline'));
+    // not yet open: keeps its opening time in the matching day group
+    expect(t.indexOf('Survey opening tomorrow')).toBeGreaterThan(t.indexOf('## Tomorrow'));
+    expect(t.indexOf('Survey opening tomorrow')).toBeLessThan(t.indexOf('## Later'));
+    expect(t.indexOf('## Today')).toBeLessThan(t.indexOf('Due today'));
+  });
+
+  it('groups a deadline at 00:00 with the day it is shown on and uses generatedAt as now', () => {
+    const list = dueList(
+      [
+        due({ name: 'Midnight', dueAt: '2026-10-22T00:00:00+09:00', midnightDue: true }),
+        due({ name: 'Day after', dueAt: '2026-10-22T00:01:00+09:00' }),
+      ],
+      { generatedAt: '2026-10-14T12:00:00+09:00' },
+    );
+    const t = renderDueList(list);
+    expect(t.indexOf('Midnight')).toBeLessThan(t.indexOf('## Later'));
+    expect(t.indexOf('Day after')).toBeGreaterThan(t.indexOf('## Later'));
+    expect(t).toContain('## Next 7 days (1)');
+    expect(t).toContain('due 2026-10-21 Wed 24:00');
   });
 });
 
@@ -560,6 +648,12 @@ describe('actions', () => {
     });
     expect(t).toContain('approve it in the console: https://wasemoodle.example.com/actions?focus=act_abc');
     expect(t).not.toContain('Call confirm_action with');
+  });
+
+  it('shows the executing status as running', () => {
+    expect(renderActionResult({ actionId: 'act_abc', status: 'executing', message: 'In progress.', url: null })).toBe(
+      'Action act_abc: running. In progress.',
+    );
   });
 
   it('renders results', () => {

@@ -142,6 +142,30 @@ describe('MemoryStore actions, uploads, audit', () => {
     expect(await s.getAction('a1')).toMatchObject({ status: 'executed', executedAt: 9, result: 'ok', error: null });
   });
 
+  it('claims a pending, unexpired, owned action exactly once', async () => {
+    const s = new MemoryStore();
+    await s.createAction(action({ id: 'a1', expiresAt: 5000 }));
+    expect(await s.claimAction('a1', 2, 1000)).toBe(false); // not the owner
+    expect(await s.claimAction('a1', 1, 6000)).toBe(false); // expired
+    expect(await s.claimAction('missing', 1, 1000)).toBe(false);
+    expect(await Promise.all([s.claimAction('a1', 1, 1000), s.claimAction('a1', 1, 1000)])).toEqual([true, false]);
+    expect((await s.getAction('a1'))?.status).toBe('executing');
+    await s.updateAction('a1', { status: 'executed' });
+    expect(await s.claimAction('a1', 1, 1000)).toBe(false);
+  });
+
+  it('consumes an upload draft once', async () => {
+    const s = new MemoryStore();
+    const row = { id: 'upl_1', userId: 1, cmid: 5, draftItemId: 42, files: [], totalBytes: 0, createdAt: 1 };
+    await s.createUploadDraft({ ...row, expiresAt: Date.now() + 60_000 });
+    await s.createUploadDraft({ ...row, id: 'upl_old', expiresAt: Date.now() - 1 });
+    expect(await s.consumeUploadDraft('upl_1')).toBe(true);
+    expect(await s.consumeUploadDraft('upl_1')).toBe(false);
+    expect(await s.consumeUploadDraft('upl_old')).toBe(false);
+    expect(await s.consumeUploadDraft('nope')).toBe(false);
+    expect((await s.getUploadDraft('upl_1'))?.expiresAt).toBeLessThanOrEqual(Date.now());
+  });
+
   it('appends uploaded files and totals', async () => {
     const s = new MemoryStore();
     await s.createUploadDraft({

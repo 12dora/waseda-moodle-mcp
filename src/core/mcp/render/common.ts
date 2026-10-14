@@ -70,17 +70,22 @@ interface TailParts {
 /** Like assemble, but keeps the NEWEST blocks (chronological lists: posts, messages). */
 export function assembleTail({ head, blocks, footer = [], noun }: TailParts): string {
   let budget = MAX_TEXT_CHARS - head.join('\n').length - footer.join('\n').length - 120;
-  let from = blocks.length;
-  while (from > 0) {
-    const cost = (blocks[from - 1]?.length ?? 0) + 1;
-    if (cost > budget) break;
-    budget -= cost;
-    from--;
+  const kept: string[] = [];
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i] ?? '';
+    if (block.length + 1 <= budget) {
+      kept.unshift(block);
+      budget -= block.length + 1;
+    } else {
+      // the newest block always shows, clipped so the footer survives; older ones are dropped
+      if (kept.length === 0) kept.push(clip(block, Math.max(200, budget - 1)));
+      break;
+    }
   }
-  if (from === blocks.length && blocks.length > 0) from = blocks.length - 1; // always show the newest one
+  const omitted = blocks.length - kept.length;
   const lines = [...head];
-  if (from > 0) lines.push(`… ${from} earlier ${noun} omitted`);
-  lines.push(...blocks.slice(from), ...footer);
+  if (omitted > 0) lines.push(`… ${omitted} earlier ${noun} omitted`);
+  lines.push(...kept, ...footer);
   return hardCap(lines.join('\n'));
 }
 
