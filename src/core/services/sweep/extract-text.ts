@@ -124,7 +124,7 @@ const TIME_PATTERNS: Array<{ re: RegExp; pick: (m: RegExpExecArray) => HM | null
   { re: /(?<![\d:.])(\d{1,2})\s*([ap])\.?m\b/gi, pick: (m) => to24(Number(m[1]), 0, m[2]) },
   { re: /\bnoon\b|正午/gi, pick: () => [12, 0] },
   {
-    re: /(午前|午後)?\s*(\d{1,2})\s*時(?!間)(?:\s*(\d{1,2})\s*分|(半))?/g,
+    re: /(午前|午後)?\s*(\d{1,2})\s*時(?![間限])(?:\s*(\d{1,2})\s*分|(半))?/g,
     pick: (m) => to24(Number(m[2]), m[4] ? 30 : Number(m[3] ?? 0), m[1]),
   },
 ];

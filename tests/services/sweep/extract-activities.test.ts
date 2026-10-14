@@ -10,7 +10,8 @@ import type { DueItem } from '../../../src/core/types';
 import { BASE, DAY, NOW_MS, NOW_SEC, rawSection } from './helpers';
 
 const C = { id: 101, name: 'Valuation' };
-const snap = (...mods: Parameters<typeof rawSection>[1]) => buildSnapshot([rawSection(1, mods)], { baseUrl: BASE });
+const snap = (...mods: Parameters<typeof rawSection>[1]) =>
+  buildSnapshot([rawSection(1, mods)], { baseUrl: BASE, now: NOW_MS });
 const opts = { now: NOW_MS, toMs: NOW_MS + 14 * DAY };
 
 describe('pendingActivityItems', () => {
@@ -87,7 +88,7 @@ describe('textDeadlineItems', () => {
         'Session 2',
       ),
     ],
-    { baseUrl: BASE },
+    { baseUrl: BASE, now: NOW_MS },
   );
 
   it('extracts from module names, section summaries, labels and descriptions', () => {
@@ -116,7 +117,7 @@ describe('textDeadlineItems', () => {
 
 describe('text items of task modules and titles', () => {
   const sec = (mods: Parameters<typeof rawSection>[1], summary = '', name = 'Week1 授業概要') =>
-    buildSnapshot([rawSection(1, mods, summary, name)], { baseUrl: BASE });
+    buildSnapshot([rawSection(1, mods, summary, name)], { baseUrl: BASE, now: NOW_MS });
 
   it("a deadline in a task module's description carries that module (cmid, real name and kind)", () => {
     const s = sec([

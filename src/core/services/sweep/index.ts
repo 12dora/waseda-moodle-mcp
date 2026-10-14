@@ -5,10 +5,10 @@ import { InvalidInput, NotFound } from '../../errors';
 import { nowMs } from '../../time';
 import type { Course, CourseUpdate, DueItem, SearchHit } from '../../types';
 import { type CourseScope, resolveScope } from '../scope';
-import { announcementItems } from './announcements';
+import { ANNOUNCE_CALLS, announcementItems } from './announcements';
 import { dropCoveredText } from './dedupe';
 import { pendingActivityItems, taskModules, textDeadlineItems } from './extract-activities';
-import { refreshSnapshots } from './refresh';
+import { CRON_MAX_AGE_MS, refreshSnapshots } from './refresh';
 import { parseQuery, type ScoredHit, searchSnapshot } from './search';
 import type { CourseSnapshot } from './snapshot';
 import { attachTaskMentions } from './task-mentions';
@@ -19,7 +19,7 @@ export type { SweepStats } from './types';
 
 const MAX_CALLS = 12; // Moodle calls per request
 const MAX_FULL = 3; // full course refetches per request
-const ANNOUNCE_CALLS = 5; // share of MAX_CALLS reserved for announcements (1 forum list + up to 4 forums)
+const MAX_LARGE = 1; // of those, courses whose raw JSON is large (> 100 KB): CPU limit
 const DAY_MS = 86_400_000;
 const PAST_MENTION_MS = DAY_MS; // text mentions older than this are dropped
 const SEARCH_DEFAULT_LIMIT = 20;
@@ -90,7 +90,7 @@ export async function collectSweepItems(
   const now = nowMs();
   const api = await ctx.moodle();
   const [refresh, announced] = await Promise.all([
-    refreshSnapshots(ctx, targets, { maxCalls: MAX_CALLS - ANNOUNCE_CALLS, maxFull: MAX_FULL }),
+    refreshSnapshots(ctx, targets, { maxCalls: MAX_CALLS - ANNOUNCE_CALLS, maxFull: MAX_FULL, maxLarge: MAX_LARGE }),
     announcementItems(api, targets, { now, maxCalls: ANNOUNCE_CALLS }),
   ]);
   const found = extractAll(targets, refresh.snapshots, { now, toMs: window.toMs });
@@ -112,7 +112,11 @@ export async function getCourseUpdates(
 ): Promise<{ updates: CourseUpdate[]; stats: SweepStats }> {
   const targets = pickCourses(await resolveScope(ctx), opts.courseId);
   const sinceMs = nowMs() - clamp(opts.sinceDays, UPDATES_DEFAULT_DAYS, UPDATES_MAX_DAYS) * DAY_MS;
-  const { snapshots, stats } = await refreshSnapshots(ctx, targets, { maxCalls: MAX_CALLS, maxFull: MAX_FULL });
+  const { snapshots, stats } = await refreshSnapshots(ctx, targets, {
+    maxCalls: MAX_CALLS,
+    maxFull: MAX_FULL,
+    maxLarge: MAX_LARGE,
+  });
   const updates = targets.flatMap((c) => {
     const snap = snapshots.get(c.id);
     return snap ? courseUpdates(c, snap, sinceMs) : [];
@@ -132,7 +136,11 @@ export async function searchSnapshots(
   if (terms.length === 0) throw new InvalidInput('The search query is empty.');
   const limit = clamp(opts.limit, SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT);
   const targets = pickCourses(scope, opts.courseId);
-  const { snapshots, refreshed } = await refreshSnapshots(ctx, targets, { maxCalls: MAX_CALLS, maxFull: MAX_FULL });
+  const { snapshots, refreshed } = await refreshSnapshots(ctx, targets, {
+    maxCalls: MAX_CALLS,
+    maxFull: MAX_FULL,
+    maxLarge: MAX_LARGE,
+  });
   const scored: ScoredHit[] = [];
   for (const course of targets) {
     const snap = snapshots.get(course.id);
@@ -151,6 +159,10 @@ export async function searchSnapshots(
 export async function sweepForCron(ctx: ServiceContext, opts: { maxRefresh?: number } = {}): Promise<SweepStats> {
   const targets = inScope(await resolveScope(ctx));
   if (targets.length === 0) return NO_STATS;
-  const { stats } = await refreshSnapshots(ctx, targets, { maxCalls: MAX_CALLS, maxFull: opts.maxRefresh ?? MAX_FULL });
+  const { stats } = await refreshSnapshots(ctx, targets, {
+    maxCalls: MAX_CALLS,
+    maxFull: opts.maxRefresh ?? MAX_FULL,
+    maxAgeMs: CRON_MAX_AGE_MS,
+  });
   return stats;
 }

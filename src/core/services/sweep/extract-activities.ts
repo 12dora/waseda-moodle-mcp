@@ -2,12 +2,12 @@
 
 import type { DueItem } from '../../types';
 import { buildSweepItem, kindOf } from './due-item';
-import { findDeadlines } from './extract-text';
-import type { CourseSnapshot, SnapModule, SnapText } from './snapshot';
+import { findDeadlines, type TextDeadline } from './extract-text';
+import { hasOwnDeadline, isOwnDeadlineText } from './own-deadline';
+import { type CourseSnapshot, MENTIONS_PER_TEXT, type SnapModule, type SnapText } from './snapshot';
 import type { CourseRef } from './types';
 
 const PENDING_MODS = new Set(['assign', 'quiz', 'questionnaire', 'workshop', 'lesson', 'feedback', 'h5pactivity']);
-const DEADLINE_KEYS = ['due', 'closes', 'cutoff'];
 /** Quizzes / H5P named like self-study material are noise unless the course tracks them as incomplete. */
 const PRACTICE_MODS = new Set(['quiz', 'h5pactivity']);
 const PRACTICE_NAME = /れんしゅう|練習|practice|sample|模擬/i;
@@ -28,7 +28,7 @@ export function taskModules(snap: CourseSnapshot): Map<number, SnapModule> {
 function isUndatedPending(m: SnapModule): boolean {
   if (!PENDING_MODS.has(m.t) || m.v === 0 || m.k === 1) return false;
   if (isPractice(m) && m.k !== 0) return false; // practice material without "incomplete" tracking
-  return !DEADLINE_KEYS.some((k) => m.d?.[k]);
+  return !hasOwnDeadline(m);
 }
 
 /** (a) pending activities without a calendar deadline. Hidden / completed ones and ones opening after `toMs` are skipped. */
@@ -65,6 +65,7 @@ function nameItems(course: CourseRef, snap: CourseSnapshot, now: number): DueIte
   for (const sec of snap.s) {
     for (const m of sec.m) {
       if (m.t === 'label' || m.v === 0 || m.k === 1) continue; // a label's name is a cut-off copy of its text (scanned there)
+      if (PENDING_MODS.has(m.t) && hasOwnDeadline(m)) continue; // Moodle's own date wins
       for (const d of findDeadlines(m.n, now, { max: 2 })) {
         out.push(
           buildSweepItem({
@@ -85,24 +86,36 @@ function nameItems(course: CourseRef, snap: CourseSnapshot, now: number): DueIte
   return out;
 }
 
-/** Deadlines of one text; inside a task module's own description they belong to that module (real name, kind, cmid). */
+/** Mentions of one text: stored at fetch time, parsed here only for snapshots stored before that. */
+function mentionsOf(t: SnapText, now: number): TextDeadline[] {
+  return t.d
+    ? t.d.map(([ms, evidence, lead]) => ({ ms, evidence, lead }))
+    : findDeadlines(t.x, now, { max: MENTIONS_PER_TEXT });
+}
+
+/**
+ * Deadlines of one text. Inside a task module's own description they belong to that module (real name, kind, cmid),
+ * but only when Moodle gives the module no deadline and the text states one for it (see own-deadline.ts).
+ */
 function textItems(course: CourseRef, t: SnapText, opts: { task?: SnapModule; now: number }): DueItem[] {
   const { task, now } = opts;
-  if (task?.k === 1 || task?.v === 0) return []; // done / hidden: nothing to remind
+  if (task && (task.k === 1 || task.v === 0 || hasOwnDeadline(task))) return []; // done / hidden / dated by Moodle
   const url = task?.u || t.u;
-  return findDeadlines(t.x, now, { max: 4 }).map((d) =>
-    buildSweepItem({
-      now,
-      course,
-      kind: task ? kindOf(task.t) : 'other',
-      cmid: task?.c ?? null,
-      name: task ? task.n : titled(t.n, d.lead),
-      url,
-      dueMs: d.ms,
-      text: { evidence: d.evidence, sourceUrl: url },
-      firstSeen: t.s,
-    }),
-  );
+  return mentionsOf(t, now)
+    .filter((d) => !task || isOwnDeadlineText(task, d.evidence))
+    .map((d) =>
+      buildSweepItem({
+        now,
+        course,
+        kind: task ? kindOf(task.t) : 'other',
+        cmid: task?.c ?? null,
+        name: task ? task.n : titled(t.n, d.lead),
+        url,
+        dueMs: d.ms,
+        text: { evidence: d.evidence, sourceUrl: url },
+        firstSeen: t.s,
+      }),
+    );
 }
 
 function bodyItems(course: CourseRef, snap: CourseSnapshot, now: number): DueItem[] {

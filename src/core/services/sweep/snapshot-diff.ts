@@ -47,6 +47,7 @@ export function stampChanges(snap: CourseSnapshot, prev: CourseSnapshot | null, 
   for (const s of prev.s) for (const m of s.m) oldMods.set(m.c, m);
   for (const s of snap.s) for (const m of s.m) stampModule(m, oldMods.get(m.c), env);
   const oldTexts = new Map(prev.x.map((t) => [t.r, t]));
-  for (const t of snap.x) stampText(t, oldTexts.get(t.r), env.now);
+  const oldByBody = new Map(prev.x.map((t) => [t.x, t])); // a renamed reference (older snapshots used section numbers)
+  for (const t of snap.x) stampText(t, oldTexts.get(t.r) ?? oldByBody.get(t.x), env.now);
   return snap;
 }

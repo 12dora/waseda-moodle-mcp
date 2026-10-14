@@ -162,13 +162,17 @@ describe('collectSweepItems', () => {
     expect(kept.items).toEqual([]);
     expect(kept.calendar).toEqual([dated]);
 
-    // not listed anywhere: one item with the module's cmid, real name and kind (not 'other')
-    const closes = [{ label: 'Closes', timestamp: NOW_SEC + 40 * 86400, dataid: 'timeclose' }];
-    const g = makeFake({ [CONTENTS]: () => [rawSection(1, [{ ...survey, dates: closes }])], [FORUMS]: () => [] });
+    // not listed in the calendar: the undated activity takes the date its description states
+    const g = makeFake({ [CONTENTS]: () => [rawSection(1, [survey])], [FORUMS]: () => [] });
     const alone = await collectSweepItems(g.ctx, sc, [], WINDOW);
     expect(alone.items.map((i) => [i.source, i.kind, i.cmid, i.name, i.dueAt])).toEqual([
-      ['text', 'questionnaire', 8, survey.name, '2026-10-18T23:59:00+09:00'],
+      ['activity', 'questionnaire', 8, survey.name, '2026-10-18T23:59:00+09:00'],
     ]);
+
+    // a module with Moodle dates of its own never takes a date from its description
+    const closes = [{ label: 'Closes', timestamp: NOW_SEC + 40 * 86400, dataid: 'closedate' }];
+    const h = makeFake({ [CONTENTS]: () => [rawSection(1, [{ ...survey, dates: closes }])], [FORUMS]: () => [] });
+    expect((await collectSweepItems(h.ctx, sc, [], WINDOW)).items).toEqual([]);
   });
 
   it("drops text mentions older than 24 h, keeps the calendar's overdue logic", async () => {
@@ -228,7 +232,7 @@ describe('collectSweepItems', () => {
 describe('searchSnapshots', () => {
   const cs = [course(101, 'Valuation'), course(102, 'Law')];
   const rows = cs.map((c) =>
-    snapshotRow(c.id, JSON.stringify(buildSnapshot(sectionsFor(c.id), { baseUrl: BASE })), NOW_MS - MIN),
+    snapshotRow(c.id, JSON.stringify(buildSnapshot(sectionsFor(c.id), { baseUrl: BASE, now: NOW_MS })), NOW_MS - MIN),
   );
 
   it('matches names, files and section names; AND over terms; fresh snapshots need no calls', async () => {
@@ -274,7 +278,7 @@ describe('searchSnapshots', () => {
 
 describe('getCourseUpdates / sweepForCron', () => {
   it('lists new and updated modules newest first within sinceDays', async () => {
-    const oldSnap = buildSnapshot(sectionsFor(101), { baseUrl: BASE });
+    const oldSnap = buildSnapshot(sectionsFor(101), { baseUrl: BASE, now: NOW_MS });
     const checked = NOW_MS - 40 * MIN;
     const f = makeFake(
       {

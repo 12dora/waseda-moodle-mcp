@@ -3,7 +3,7 @@ import { buildSnapshot, parseSnapshot, snapshotCmids } from '../../../src/core/s
 import { stampChanges } from '../../../src/core/services/sweep/snapshot-diff';
 import { BASE, NOW_MS, NOW_SEC, rawSection } from './helpers';
 
-const env = { baseUrl: BASE };
+const env = { baseUrl: BASE, now: NOW_MS };
 const none = new Map<number, string[]>();
 
 describe('buildSnapshot', () => {
@@ -37,7 +37,7 @@ describe('buildSnapshot', () => {
     });
     expect(mods[3]?.k).toBeUndefined();
     expect(snap.x.map((t) => [t.k, t.r])).toEqual([
-      ['section', 's1'],
+      ['section', 's9001'],
       ['label', 'm13'],
     ]);
     expect(snap.x[0]?.u).toBe(`${BASE}/course/section.php?id=9001`);

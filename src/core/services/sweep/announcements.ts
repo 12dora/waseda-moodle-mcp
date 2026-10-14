@@ -12,7 +12,10 @@ const FORUMS_FN = 'mod_forum_get_forums_by_courses';
 const DISCUSSIONS_FN = 'mod_forum_get_forum_discussions';
 const CREATED_DESC = 3;
 const RECENT_MS = 14 * 86_400_000;
-const MAX_FORUMS = 6;
+const MAX_FORUMS = 4;
+const HOUR_MS = 3_600_000;
+/** Moodle calls announcementItems may use: the forum list plus MAX_FORUMS discussion lists. */
+export const ANNOUNCE_CALLS = 1 + MAX_FORUMS;
 const PER_FORUM = 10;
 const PER_DISCUSSION = 3;
 const MESSAGE_MAX = 4000;
@@ -75,9 +78,15 @@ function discussionItems(
   return out;
 }
 
+/** The same list starting at a different place every hour, so no forum is skipped every time. */
+function rotated<T>(list: readonly T[], now: number): T[] {
+  const start = list.length === 0 ? 0 : Math.floor(now / HOUR_MS) % list.length;
+  return [...list.slice(start), ...list.slice(0, start)];
+}
+
 /**
- * One forums call for all courses + one discussions call per news forum (max 6), all within `maxCalls`.
- * Per-forum failures (no permission, network) are skipped.
+ * One forums call for all courses + one discussions call per news forum (max 4; with more news forums
+ * the starting forum rotates hourly), all within `maxCalls`. Per-forum failures (no permission, network) are skipped.
  */
 export async function announcementItems(
   api: MoodleApi,
@@ -91,13 +100,15 @@ export async function announcementItems(
     api.call<RawForum[]>(FORUMS_FN, { courseids: courses.map((c) => c.id) }),
     [] as RawForum[],
   );
-  const news: Array<{ forum: RawForum; course: Course }> = [];
+  const candidates: Array<{ forum: RawForum; course: Course }> = [];
   for (const forum of Array.isArray(forums) ? forums : []) {
     const course = byId.get(Number(forum.course));
-    if (forum.type === 'news' && forum.id && course && news.length < MAX_FORUMS && budget.take()) {
-      news.push({ forum, course });
-    }
+    if (forum.type === 'news' && forum.id && course) candidates.push({ forum, course });
   }
+  candidates.sort((a, b) => (a.forum.id ?? 0) - (b.forum.id ?? 0));
+  const news = rotated(candidates, opts.now)
+    .slice(0, MAX_FORUMS)
+    .filter(() => budget.take());
   const lists = await Promise.all(
     news.map((n) =>
       softly(

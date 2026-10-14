@@ -17,7 +17,7 @@ const UPDATES = 'core_course_get_updates_since';
 const OPTS = { maxCalls: 12, maxFull: 3 };
 
 const contents = (extraName = 'Old') => [rawSection(1, [{ id: 1, modname: 'resource', name: extraName }])];
-const json = (name = 'Old') => JSON.stringify(buildSnapshot(contents(name), { baseUrl: BASE }));
+const json = (name = 'Old') => JSON.stringify(buildSnapshot(contents(name), { baseUrl: BASE, now: NOW_MS }));
 const courses = (n: number) => Array.from({ length: n }, (_, i) => course(100 + i));
 
 describe('refreshSnapshots', () => {
@@ -46,7 +46,7 @@ describe('refreshSnapshots', () => {
       {
         [UPDATES]: () => ({
           instances: [
-            { id: 1, updates: [{ name: 'completion' }, { name: 'submissions' }] },
+            { id: 1, updates: [{ name: 'comments' }, { name: 'gradeitems' }] },
             { id: 1000, updates: [] },
           ],
         }),
