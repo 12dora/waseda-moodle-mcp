@@ -18,7 +18,14 @@ import type {
   UploadDraftRow,
   UserRow,
 } from '../core/context';
-import { type ActionStatus, DEFAULT_SETTINGS, type UploadedDraftFile, type UserSettings } from '../core/types';
+import { normalizeScheduleOverrides } from '../core/services/schedule-overrides';
+import {
+  type ActionStatus,
+  DEFAULT_SETTINGS,
+  type InferredSchedule,
+  type UploadedDraftFile,
+  type UserSettings,
+} from '../core/types';
 
 const MAX_AUDIT_ROWS = 1000;
 /** Finished actions (executed, cancelled, expired, failed) are dropped from the state file after this long. */
@@ -40,6 +47,11 @@ interface MemoryStoreOptions {
 
 const clone = <T>(v: T): T => structuredClone(v);
 
+/** Removes the rows of one user from a map keyed by anything. */
+function dropOwnedBy(rows: Map<string, { userId: number }>, userId: number): void {
+  for (const [k, v] of rows) if (v.userId === userId) rows.delete(k);
+}
+
 export class MemoryStore implements Store {
   private readonly users = new Map<number, UserRow>();
   private readonly credentials = new Map<number, CredentialRow>();
@@ -49,6 +61,7 @@ export class MemoryStore implements Store {
   private readonly uploads = new Map<string, UploadDraftRow>();
   private readonly courseSnapshots = new Map<string, CourseSnapshotRow>();
   private readonly syllabusCache = new Map<string, { json: string; fetchedAt: number }>();
+  private readonly inferredSchedules = new Map<string, InferredSchedule>(); // `${userId}:${courseId}`, not persisted
   private readonly sweptAt = new Map<number, number>(); // not persisted: a restart sweeps everyone again
   private auditRows: AuditRow[] = [];
   private nextUserId = 1;
@@ -76,8 +89,15 @@ export class MemoryStore implements Store {
     try {
       const data = JSON.parse(raw) as Partial<PersistedState>;
       for (const u of data.users ?? []) {
-        const { writeMode, myCourseIds, uiLang } = { ...DEFAULT_SETTINGS, ...u.settings }; // drops retired fields
-        this.users.set(u.id, { ...u, settings: { writeMode, myCourseIds: myCourseIds ?? null, uiLang } });
+        const merged = { ...DEFAULT_SETTINGS, ...u.settings };
+        const settings: UserSettings = {
+          // drops retired fields; a file saved before the schedule overrides existed reads as {}
+          writeMode: merged.writeMode,
+          myCourseIds: merged.myCourseIds ?? null,
+          uiLang: merged.uiLang,
+          scheduleOverrides: normalizeScheduleOverrides(merged.scheduleOverrides),
+        };
+        this.users.set(u.id, { ...u, settings });
       }
       for (const a of data.actions ?? []) this.actions.set(a.id, a);
       const maxId = Math.max(0, ...this.users.keys());
@@ -172,11 +192,10 @@ export class MemoryStore implements Store {
     this.users.delete(userId);
     this.sweptAt.delete(userId);
     this.credentials.delete(userId);
-    for (const [k, v] of this.sessions) if (v.userId === userId) this.sessions.delete(k);
-    for (const [k, v] of this.apiKeys) if (v.userId === userId) this.apiKeys.delete(k);
-    for (const [k, v] of this.actions) if (v.userId === userId) this.actions.delete(k);
-    for (const [k, v] of this.uploads) if (v.userId === userId) this.uploads.delete(k);
-    for (const [k, v] of this.courseSnapshots) if (v.userId === userId) this.courseSnapshots.delete(k);
+    for (const rows of [this.sessions, this.apiKeys, this.actions, this.uploads, this.courseSnapshots]) {
+      dropOwnedBy(rows, userId);
+    }
+    for (const k of this.inferredSchedules.keys()) if (k.startsWith(`${userId}:`)) this.inferredSchedules.delete(k);
     this.auditRows = this.auditRows.filter((r) => r.userId !== userId);
     this.persist();
   }
@@ -378,6 +397,24 @@ export class MemoryStore implements Store {
 
   async markSwept(userId: number, at: number): Promise<void> {
     if (this.users.has(userId)) this.sweptAt.set(userId, at);
+  }
+
+  async setScopeCourseIds(userId: number, ids: readonly number[]): Promise<void> {
+    const u = this.users.get(userId);
+    if (u) u.scopeCourseIds = [...new Set(ids)].sort((a, b) => a - b); // no file write of its own, like touchUser
+  }
+
+  async getInferredSchedules(userId: number): Promise<Map<number, InferredSchedule>> {
+    const out = new Map<number, InferredSchedule>();
+    for (const [k, v] of this.inferredSchedules) {
+      const [owner, courseId] = k.split(':').map(Number);
+      if (owner === userId && courseId !== undefined) out.set(courseId, clone(v));
+    }
+    return out;
+  }
+
+  async putInferredSchedules(userId: number, schedules: ReadonlyMap<number, InferredSchedule>): Promise<void> {
+    for (const [courseId, s] of schedules) this.inferredSchedules.set(`${userId}:${courseId}`, clone(s));
   }
 
   // ------------------------------------------------------------------ audit

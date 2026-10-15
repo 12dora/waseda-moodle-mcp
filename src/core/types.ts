@@ -6,6 +6,10 @@
  * - Optional values are `null`, never omitted, so structuredContent has a stable shape.
  */
 
+import type { ScheduleOverride } from './timetable-types';
+
+export type * from './timetable-types';
+
 export type IsoJst = string;
 
 export type WriteMode = 'off' | 'chat' | 'console';
@@ -19,9 +23,15 @@ export interface UserSettings {
   writeMode: WriteMode; // default 'chat'
   myCourseIds: number[] | null; // courses the user attends this term; null = not confirmed → automatic suggestion
   uiLang: UiLang; // default 'auto'
+  scheduleOverrides: Record<string, ScheduleOverride>; // by course id; the user's own class times, win over every source
 }
 
-export const DEFAULT_SETTINGS: UserSettings = { writeMode: 'chat', myCourseIds: null, uiLang: 'auto' };
+export const DEFAULT_SETTINGS: UserSettings = {
+  writeMode: 'chat',
+  myCourseIds: null,
+  uiLang: 'auto',
+  scheduleOverrides: {},
+};
 
 export interface UserInfo {
   id: number;
@@ -417,58 +427,4 @@ export interface ActionResult {
   status: ActionStatus;
   message: string;
   url: string | null;
-}
-
-// ------------------------------------------------------------------ timetable
-
-export interface PeriodTime {
-  period: number; // 1-7
-  start: string; // 'HH:MM'
-  end: string;
-}
-
-export interface TimetableClass {
-  courseId: number;
-  courseName: string;
-  start: string; // 'HH:MM' JST
-  end: string;
-  periods: string; // 'P3' or 'P1–2'
-  periodFrom: number;
-  periodTo: number;
-  night: boolean; // 夜間主 weekday evening clock
-  classroom: string | null;
-  campus: string | null;
-  url: string; // Moodle course page
-}
-
-export interface TimetableDay {
-  date: string; // 'YYYY-MM-DD' (JST)
-  weekday: number; // Mon = 1 ... Sun = 7
-  /** Why the day is special, e.g. 'No classes: 臨時休業日', 'Classes are held: スポーツの日', 'Follows the Monday schedule (振替)'. */
-  note: string | null;
-  classes: TimetableClass[]; // sorted by start time
-}
-
-export interface TimetableCourseRef {
-  courseId: number;
-  courseName: string;
-  url: string;
-}
-
-/** A course with no weekly meeting: full on-demand (also hybrids, which are in `days` too) or intensive / "other". */
-export interface TimetableUnscheduled extends TimetableCourseRef {
-  term: string | null;
-  kind: 'on-demand' | 'no-fixed-time';
-}
-
-export interface Timetable {
-  from: string; // first date of `days`
-  to: string; // last date
-  days: TimetableDay[];
-  onDemand: TimetableUnscheduled[];
-  unknown: TimetableCourseRef[]; // courses without a syllabus schedule (no syllabus, not fetched yet, or lookup off)
-  periodTimes: { standard: PeriodTime[]; evening: PeriodTime[] };
-  scopeMode: 'mine' | 'auto';
-  /** True when a requested date lies outside the published AY2026 calendar: holidays and term ends are estimated. */
-  approximate: boolean;
 }

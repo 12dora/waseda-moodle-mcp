@@ -1,58 +1,23 @@
 /**
- * Timetable: each day's classes of the user's courses with real start/end times (contract §14).
- * Slots come from the public syllabus (services/syllabus.ts, cached globally), the clock from periods.ts, the dates
- * from calendar.ts (term windows, held holidays, no-class days, 振替).
+ * Timetable: each day's classes of the user's courses with real start/end times (contract §14, §15).
+ * Slots come from the user's own times, the public syllabus (services/syllabus.ts, cached globally) or the attendance
+ * sessions seen in Moodle (sources.ts); the clock from periods.ts, the dates from calendar.ts (term windows, held
+ * holidays, no-class days, 振替).
  */
 
 import type { ServiceContext } from '../../context';
 import { InvalidInput } from '../../errors';
 import { isoJst, nowMs } from '../../time';
-import type {
-  Course,
-  Timetable,
-  TimetableClass,
-  TimetableCourseRef,
-  TimetableDay,
-  TimetableUnscheduled,
-} from '../../types';
+import type { Course, Timetable, TimetableCourseRef, TimetableDay, TimetableUnscheduled } from '../../types';
 import { resolveScope } from '../scope';
-import { lookupSeenCourses, type SyllabusInfo } from '../syllabus';
-import { type AcademicCalendar, addDays, calendarFor, dayStatus, isIsoDate, termCovers, weekdayOf } from './calendar';
-import { EVENING_TIMES, periodsLabel, STANDARD_TIMES, slotClock } from './periods';
+import { type AcademicCalendar, addDays, calendarFor, dayStatus, isIsoDate, weekdayOf } from './calendar';
+import { classesFor, covers, listedIn, type TimetableEntry, termOf } from './entries';
+import { EVENING_TIMES, STANDARD_TIMES } from './periods';
+import { resolveCourses } from './sources';
 
 const MAX_DAYS = 14;
-/** WBS (57) and CJL (92) end their classes a week before the university calendar. */
-const SHORT_CALENDAR_SCHOOLS = new Set(['57', '92']);
-
-/** A course the user attends together with its syllabus schedule. */
-export interface TimetableEntry {
-  course: Pick<Course, 'id' | 'name' | 'url'>;
-  info: SyllabusInfo;
-}
-
-const schoolOf = (info: SyllabusInfo) => info.pKey.slice(-2);
-const isShort = (info: SyllabusInfo) => SHORT_CALENDAR_SCHOOLS.has(schoolOf(info));
-
-function classesFor(entry: TimetableEntry, weekday: number): TimetableClass[] {
-  return (entry.info.slots ?? []).flatMap((slot): TimetableClass[] => {
-    const clock = slot.weekday === weekday ? slotClock(slot) : null;
-    if (!clock) return [];
-    return [
-      {
-        courseId: entry.course.id,
-        courseName: entry.course.name,
-        ...clock,
-        periods: periodsLabel(slot),
-        periodFrom: slot.periodFrom,
-        periodTo: slot.periodTo,
-        night: slot.night,
-        classroom: slot.classroom,
-        campus: slot.campus,
-        url: entry.course.url,
-      },
-    ];
-  });
-}
+const MIN_YEAR = 2000;
+const MAX_YEAR = 2100;
 
 /** Classes on one JST date ('YYYY-MM-DD'): term window, closed days, 振替 and held holidays all applied. */
 export function classesOn(
@@ -64,10 +29,10 @@ export function classesOn(
   const classes = status.closed
     ? []
     : entries
-        .filter((e) => termCovers(calendar, { iso: date, term: e.info.term, short: isShort(e.info) }))
+        .filter((e) => covers(e, date, calendar))
         .flatMap((e) => classesFor(e, status.weekday))
         .sort((a, b) => a.start.localeCompare(b.start) || a.courseName.localeCompare(b.courseName));
-  return { date, weekday: weekdayOf(date), note: status.note, classes };
+  return { date, weekday: weekdayOf(date), notes: status.notes, classes };
 }
 
 // ------------------------------------------------------------------ request
@@ -76,7 +41,10 @@ function resolveStart(date: string | undefined): string {
   const today = isoJst(nowMs()).slice(0, 10);
   if (date === undefined || date === 'today') return today;
   if (date === 'tomorrow') return addDays(today, 1);
-  if (!isIsoDate(date)) throw new InvalidInput("date must be 'today', 'tomorrow' or YYYY-MM-DD.");
+  const year = Number(date.slice(0, 4));
+  if (!isIsoDate(date) || year < MIN_YEAR || year > MAX_YEAR) {
+    throw new InvalidInput(`date must be 'today', 'tomorrow' or YYYY-MM-DD (years ${MIN_YEAR}-${MAX_YEAR}).`);
+  }
   return date;
 }
 
@@ -94,23 +62,19 @@ const refOf = (course: Pick<Course, 'id' | 'name' | 'url'>): TimetableCourseRef 
   url: course.url,
 });
 
-/** Full on-demand and slot-less (intensive, "other") courses, kept only while their term overlaps the range. */
+/** On-demand courses (hybrids too) and slot-less (intensive, "other") ones, kept while they belong to the range. */
 function unscheduledIn(entries: TimetableEntry[], dates: string[]): TimetableUnscheduled[] {
   return entries.flatMap((e): TimetableUnscheduled[] => {
-    const hasSlots = (e.info.slots ?? []).length > 0;
-    if (!e.info.onDemand && hasSlots) return [];
-    const intensive = e.info.term === '集中';
-    const active =
-      intensive || dates.some((d) => termCovers(calendarFor(d), { iso: d, term: e.info.term, short: isShort(e.info) }));
-    if (!active) return [];
-    return [{ ...refOf(e.course), term: e.info.term, kind: e.info.onDemand ? 'on-demand' : 'no-fixed-time' }];
+    if (e.listing === null || !listedIn(e, dates)) return [];
+    return [{ ...refOf(e.course), term: termOf(e), kind: e.listing, alsoInClass: e.alsoInClass }];
   });
 }
 
 /**
  * The user's timetable for `days` days from `date` ('today' | 'tomorrow' | YYYY-MM-DD; default today, 1 day).
- * Scope = the user's courses. Uses the cached syllabus; courses not cached yet are fetched within the request's
- * 3-fetch syllabus budget (shared with the scope resolution), the rest are listed as unknown.
+ * Scope = the user's courses (confirmed, or the automatic suggestion). Uses the cached syllabus; courses not cached
+ * yet are fetched within the request's 3-fetch syllabus budget (shared with the scope resolution); what the syllabus
+ * cannot place is looked up once in the Moodle attendance calendar, the rest is listed as unknown.
  */
 export async function getTimetable(
   ctx: ServiceContext,
@@ -119,18 +83,10 @@ export async function getTimetable(
   const from = resolveStart(opts.date);
   const count = resolveDays(opts.days);
   const scope = await resolveScope(ctx);
-  const mine = scope.courses.filter((c) => c.mine && c.kind === 'class');
-  const infos = await lookupSeenCourses(
+  const { entries, unknown } = await resolveCourses(
     ctx,
-    mine.map((c) => c.id),
+    scope.courses.filter((c) => c.mine && c.kind === 'class'),
   );
-  const entries: TimetableEntry[] = [];
-  const unknown: TimetableCourseRef[] = [];
-  for (const course of mine) {
-    const info = infos.get(course.id) ?? null;
-    if (info) entries.push({ course, info });
-    else unknown.push(refOf(course));
-  }
   const dates = Array.from({ length: count }, (_, i) => addDays(from, i));
   return {
     from,

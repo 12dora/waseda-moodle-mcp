@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ActionRow, ApiKeyRow, CourseSnapshotRow, CredentialRow, UserRow } from '../../src/core/context';
+import type { InferredSchedule } from '../../src/core/types';
 import { AUDIT_RETENTION_MS } from '../../src/worker/store/logs';
 import { normalizeSettings } from '../../src/worker/store/rows';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
@@ -67,15 +68,25 @@ beforeEach(async () => {
 describe('users', () => {
   it('creates a user with default settings and updates profile fields on conflict', async () => {
     expect(user).toMatchObject({ moodleUserId: 1001, fullname: 'Taro Yamada', lang: 'ja' });
-    expect(user.settings).toEqual({ writeMode: 'chat', myCourseIds: null, uiLang: 'auto' });
+    expect(user.settings).toEqual({ writeMode: 'chat', myCourseIds: null, uiLang: 'auto', scheduleOverrides: {} });
 
-    await store.updateSettings(user.id, { writeMode: 'console', myCourseIds: [7, 9], uiLang: 'zh-CN' });
+    await store.updateSettings(user.id, {
+      writeMode: 'console',
+      myCourseIds: [7, 9],
+      uiLang: 'zh-CN',
+      scheduleOverrides: {},
+    });
     const again = await store.upsertUser({ moodleUserId: 1001, fullname: 'Taro Y.', lang: 'en' });
     expect(again.id).toBe(user.id);
     expect(again.fullname).toBe('Taro Y.');
     expect(again.lang).toBe('en');
     // settings survive a profile refresh
-    expect(again.settings).toEqual({ writeMode: 'console', myCourseIds: [7, 9], uiLang: 'zh-CN' });
+    expect(again.settings).toEqual({
+      writeMode: 'console',
+      myCourseIds: [7, 9],
+      uiLang: 'zh-CN',
+      scheduleOverrides: {},
+    });
     expect((await store.getUserByMoodleId(1001))?.id).toBe(user.id);
     expect(await store.getUser(9999)).toBeNull();
   });
@@ -90,6 +101,7 @@ describe('users', () => {
       writeMode: 'chat',
       myCourseIds: [1, 4],
       uiLang: 'auto',
+      scheduleOverrides: {},
     });
     expect(normalizeSettings(null).myCourseIds).toBeNull();
     expect(normalizeSettings({ myCourseIds: [] }).myCourseIds).toEqual([]); // confirmed "no courses" stays distinct
@@ -98,6 +110,29 @@ describe('users', () => {
       writeMode: 'chat',
       myCourseIds: null,
       uiLang: 'auto',
+      scheduleOverrides: {},
+    });
+  });
+
+  it('keeps schedule overrides, drops invalid entries and reads a row saved without them as {}', async () => {
+    const slots = [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' }];
+    const good = { mode: 'slots' as const, slots };
+    const mixed = { '300907': good, '5': { mode: 'slots', slots: [] }, '0': good, abc: good, '6': { mode: 'x' } };
+    expect(normalizeSettings({ scheduleOverrides: mixed }).scheduleOverrides).toEqual({ '300907': good });
+    expect(normalizeSettings({ scheduleOverrides: [good] }).scheduleOverrides).toEqual({});
+
+    await store.updateSettings(user.id, { ...user.settings, scheduleOverrides: { '300907': good } });
+    expect((await store.getUser(user.id))?.settings.scheduleOverrides).toEqual({ '300907': good });
+    // a settings row written before scheduleOverrides existed
+    await t.db
+      .prepare('UPDATE users SET settings = ? WHERE id = ?')
+      .bind('{"writeMode":"off","myCourseIds":[3],"uiLang":"ja"}', user.id)
+      .run();
+    expect((await store.getUser(user.id))?.settings).toEqual({
+      writeMode: 'off',
+      myCourseIds: [3],
+      uiLang: 'ja',
+      scheduleOverrides: {},
     });
   });
 });
@@ -290,6 +325,78 @@ describe('course snapshots', () => {
   });
 });
 
+describe('scope course ids', () => {
+  const mk = async () => {
+    const u = await store.upsertUser({ moodleUserId: 3001, fullname: 'U3001', lang: 'en' });
+    await store.putCredential(credential(u.id, { tokenHash: 'h3001' }));
+    return u;
+  };
+  const totalChanges = async () => (await t.db.prepare('SELECT total_changes() AS n').first<{ n: number }>())?.n ?? -1;
+
+  it('are stored sorted and deduplicated, and come back with listSweepUsers', async () => {
+    const u = await mk();
+    expect((await store.listSweepUsers(5))[0]?.scopeCourseIds).toBeUndefined();
+    await store.setScopeCourseIds(u.id, [30, 10, 30, 20]);
+    expect((await store.listSweepUsers(5))[0]?.scopeCourseIds).toEqual([10, 20, 30]);
+    await store.setScopeCourseIds(u.id, []);
+    expect((await store.listSweepUsers(5))[0]?.scopeCourseIds).toEqual([]);
+  });
+
+  it('touch no row when the list did not change', async () => {
+    const u = await mk();
+    await store.setScopeCourseIds(u.id, [2, 1]);
+    const before = await totalChanges();
+    await store.setScopeCourseIds(u.id, [1, 2]);
+    expect(await totalChanges()).toBe(before);
+    await store.setScopeCourseIds(u.id, [1, 2, 3]);
+    expect(await totalChanges()).toBe(before + 1);
+  });
+
+  it('ignore an unknown user and a corrupt stored value', async () => {
+    const u = await mk();
+    await store.setScopeCourseIds(404, [1]);
+    await t.db.prepare('UPDATE users SET scope_course_ids = ? WHERE id = ?').bind('{oops', u.id).run();
+    expect((await store.listSweepUsers(5))[0]?.scopeCourseIds).toBeUndefined();
+  });
+});
+
+describe('inferred schedules', () => {
+  const schedule = (checkedAt: number, slots: InferredSchedule['slots'] = []): InferredSchedule => ({
+    slots,
+    firstDate: slots.length ? '2026-10-02' : null,
+    lastDate: slots.length ? '2027-01-22' : null,
+    checkedAt,
+  });
+  const fri12 = { weekday: 5, periodFrom: 1, periodTo: 2, night: false, classroom: null };
+
+  it('are stored per user and course, upserted, and an empty answer is kept', async () => {
+    const other = await store.upsertUser({ moodleUserId: 2002, fullname: 'Hanako Sato', lang: 'ja' });
+    expect((await store.getInferredSchedules(user.id)).size).toBe(0);
+    await store.putInferredSchedules(
+      user.id,
+      new Map([
+        [300907, schedule(1000, [fri12])],
+        [9, schedule(1000)],
+      ]),
+    );
+    await store.putInferredSchedules(other.id, new Map([[300907, schedule(5)]]));
+    await store.putInferredSchedules(user.id, new Map([[9, schedule(2000, [fri12])]]));
+    await store.putInferredSchedules(user.id, new Map());
+
+    const mine = await store.getInferredSchedules(user.id);
+    expect([...mine.keys()].sort((a, b) => a - b)).toEqual([9, 300907]);
+    expect(mine.get(300907)).toEqual(schedule(1000, [fri12]));
+    expect(mine.get(9)?.checkedAt).toBe(2000);
+    expect((await store.getInferredSchedules(other.id)).get(300907)?.slots).toEqual([]);
+  });
+
+  it('treats an unreadable row as missing', async () => {
+    await store.putInferredSchedules(user.id, new Map([[1, schedule(1)]]));
+    await t.db.prepare('UPDATE inferred_schedules SET json = ? WHERE user_id = ?').bind('{oops', user.id).run();
+    expect((await store.getInferredSchedules(user.id)).size).toBe(0);
+  });
+});
+
 describe('syllabus cache', () => {
   it('is global, upserts per idnumber and returns only the requested hits (including cached "null")', async () => {
     await store.putSyllabusCache('2026570010006202', '{"term":"秋クォーター"}', 10);
@@ -396,6 +503,8 @@ describe('deleteUser', () => {
         expiresAt: 2,
       });
       await store.putCourseSnapshot({ userId: u.id, courseId: 1, json: '{}', fetchedAt: 1, checkedAt: 1 });
+      const none = { slots: [], firstDate: null, lastDate: null, checkedAt: 1 };
+      await store.putInferredSchedules(u.id, new Map([[1, none]]));
       await store.audit({ userId: u.id, at: 1, actor: 'console', action: 'x', detail: null });
     }
     await store.deleteUser(user.id);
@@ -408,6 +517,7 @@ describe('deleteUser', () => {
       'actions',
       'upload_drafts',
       'course_snapshots',
+      'inferred_schedules',
       'audit',
     ]) {
       expect(count(table, user.id), table).toBe(0);

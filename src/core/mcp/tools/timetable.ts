@@ -7,10 +7,11 @@ const getTimetableTool = defineTool({
   name: 'get_timetable',
   title: 'Timetable',
   description:
-    "Lists the user's classes per day with real start/end times, room and campus, from the public syllabus and the Waseda academic calendar " +
-    '(term windows, holidays that are class days, no-class days). ' +
+    "Lists the user's classes per day with real start/end times, room and campus, from the user's own times, the public syllabus " +
+    'and Moodle attendance sessions, on the Waseda academic calendar (term windows, holidays that are class days, no-class days). ' +
     'Use it for "what class do I have today / tomorrow / this week" and "when does X start". ' +
-    'On-demand courses and courses without a known schedule are listed separately. Covers the confirmed courses only.',
+    'On-demand courses and courses without a known schedule are listed separately. ' +
+    "Covers the user's courses (confirmed, or the automatic suggestion).",
   annotations: READ_HINTS,
   input: z.object({
     date: z

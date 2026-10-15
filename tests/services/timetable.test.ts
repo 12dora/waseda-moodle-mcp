@@ -1,10 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvalidInput } from '../../src/core/errors';
 import type { SyllabusInfo, SyllabusSlot } from '../../src/core/services/syllabus';
-import { classesOn, getTimetable, type TimetableEntry } from '../../src/core/services/timetable';
+import { classesOn, getTimetable } from '../../src/core/services/timetable';
 import { ACADEMIC_CALENDAR, type AcademicCalendar } from '../../src/core/services/timetable/calendar';
+import {
+  inferredEntry,
+  overrideEntry,
+  syllabusEntry,
+  type TimetableEntry,
+} from '../../src/core/services/timetable/entries';
+import { inferSchedules } from '../../src/core/services/timetable/moodle-slots';
 import { slotClock } from '../../src/core/services/timetable/periods';
+import type { Course, InferredSchedule, ScheduleOverride } from '../../src/core/types';
 import { makeFakeContext } from '../helpers/fake-context';
+
+vi.mock('../../src/core/services/timetable/moodle-slots', () => ({ inferSchedules: vi.fn() }));
 
 const NOW = new Date('2026-10-14T03:00:00Z'); // Wed 2026-10-14 12:00 JST
 const TIMELINE = 'core_course_get_enrolled_courses_by_timeline_classification';
@@ -14,6 +24,12 @@ const EVENTS = 'core_calendar_get_action_events_by_timesort';
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
+  vi.mocked(inferSchedules).mockReset();
+  vi.mocked(inferSchedules).mockResolvedValue(new Map());
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response('', { status: 500 })),
+  );
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -43,13 +59,37 @@ const info = (term: string | null, slots: SyllabusSlot[], extra: Partial<Syllabu
   instructors: [],
   slots,
   onDemand: false,
+  scheduleUnparsed: false,
   ...extra,
 });
 
-const entry = (id: number, name: string, i: SyllabusInfo): TimetableEntry => ({
-  course: { id, name, url: `https://moodle.example.edu/course/view.php?id=${id}` },
-  info: i,
+const entry = (id: number, name: string, i: SyllabusInfo): TimetableEntry =>
+  syllabusEntry({ id, name, url: `https://moodle.example.edu/course/view.php?id=${id}` }, i);
+
+const course = (id: number, name: string, extra: Partial<Course> = {}): Course => ({
+  id,
+  name,
+  shortName: `C${id}`,
+  category: null,
+  url: `https://moodle.example.edu/course/view.php?id=${id}`,
+  start: null,
+  end: null,
+  progress: null,
+  kind: 'class',
+  mine: true,
+  suggested: false,
+  term: null,
+  lastAccess: null,
+  ...extra,
 });
+
+const inferred = (slots: InferredSchedule['slots'], firstDate: string | null, lastDate: string | null) => ({
+  slots,
+  firstDate,
+  lastDate,
+  checkedAt: NOW.getTime(),
+});
+const friP1_2 = { weekday: 5, periodFrom: 1, periodTo: 2, night: false, classroom: null };
 
 const names = (iso: string, entries: TimetableEntry[], calendar?: AcademicCalendar) =>
   classesOn(iso, entries, calendar).classes.map((c) => c.courseName);
@@ -99,7 +139,7 @@ describe('classesOn: terms and calendar (AY2026)', () => {
     const day = classesOn('2026-10-12', all);
     expect(day.classes.map((c) => c.courseName)).toEqual(['Mon fall-Q']);
     expect(day.classes[0]).toMatchObject({ start: '08:50', end: '12:20', periods: 'P1–2', night: false });
-    expect(day.note).toBe('Classes are held: スポーツの日');
+    expect(day.notes).toEqual([{ kind: 'held', name: 'スポーツの日' }]);
   });
 
   it.each([
@@ -114,7 +154,7 @@ describe('classesOn: terms and calendar (AY2026)', () => {
       entry(6, 'Mon', info('秋学期', [slot(1, 1)])),
     ]);
     expect(day.classes).toEqual([]);
-    expect(day.note).toBe(`No classes: ${why}`);
+    expect(day.notes).toEqual([{ kind: 'closed', name: why }]);
   });
 
   it('2026-11-23: 勤労感謝の日 is a class day; 冬クォーター starts, 秋クォーター ended 11-21', () => {
@@ -127,7 +167,7 @@ describe('classesOn: terms and calendar (AY2026)', () => {
   it('winter break 12-22 .. 01-05 has no classes, class resumes 01-06', () => {
     const wed = entry(9, 'Wed', info('秋学期', [slot(3, 1)]));
     expect(classesOn('2026-12-23', [wed]).classes).toEqual([]);
-    expect(classesOn('2026-12-23', [wed]).note).toBe('No classes: winter break');
+    expect(classesOn('2026-12-23', [wed]).notes).toEqual([{ kind: 'winter-break' }]);
     expect(names('2026-12-16', [wed])).toEqual(['Wed']);
     expect(names('2027-01-06', [wed])).toEqual(['Wed']);
   });
@@ -143,7 +183,7 @@ describe('classesOn: terms and calendar (AY2026)', () => {
   it('every class day before the autumn start and in the summer break is empty, with a note', () => {
     const day = classesOn('2026-08-18', [entry(12, 'Tue', info('秋学期', [slot(2, 1)]))]);
     expect(day.classes).toEqual([]);
-    expect(day.note).toBe('No classes: outside the class period (term break)');
+    expect(day.notes).toEqual([{ kind: 'term-break' }]);
   });
 
   it('通年 runs in both semesters; a missing term counts as a semester course; 集中 never meets', () => {
@@ -185,7 +225,7 @@ describe('classesOn: 振替 days', () => {
     const day = classesOn('2026-10-20', [mon, tue], calendar);
     expect(day.weekday).toBe(2);
     expect(day.classes.map((c) => c.courseName)).toEqual(['Monday course']);
-    expect(day.note).toBe('Follows the Mon schedule (振替)');
+    expect(day.notes).toEqual([{ kind: 'swap', weekday: 1 }]);
   });
 
   it('other dates keep their own weekday', () => {
@@ -196,10 +236,10 @@ describe('classesOn: 振替 days', () => {
 
 describe('classesOn: other academic years', () => {
   it('applies the month rules without holiday knowledge', () => {
-    const mon = entry(1, 'Mon', info('秋クォーター', [slot(1, 1)]));
+    const mon = entry(1, 'Mon', info('秋クォーター', [slot(1, 1)], { year: 2027 }));
     expect(names('2027-10-04', [mon])).toEqual(['Mon']);
     expect(names('2027-11-29', [mon])).toEqual([]);
-    expect(classesOn('2027-10-11', [mon]).note).toBeNull(); // スポーツの日 unknown: treated as a class day
+    expect(classesOn('2027-10-11', [mon]).notes).toEqual([]); // スポーツの日 unknown: treated as a class day
   });
 });
 
@@ -211,7 +251,13 @@ const ID_C = '2026160000000702'; // on-demand
 const ID_D = '2026160000000803'; // intensive
 const ID_E = '2026160000000904'; // no syllabus
 
-const RAW = (id: number, idnumber: string, name: string) => ({ id, fullname: name, shortname: `C${id}`, idnumber });
+const RAW = (id: number, idnumber: string, name: string, extra: { startdate?: number; enddate?: number } = {}) => ({
+  id,
+  fullname: name,
+  shortname: `C${id}`,
+  idnumber,
+  ...extra,
+});
 
 function setup(opts: { mine?: number[] | null; courses?: Array<ReturnType<typeof RAW>> } = {}) {
   const courses = opts.courses ?? [
@@ -258,7 +304,7 @@ describe('getTimetable', () => {
     expect(fetchFn).not.toHaveBeenCalled();
     expect(res).toMatchObject({ from: '2026-10-14', to: '2026-10-14', scopeMode: 'mine', approximate: false });
     expect(res.days).toHaveLength(1);
-    expect(res.days[0]).toMatchObject({ date: '2026-10-14', weekday: 3, note: null });
+    expect(res.days[0]).toMatchObject({ date: '2026-10-14', weekday: 3, notes: [] });
     expect(res.days[0]?.classes).toEqual([
       {
         courseId: 2,
@@ -272,11 +318,12 @@ describe('getTimetable', () => {
         classroom: null,
         campus: null,
         url: 'https://moodle.example.edu/course/view.php?id=2',
+        source: 'syllabus',
       },
     ]);
-    expect(res.onDemand.map((c) => [c.courseId, c.kind, c.term])).toEqual([
-      [3, 'on-demand', '秋学期'],
-      [4, 'no-fixed-time', '集中'],
+    expect(res.onDemand.map((c) => [c.courseId, c.kind, c.term, c.alsoInClass])).toEqual([
+      [3, 'on-demand', '秋学期', false],
+      [4, 'no-fixed-time', '集中', false],
     ]);
     expect(res.unknown.map((c) => c.courseId)).toEqual([5]); // the ZZ course is not a class
     expect(res.periodTimes.standard).toHaveLength(7);
@@ -290,14 +337,15 @@ describe('getTimetable', () => {
     const { t, seed } = setup();
     seedAll(seed);
     const res = await getTimetable(t.ctx, { date: '2026-11-02', days: 7 });
-    expect(res.days.map((d) => [d.date, d.classes.map((c) => c.courseId), d.note])).toEqual([
-      ['2026-11-02', [], null],
-      ['2026-11-03', [], 'Classes are held: 文化の日'],
-      ['2026-11-04', [2], null],
-      ['2026-11-05', [], 'No classes: 臨時の休業日'],
-      ['2026-11-06', [], 'No classes: 臨時の休業日'],
-      ['2026-11-07', [], 'No classes: 早稲田祭'],
-      ['2026-11-08', [], 'No classes: 早稲田祭'],
+    const closed = (name: string) => [{ kind: 'closed', name }];
+    expect(res.days.map((d) => [d.date, d.classes.map((c) => c.courseId), d.notes])).toEqual([
+      ['2026-11-02', [], []],
+      ['2026-11-03', [], [{ kind: 'held', name: '文化の日' }]],
+      ['2026-11-04', [2], []],
+      ['2026-11-05', [], closed('臨時の休業日')],
+      ['2026-11-06', [], closed('臨時の休業日')],
+      ['2026-11-07', [], closed('早稲田祭')],
+      ['2026-11-08', [], closed('早稲田祭')],
     ]);
   });
 
@@ -345,7 +393,11 @@ describe('getTimetable', () => {
     expect(fetchFn).toHaveBeenCalledTimes(3);
     expect(res.days).toHaveLength(14);
     expect(res.days.filter((d) => d.classes.length > 0).map((d) => d.date)).toEqual(['2026-10-12', '2026-10-19']);
-    expect(res.unknown.map((c) => c.courseId)).toEqual([4, 5]); // not fetched yet: shown as time unknown, next call catches up
+    // not fetched yet: shown as time unknown, next call catches up
+    expect(res.unknown.map((c) => [c.courseId, c.reason])).toEqual([
+      [4, 'pending'],
+      [5, 'pending'],
+    ]);
     expect(t.api.count(TIMELINE)).toBe(1);
   });
 
@@ -358,16 +410,217 @@ describe('getTimetable', () => {
     const res = await getTimetable(t.ctx);
     expect(fetchFn).not.toHaveBeenCalled();
     expect(res.days[0]?.classes.map((c) => c.courseId)).toEqual([2]);
-    expect(res.unknown.map((c) => c.courseId)).toEqual([1, 3, 4, 5]);
+    expect(res.unknown.map((c) => [c.courseId, c.reason])).toEqual([
+      [1, 'lookup-off'],
+      [3, 'lookup-off'],
+      [4, 'lookup-off'],
+      [5, 'lookup-off'],
+    ]);
   });
 
   it('rejects a bad date and a bad number of days', async () => {
     const { t } = setup();
-    for (const date of ['2026-02-30', '10/14', 'yesterday', '2026-1-1']) {
+    for (const date of ['2026-02-30', '10/14', 'yesterday', '2026-1-1', '1999-12-31', '2101-01-01']) {
       await expect(getTimetable(t.ctx, { date })).rejects.toBeInstanceOf(InvalidInput);
     }
     for (const days of [0, 15, 1.5, -1]) {
       await expect(getTimetable(t.ctx, { days })).rejects.toBeInstanceOf(InvalidInput);
     }
+  });
+
+  it('accepts the edge years 2000 and 2100', async () => {
+    const { t } = setup();
+    await expect(getTimetable(t.ctx, { date: '2000-01-01' })).resolves.toMatchObject({ approximate: true });
+    await expect(getTimetable(t.ctx, { date: '2100-12-31' })).resolves.toMatchObject({ approximate: true });
+  });
+});
+
+// ------------------------------------------------------------------ sources (contract §15.1)
+
+const override = (o: ScheduleOverride): ScheduleOverride => o;
+const userSlot = (weekday: number, periodFrom: number, periodTo = periodFrom, classroom: string | null = null) => ({
+  weekday,
+  periodFrom,
+  periodTo,
+  classroom,
+});
+
+describe("getTimetable: the user's own times", () => {
+  function withOverrides(overrides: Record<string, ScheduleOverride>) {
+    const made = setup();
+    seedAll(made.seed);
+    made.t.ctx.user.settings = { ...made.t.ctx.user.settings, scheduleOverrides: overrides };
+    return made;
+  }
+
+  it('win over the syllabus; none and on-demand are listed; overridden courses cost no lookup', async () => {
+    const { t } = withOverrides({
+      '2': override({ mode: 'slots', slots: [userSlot(1, 4, 5, '22-101')] }),
+      '1': override({ mode: 'none', slots: [] }),
+      '3': override({ mode: 'on-demand', slots: [] }),
+    });
+    const res = await getTimetable(t.ctx, { date: '2026-10-14', days: 7 });
+    const found = res.days.flatMap((d) => d.classes.map((c) => [d.date, c.courseId, c.start, c.source, c.classroom]));
+    expect(found).toEqual([['2026-10-19', 2, '15:05', 'user', '22-101']]); // the syllabus Wed / Fri classes are gone
+    expect(res.days[0]?.classes).toEqual([]);
+    expect(res.onDemand.map((c) => [c.courseId, c.kind, c.term, c.alsoInClass])).toEqual([
+      [1, 'no-fixed-time', null, false],
+      [3, 'on-demand', null, false],
+      [4, 'no-fixed-time', '集中', false],
+    ]);
+    expect(res.unknown.map((c) => c.courseId)).toEqual([5]); // course 1 (none) is not unknown either
+    expect(vi.mocked(inferSchedules).mock.calls[0]?.[1].map((c) => c.id)).toEqual([5]);
+  });
+
+  it('apply only inside the Moodle course dates when they are known, and never on closed days', async () => {
+    const wed = overrideEntry(
+      course(2, 'Wed', { start: '2026-10-14T00:00:00+09:00', end: '2026-10-21T00:00:00+09:00' }),
+      override({ mode: 'slots', slots: [userSlot(3, 1)] }),
+    );
+    const open = overrideEntry(course(3, 'Open', {}), override({ mode: 'slots', slots: [userSlot(3, 1)] }));
+    const dates = ['2026-10-07', '2026-10-14', '2026-10-21', '2026-10-28', '2026-11-04', '2026-08-19', '2026-12-23'];
+    const hits = (e: TimetableEntry) => dates.filter((d) => classesOn(d, [e]).classes.length > 0);
+    expect(hits(wed)).toEqual(['2026-10-14', '2026-10-21']);
+    // an open window still needs a running term: not the summer or the winter break
+    expect(hits(open)).toEqual(['2026-10-07', '2026-10-14', '2026-10-21', '2026-10-28', '2026-11-04']);
+    expect(overrideEntry(course(4, 'None'), override({ mode: 'none', slots: [] })).listing).toBe('no-fixed-time');
+  });
+});
+
+describe('getTimetable: Moodle attendance sessions', () => {
+  const fri = (first: string, last: string): Map<number, InferredSchedule> =>
+    new Map([[5, inferred([friP1_2], first, last)]]);
+
+  it('fill in courses the syllabus does not know, asked once with the Moodle course dates', async () => {
+    const { t, seed } = setup({
+      courses: [
+        RAW(5, ID_E, 'No Syllabus Course', { startdate: 1_790_000_000, enddate: 1_800_000_000 }),
+        RAW(2, ID_B, 'B'),
+      ],
+    });
+    seed(ID_B, info('秋学期', [slot(3, 3)]));
+    seed(ID_E, null);
+    vi.mocked(inferSchedules).mockResolvedValue(fri('2026-10-09', '2026-10-16'));
+    const res = await getTimetable(t.ctx, { date: '2026-10-09', days: 14 });
+    expect(vi.mocked(inferSchedules)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(inferSchedules).mock.calls[0]?.[1]).toEqual([{ id: 5, start: 1_790_000_000, end: 1_800_000_000 }]);
+    const hits = res.days.flatMap((d) => d.classes.filter((c) => c.courseId === 5).map((c) => [d.date, c.source]));
+    expect(hits).toEqual([
+      ['2026-10-09', 'moodle'],
+      ['2026-10-16', 'moodle'],
+    ]); // inclusive first / last date; 10/23 is outside
+    expect(res.unknown).toEqual([]);
+  });
+
+  it('skip closed days, and replace an unparsed syllabus time', async () => {
+    const { t, seed } = setup({ courses: [RAW(5, ID_E, 'Unparsed')] });
+    seed(ID_E, info('秋学期', [], { scheduleUnparsed: true }));
+    vi.mocked(inferSchedules).mockResolvedValue(fri('2026-10-16', '2026-12-25'));
+    const res = await getTimetable(t.ctx, { date: '2026-12-25', days: 1 });
+    expect(res.days[0]).toMatchObject({ classes: [], notes: [{ kind: 'closed', name: '臨時の休業日' }] });
+    const before = await getTimetable(t.ctx, { date: '2026-10-16' });
+    expect(before.days[0]?.classes.map((c) => [c.courseId, c.source])).toEqual([[5, 'moodle']]);
+  });
+
+  it('are not asked for when the syllabus already gives slots, on-demand or an intensive course', async () => {
+    const { t, seed } = setup();
+    seedAll(seed);
+    seed(ID_E, info('秋学期', [slot(2, 1)]));
+    await getTimetable(t.ctx);
+    expect(vi.mocked(inferSchedules)).not.toHaveBeenCalled();
+  });
+});
+
+describe('getTimetable: which syllabus slots apply', () => {
+  it("only in the course's own academic year; intensive courses too", async () => {
+    const { t, seed } = setup({
+      courses: [
+        RAW(2, '2025160000000601', 'Old B'),
+        RAW(3, '2025160000000702', 'Old C'),
+        RAW(4, '2025160000000803', 'Old intensive'),
+        RAW(5, ID_D, 'Intensive 2026'),
+      ],
+    });
+    seed('2025160000000601', info('秋学期', [slot(3, 3)], { year: 2025 }));
+    seed('2025160000000702', info('秋学期', [], { onDemand: true, year: 2025 }));
+    seed('2025160000000803', info('集中', [], { year: 2025 }));
+    seed(ID_D, info('集中', []));
+    const res = await getTimetable(t.ctx, { date: '2026-10-14' });
+    expect(res.days[0]?.classes).toEqual([]);
+    expect(res.onDemand.map((c) => c.courseId)).toEqual([5]);
+  });
+
+  it('a slot of AY2026 is not applied to the dates of AY2027', async () => {
+    const { t, seed } = setup({ mine: [2] });
+    seed(ID_B, info('春学期', [slot(3, 3)]));
+    expect((await getTimetable(t.ctx, { date: '2027-04-14' })).days[0]?.classes).toEqual([]);
+    expect((await getTimetable(t.ctx, { date: '2026-04-15' })).days[0]?.classes.map((c) => c.courseId)).toEqual([2]);
+  });
+
+  it('with a joined term list: any of the terms covers the date', async () => {
+    const { t, seed } = setup({ mine: [2] });
+    seed(ID_B, info('春学期／秋学期', [slot(3, 3)]));
+    const days = async (date: string) => (await getTimetable(t.ctx, { date })).days[0]?.classes.length;
+    expect(await days('2026-05-13')).toBe(1);
+    expect(await days('2026-10-14')).toBe(1);
+    expect(await days('2026-08-19')).toBe(0);
+    seed(ID_B, info('春クォーター／冬クォーター', [slot(3, 3)]));
+    expect(await days('2026-05-13')).toBe(1);
+    expect(await days('2026-10-14')).toBe(0);
+    expect(await days('2026-12-16')).toBe(1);
+  });
+
+  it('a 集中 course with a parsed slot is listed as no fixed time, not put in the grid or dropped', async () => {
+    const { t, seed } = setup({ mine: [4] });
+    seed(ID_D, info('集中', [slot(3, 3)]));
+    const res = await getTimetable(t.ctx, { date: '2026-10-14', days: 7 });
+    expect(res.days.flatMap((d) => d.classes)).toEqual([]);
+    expect(res.onDemand.map((c) => [c.courseId, c.kind, c.alsoInClass])).toEqual([[4, 'no-fixed-time', false]]);
+  });
+
+  it('an on-demand course that also meets is a hybrid: in the grid and flagged in the list', async () => {
+    const { t, seed } = setup({ mine: [3] });
+    seed(ID_C, info('秋学期', [slot(3, 1)], { onDemand: true }));
+    const res = await getTimetable(t.ctx, { date: '2026-10-14' });
+    expect(res.days[0]?.classes.map((c) => [c.courseId, c.start])).toEqual([[3, '08:50']]);
+    expect(res.onDemand.map((c) => [c.courseId, c.kind, c.alsoInClass])).toEqual([[3, 'on-demand', true]]);
+  });
+});
+
+describe('getTimetable: unknown reasons', () => {
+  it('unparsed, pending, not-found and lookup-off', async () => {
+    const { t, seed } = setup({ mine: [2, 3, 5] });
+    seed(ID_B, info('秋学期', [], { scheduleUnparsed: true }));
+    seed(ID_C, info('秋学期', [], {})); // 無その他: no fixed time, not unknown
+    seed(ID_E, null);
+    const reasons = async () => (await getTimetable(t.ctx)).unknown.map((c) => [c.courseId, c.reason]);
+    expect(await reasons()).toEqual([
+      [2, 'unparsed'],
+      [5, 'pending'], // nothing could be asked of Moodle either
+    ]);
+    vi.mocked(inferSchedules).mockResolvedValue(new Map([[5, inferred([], null, null)]]));
+    expect(await reasons()).toEqual([
+      [2, 'unparsed'],
+      [5, 'not-found'],
+    ]);
+    t.ctx.syllabusLookup = false;
+    expect(await reasons()).toEqual([
+      [2, 'unparsed'],
+      [5, 'lookup-off'],
+    ]);
+  });
+
+  it('a syllabus saying 無その他 is listed as no fixed time, not as unknown', async () => {
+    const { t, seed } = setup({ mine: [3] });
+    seed(ID_C, info('秋学期', []));
+    const res = await getTimetable(t.ctx);
+    expect(res.unknown).toEqual([]);
+    expect(res.onDemand.map((c) => [c.courseId, c.kind])).toEqual([[3, 'no-fixed-time']]);
+  });
+});
+
+describe('inferredEntry', () => {
+  it('has no entry when Moodle showed no weekly meeting', () => {
+    expect(inferredEntry(course(1, 'x'), inferred([], null, null))).toBeNull();
   });
 });

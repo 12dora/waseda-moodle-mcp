@@ -217,6 +217,11 @@ export function createMemoryStoreForTests(): MemoryStore {
       return [...users.values()].slice(0, limit);
     },
     async markSwept() {},
+    async setScopeCourseIds() {},
+    async getInferredSchedules() {
+      return new Map();
+    },
+    async putInferredSchedules() {},
 
     async audit(row) {
       auditLog.push({ ...row, id: nextAuditId++ });

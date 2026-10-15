@@ -3,7 +3,16 @@
  * (memory) provide implementations.
  */
 
-import type { ActionKind, ActionStatus, Approval, ConnectVia, Scope, UploadedDraftFile, UserSettings } from './types';
+import type {
+  ActionKind,
+  ActionStatus,
+  Approval,
+  ConnectVia,
+  InferredSchedule,
+  Scope,
+  UploadedDraftFile,
+  UserSettings,
+} from './types';
 
 // ------------------------------------------------------------------ Moodle client
 
@@ -43,6 +52,8 @@ export interface UserRow {
   settings: UserSettings;
   createdAt: number; // unix ms
   lastSeenAt: number | null;
+  /** Course ids of the last interactive scope (set by listSweepUsers only), so the cron can sweep them too. */
+  scopeCourseIds?: number[];
 }
 
 export interface CredentialRow {
@@ -193,6 +204,11 @@ export interface Store {
   listSweepUsers(limit: number): Promise<UserRow[]>;
   /** Stamps the user's last scheduled-sweep attempt (also after a failure or with an empty scope). */
   markSwept(userId: number, at: number): Promise<void>;
+  /** Remembers the course ids an interactive call resolved as the scope; writes only when the list changed. */
+  setScopeCourseIds(userId: number, ids: readonly number[]): Promise<void>;
+  // class times inferred from Moodle attendance sessions (per user; an entry with no slots means "looked, found none")
+  getInferredSchedules(userId: number): Promise<Map<number, InferredSchedule>>;
+  putInferredSchedules(userId: number, schedules: ReadonlyMap<number, InferredSchedule>): Promise<void>;
 
   // audit log
   audit(row: AuditRow): Promise<void>;

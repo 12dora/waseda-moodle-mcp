@@ -2,7 +2,7 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceContext } from '../../src/core/context';
-import { MoodleError, NeedsReconnect } from '../../src/core/errors';
+import { InvalidInput, MoodleError, NeedsReconnect } from '../../src/core/errors';
 import { buildMcpServer } from '../../src/core/mcp/server';
 import { callScoped } from '../../src/core/mcp/tools/register';
 import {
@@ -16,9 +16,10 @@ import {
 import { listCourses } from '../../src/core/services/courses';
 import { getDueItems } from '../../src/core/services/due';
 import { createFileLink } from '../../src/core/services/files';
+import { setScheduleOverride } from '../../src/core/services/schedule-overrides';
 import { resolveScope, setMyCourses } from '../../src/core/services/scope';
 import { getCourseUpdates } from '../../src/core/services/sweep';
-import type { Course, CourseUpdate, DueList, Scope } from '../../src/core/types';
+import type { Course, CourseUpdate, DueList, ScheduleOverride, Scope } from '../../src/core/types';
 import { DEFAULT_SETTINGS } from '../../src/core/types';
 import { type FakeContextOptions, makeFakeContext } from '../helpers/fake-context';
 
@@ -41,6 +42,7 @@ vi.mock('../../src/core/services/courses', () => ({
   searchCourseContent: vi.fn(),
 }));
 vi.mock('../../src/core/services/due', () => ({ getDueItems: vi.fn() }));
+vi.mock('../../src/core/services/schedule-overrides', () => ({ setScheduleOverride: vi.fn() }));
 vi.mock('../../src/core/services/scope', () => ({ resolveScope: vi.fn(), setMyCourses: vi.fn() }));
 vi.mock('../../src/core/services/sweep', () => ({ getCourseUpdates: vi.fn() }));
 
@@ -53,6 +55,7 @@ const READ_TOOLS = [
   'set_my_courses',
   'get_course_updates',
   'get_timetable',
+  'set_course_schedule',
   'get_course',
   'search_course_content',
   'get_activity',
@@ -121,18 +124,18 @@ describe('tool registration', () => {
     expect(names).toEqual([...READ_TOOLS].sort());
   });
 
-  it('adds write tools and create_upload_link for write scope in worker mode (22 tools)', async () => {
+  it('adds write tools and create_upload_link for write scope in worker mode (23 tools)', async () => {
     const client = await connect(fake({ scopes: WRITE }).ctx);
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(names).toEqual([...READ_TOOLS, ...WRITE_TOOLS, 'create_upload_link'].sort());
-    expect(names).toHaveLength(22);
+    expect(names).toHaveLength(23);
   });
 
   it('drops create_upload_link in stdio mode and offers local paths instead of upload ids', async () => {
     const client = await connect(fake({ scopes: WRITE, mode: 'stdio', publicUrl: '' }).ctx);
     const tools = (await client.listTools()).tools;
     expect(tools.map((t) => t.name)).not.toContain('create_upload_link');
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(22);
     const props = submissionProps(tools);
     expect(props.upload_id).toBeUndefined();
     expect(props.files?.items?.properties?.path).toBeDefined();
@@ -308,6 +311,88 @@ describe('read tools', () => {
 
     const missing = await client.callTool({ name: 'set_my_courses', arguments: {} });
     expect(missing.isError).toBe(true);
+  });
+
+  describe('set_course_schedule', () => {
+    const friday12: ScheduleOverride = {
+      mode: 'slots',
+      slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' }],
+    };
+
+    const schedule = (client: Client, args: Record<string, unknown>) =>
+      client.callTool({ name: 'set_course_schedule', arguments: { course_id: 300907, ...args } });
+
+    beforeEach(() => {
+      const cjl = course({ id: 300907, name: '総合日本語３Ｘ' });
+      vi.mocked(resolveScope).mockResolvedValue({ mode: 'mine', mine: new Set([300907]), courses: [cjl] });
+    });
+
+    it('registers with read scope and local-setting hints', async () => {
+      const client = await connect(fake().ctx);
+      const tool = (await client.listTools()).tools.find((t) => t.name === 'set_course_schedule');
+      expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
+      expect(tool?.description).toMatch(/never guess/);
+    });
+
+    it('maps the slots, saves through the service and answers in one line', async () => {
+      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': friday12 });
+      const f = fake();
+      const client = await connect(f.ctx);
+      const slots = [{ weekday: 5, period_from: 1, period_to: 2, classroom: '22-909' }];
+      const r = await schedule(client, { mode: 'slots', slots });
+      expect(r.isError).toBeFalsy();
+      expect(setScheduleOverride).toHaveBeenCalledWith(sameUser(f.ctx), 300907, friday12);
+      expect(textOf(r)).toBe('Saved: 総合日本語３Ｘ — Fri P1–2 (22-909).');
+      expect(r.structuredContent).toMatchObject({ courseId: 300907, schedule: friday12 });
+    });
+
+    it('words a single period without a room, on-demand and none', async () => {
+      const f = fake();
+      const client = await connect(f.ctx);
+      const mon3 = { weekday: 1, periodFrom: 3, periodTo: 3, classroom: null };
+      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': { mode: 'slots', slots: [mon3] } });
+      const one = await schedule(client, { mode: 'slots', slots: [{ weekday: 1, period_from: 3, period_to: 3 }] });
+      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, { mode: 'slots', slots: [mon3] });
+      expect(textOf(one)).toBe('Saved: 総合日本語３Ｘ — Mon P3.');
+
+      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': { mode: 'on-demand', slots: [] } });
+      const od = await schedule(client, { mode: 'on-demand' });
+      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, { mode: 'on-demand', slots: [] });
+      expect(textOf(od)).toContain('on-demand');
+
+      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': { mode: 'none', slots: [] } });
+      const none = await schedule(client, { mode: 'none' });
+      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, { mode: 'none', slots: [] });
+      expect(textOf(none)).toContain('no weekly class');
+    });
+
+    it("mode 'auto' removes the override", async () => {
+      vi.mocked(setScheduleOverride).mockResolvedValue({});
+      const f = fake();
+      const client = await connect(f.ctx);
+      const r = await schedule(client, { mode: 'auto' });
+      expect(setScheduleOverride).toHaveBeenCalledWith(sameUser(f.ctx), 300907, null);
+      expect(textOf(r)).toBe('Cleared: 総合日本語３Ｘ — automatic times again.');
+    });
+
+    it('rejects malformed input and reports a service refusal as a tool error', async () => {
+      const client = await connect(fake().ctx);
+      for (const args of [
+        { course_id: undefined, mode: 'auto' },
+        {},
+        { mode: 'weekly' },
+        { mode: 'slots', slots: [] },
+        { mode: 'slots', slots: [{ weekday: 8, period_from: 1, period_to: 2 }] },
+        { mode: 'slots', slots: [{ weekday: 5, period_from: 1, period_to: 8 }] },
+      ]) {
+        expect((await schedule(client, args)).isError, JSON.stringify(args)).toBe(true);
+      }
+      expect(setScheduleOverride).not.toHaveBeenCalled();
+
+      vi.mocked(setScheduleOverride).mockRejectedValueOnce(new InvalidInput('Not enrolled in course(s): 9.'));
+      const refused = await schedule(client, { course_id: 9, mode: 'none' });
+      expect(refused.isError).toBe(true);
+    });
   });
 
   it('get_course_updates passes the window and renders grouped changes', async () => {

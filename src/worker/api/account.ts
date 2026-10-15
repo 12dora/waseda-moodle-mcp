@@ -6,6 +6,7 @@ import { type MasterKey, sha256Hex } from '../../core/crypto';
 import { InvalidInput } from '../../core/errors';
 import { launchUrl, MOODLE_URL, parseLaunch } from '../../core/moodle/launch';
 import { connectFromLaunch, refreshFromLaunch, toCredentialInfo, toUserInfo } from '../../core/services/account';
+import { applyScheduleOverrides, validateScheduleOverrides } from '../../core/services/schedule-overrides';
 import { setMyCourses } from '../../core/services/scope';
 import type { ConnectVia, UserSettings } from '../../core/types';
 import {
@@ -49,7 +50,7 @@ const EXTENSION_CORS = {
   'Access-Control-Max-Age': '86400',
 };
 
-/** writeMode / uiLang only: the course scope goes through setMyCourses so enrolment is validated. */
+/** writeMode / uiLang only: the course scope goes through setMyCourses, the schedules through their own service. */
 function applySettingsPatch(current: UserSettings, body: Record<string, unknown>): UserSettings {
   const next: UserSettings = { ...current };
   if (body.writeMode !== undefined) {
@@ -73,12 +74,30 @@ function parseMyCourseIds(value: unknown): number[] | null {
   return [...new Set(value as number[])];
 }
 
-/** Applies a settings patch. The course scope goes first: it can fail (not enrolled) and must not leave half applied. */
+/**
+ * The course scope and the schedule overrides go first: both can fail (bad input, not enrolled), so everything is
+ * validated before the first write and a failure leaves nothing half applied.
+ */
+async function applyCourseSettings(
+  c: Context<AppEnv>,
+  user: UserRow,
+  body: Record<string, unknown>,
+): Promise<UserSettings> {
+  const ids = body.myCourseIds === undefined ? undefined : parseMyCourseIds(body.myCourseIds);
+  if (ids === undefined && body.scheduleOverrides === undefined) return user.settings;
+  const ctx = await consoleContext(c, user);
+  const changes =
+    body.scheduleOverrides === undefined ? undefined : await validateScheduleOverrides(ctx, body.scheduleOverrides);
+  const scope = ids === undefined ? user.settings : await setMyCourses(ctx, ids);
+  if (changes === undefined) return scope;
+  return { ...scope, scheduleOverrides: await applyScheduleOverrides(ctx, changes) };
+}
+
+/** Applies a settings patch. */
 async function patchSettings(c: Context<AppEnv>, user: UserRow, body: Record<string, unknown>): Promise<UserSettings> {
   if (body.hiddenCourseIds !== undefined) throw new InvalidInput('hiddenCourseIds is retired: use myCourseIds.');
-  const ids = body.myCourseIds === undefined ? undefined : parseMyCourseIds(body.myCourseIds);
-  const current = ids === undefined ? user.settings : await setMyCourses(await consoleContext(c, user), ids);
-  const settings = applySettingsPatch(current, body);
+  applySettingsPatch(user.settings, body); // rejects a bad writeMode / uiLang before anything is written
+  const settings = applySettingsPatch(await applyCourseSettings(c, user, body), body);
   if (body.writeMode !== undefined || body.uiLang !== undefined) {
     await storeOf(c.env).updateSettings(user.id, settings);
     auditConsole(c, user, 'settings:update', { fields: ['writeMode', 'uiLang'].filter((k) => k in body) });

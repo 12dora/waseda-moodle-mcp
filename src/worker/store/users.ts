@@ -10,6 +10,7 @@ export interface UserRaw {
   settings: string;
   created_at: number;
   last_seen_at: number | null;
+  scope_course_ids?: string | null; // 0005: the last interactive scope, JSON array
 }
 
 interface CredentialRaw {
@@ -25,6 +26,11 @@ interface CredentialRaw {
   last_error: string | null;
 }
 
+function scopeIds(raw: string | null | undefined): number[] | undefined {
+  const ids = parseJson<unknown>(raw, null);
+  return Array.isArray(ids) ? ids.filter((n): n is number => Number.isInteger(n)) : undefined;
+}
+
 export const toUser = (r: UserRaw): UserRow => ({
   id: r.id,
   moodleUserId: r.moodle_user_id,
@@ -33,6 +39,7 @@ export const toUser = (r: UserRaw): UserRow => ({
   settings: normalizeSettings(parseJson(r.settings, {})),
   createdAt: r.created_at,
   lastSeenAt: r.last_seen_at,
+  scopeCourseIds: scopeIds(r.scope_course_ids),
 });
 
 const toCredential = (r: CredentialRaw): CredentialRow => ({
@@ -56,6 +63,7 @@ const USER_OWNED_TABLES = [
   'actions',
   'upload_drafts',
   'course_snapshots',
+  'inferred_schedules',
   'audit',
 ] as const;
 

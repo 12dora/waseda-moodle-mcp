@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ActionRow, CredentialRow, UserRow } from '../../src/core/context';
-import { DEFAULT_SETTINGS } from '../../src/core/types';
+import { DEFAULT_SETTINGS, type InferredSchedule } from '../../src/core/types';
 import { MemoryStore } from '../../src/node/store-memory';
 
 let dir: string;
@@ -74,7 +74,9 @@ describe('MemoryStore users', () => {
     await s.createAction(action({ userId: u.id }));
     await s.putCourseSnapshot({ userId: u.id, courseId: 1, json: '{}', fetchedAt: 1, checkedAt: 1 });
     await s.audit({ userId: u.id, at: 1, actor: 'x', action: 'y', detail: null });
+    await s.putInferredSchedules(u.id, new Map([[1, schedule(1)]]));
     await s.deleteUser(u.id);
+    expect((await s.getInferredSchedules(u.id)).size).toBe(0);
     expect(await s.getUser(u.id)).toBeNull();
     expect(await s.getCredential(u.id)).toBeNull();
     expect(await s.getAction('act_1')).toBeNull();
@@ -236,6 +238,19 @@ describe('MemoryStore course snapshots', () => {
   });
 });
 
+describe('MemoryStore scope course ids', () => {
+  it('are kept sorted and deduplicated on the user row that listSweepUsers returns', async () => {
+    const s = new MemoryStore();
+    const u = await s.upsertUser({ moodleUserId: 1001, fullname: 'U', lang: 'en' });
+    await s.putCredential(credential(u.id));
+    expect((await s.listSweepUsers(5))[0]?.scopeCourseIds).toBeUndefined();
+    await s.setScopeCourseIds(u.id, [3, 1, 3]);
+    await s.setScopeCourseIds(404, [9]); // unknown user: ignored
+    expect((await s.listSweepUsers(5))[0]?.scopeCourseIds).toEqual([1, 3]);
+    expect((await s.getUser(u.id))?.scopeCourseIds).toEqual([1, 3]);
+  });
+});
+
 describe('MemoryStore syllabus cache', () => {
   it('is global, overwrites per idnumber and returns copies of the requested hits', async () => {
     const s = new MemoryStore();
@@ -249,6 +264,29 @@ describe('MemoryStore syllabus cache', () => {
     if (a) a.json = 'mutated';
     expect((await s.getSyllabusCache(['A'])).get('A')?.json).toBe('{"v":2}');
     expect((await s.getSyllabusCache([])).size).toBe(0);
+  });
+});
+
+const schedule = (checkedAt: number, slots: InferredSchedule['slots'] = []): InferredSchedule => ({
+  slots,
+  firstDate: null,
+  lastDate: null,
+  checkedAt,
+});
+
+describe('MemoryStore inferred schedules', () => {
+  it('are kept per user and course and handed out as copies', async () => {
+    const s = new MemoryStore();
+    const fri = { weekday: 5, periodFrom: 1, periodTo: 2, night: false, classroom: null };
+    await s.putInferredSchedules(1, new Map([[7, schedule(1, [fri])]]));
+    await s.putInferredSchedules(2, new Map([[7, schedule(2)]]));
+    await s.putInferredSchedules(1, new Map([[8, schedule(3)]]));
+    const mine = await s.getInferredSchedules(1);
+    expect([...mine.keys()].sort()).toEqual([7, 8]);
+    expect(mine.get(7)?.slots).toEqual([fri]);
+    mine.get(7)?.slots.pop();
+    expect((await s.getInferredSchedules(1)).get(7)?.slots).toHaveLength(1);
+    expect((await s.getInferredSchedules(2)).get(7)?.checkedAt).toBe(2);
   });
 });
 
@@ -276,6 +314,22 @@ describe('MemoryStore persistence', () => {
     expect(next.id).toBe(u.id + 1);
   });
 
+  it('keeps schedule overrides in the state file and reads a file without them as {}', async () => {
+    const path = join(dir, 'overrides.json');
+    const a = new MemoryStore({ persistPath: path });
+    const u = await a.upsertUser({ moodleUserId: 1001, fullname: 'Taro', lang: 'en' });
+    const slots = [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' }];
+    await a.updateSettings(u.id, { ...DEFAULT_SETTINGS, scheduleOverrides: { '300907': { mode: 'slots', slots } } });
+    await a.flush();
+    expect((await new MemoryStore({ persistPath: path }).getUser(u.id))?.settings.scheduleOverrides).toEqual({
+      '300907': { mode: 'slots', slots },
+    });
+
+    const old = { id: 1, moodleUserId: 5, fullname: 'T', lang: 'en', settings: { writeMode: 'off' } };
+    await writeFile(path, JSON.stringify({ version: 1, nextUserId: 2, users: [old], actions: [] }));
+    expect((await new MemoryStore({ persistPath: path }).getUser(1))?.settings.scheduleOverrides).toEqual({});
+  });
+
   it('drops retired settings fields from an older state file', async () => {
     const path = join(dir, 'old.json');
     const legacy = {
@@ -287,7 +341,12 @@ describe('MemoryStore persistence', () => {
     };
     await writeFile(path, JSON.stringify({ version: 1, nextUserId: 2, users: [legacy], actions: [] }));
     const s = new MemoryStore({ persistPath: path });
-    expect((await s.getUser(1))?.settings).toEqual({ writeMode: 'off', myCourseIds: null, uiLang: 'auto' });
+    expect((await s.getUser(1))?.settings).toEqual({
+      writeMode: 'off',
+      myCourseIds: null,
+      uiLang: 'auto',
+      scheduleOverrides: {},
+    });
   });
 
   it('survives a corrupt file and reports it', async () => {

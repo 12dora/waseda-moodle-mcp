@@ -1,5 +1,6 @@
 /** Shared helpers for the D1 store modules. */
 
+import { normalizeScheduleOverrides } from '../../core/services/schedule-overrides';
 import { DEFAULT_SETTINGS, type UiLang, type UserSettings, type WriteMode } from '../../core/types';
 
 const WRITE_MODES: readonly WriteMode[] = ['off', 'chat', 'console'];
@@ -10,7 +11,8 @@ export function normalizeSettings(input: unknown): UserSettings {
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
   const writeMode = WRITE_MODES.find((m) => m === o.writeMode) ?? DEFAULT_SETTINGS.writeMode;
   const uiLang = UI_LANGS.find((l) => l === o.uiLang) ?? DEFAULT_SETTINGS.uiLang;
-  return { writeMode, myCourseIds: normalizeCourseIds(o.myCourseIds), uiLang };
+  const scheduleOverrides = normalizeScheduleOverrides(o.scheduleOverrides); // rows saved before it existed read as {}
+  return { writeMode, myCourseIds: normalizeCourseIds(o.myCourseIds), uiLang, scheduleOverrides };
 }
 
 /** null stays null ("not confirmed yet"); a list is deduplicated and stripped of non-positive / non-integer entries. */

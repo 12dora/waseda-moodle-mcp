@@ -4,6 +4,7 @@ import type { Store } from '../core/context';
 import { actionMethods, uploadMethods } from './store/actions';
 import { type EphemeralMethods, ephemeralMethods } from './store/ephemeral';
 import { type HandoffMethods, handoffMethods } from './store/handoffs';
+import { inferredMethods } from './store/inferred';
 import { logMethods, purgeExpired } from './store/logs';
 import { apiKeyMethods, sessionMethods } from './store/sessions';
 import { snapshotMethods } from './store/snapshots';
@@ -25,6 +26,7 @@ export function createD1Store(db: D1Database): D1Store {
     ...actionMethods(db),
     ...uploadMethods(db),
     ...snapshotMethods(db),
+    ...inferredMethods(db),
     ...logMethods(db),
     ...handoffMethods(db),
     ...ephemeralMethods(db),

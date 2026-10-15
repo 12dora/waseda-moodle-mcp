@@ -142,6 +142,10 @@ function makeFakeStore(): FakeStore {
         .sort((a, b) => (state.sweptAt.get(a.id) ?? -1) - (state.sweptAt.get(b.id) ?? -1) || a.id - b.id)
         .slice(0, limit),
     markSwept: async (userId, at) => void state.sweptAt.set(userId, at),
+    setScopeCourseIds: async (userId, ids) => {
+      const cur = state.users.get(userId);
+      if (cur) state.users.set(userId, { ...cur, scopeCourseIds: [...ids] });
+    },
 
     getCourseSnapshots: async (userId) => [...state.courseSnapshots.values()].filter((r) => r.userId === userId),
     putCourseSnapshot: async (row) => {

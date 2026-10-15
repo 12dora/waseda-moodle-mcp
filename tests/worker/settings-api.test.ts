@@ -16,7 +16,7 @@ vi.mock('../../src/core/services/timetable', () => ({ getTimetable: vi.fn() }));
 
 const ORIGIN = 'https://wasemoodle.example.com';
 const MASTER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).map((_, i) => i + 9)));
-const DEFAULTS = { writeMode: 'chat', myCourseIds: null, uiLang: 'auto' };
+const DEFAULTS = { writeMode: 'chat', myCourseIds: null, uiLang: 'auto', scheduleOverrides: {} };
 
 interface Body {
   settings: Record<string, unknown>;
@@ -76,6 +76,7 @@ beforeEach(async () => {
     .mockImplementation(async (ctx, ids) => {
       const settings = { ...ctx.user.settings, myCourseIds: ids };
       await ctx.store.updateSettings(ctx.user.id, settings);
+      ctx.user.settings = settings;
       return settings;
     });
 });
@@ -139,6 +140,72 @@ describe('PATCH /api/settings', () => {
     vi.mocked(setMyCourses).mockRejectedValueOnce(new InvalidInput('You are not enrolled in course 9.'));
     expect((await patch({ myCourseIds: [9], writeMode: 'off' })).status).toBe(400);
     expect((await json(await call('/api/me'))).user.settings).toEqual(DEFAULTS);
+  });
+});
+
+describe('PATCH /api/settings scheduleOverrides', () => {
+  const friday = { mode: 'slots', slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: ' 22-909 ' }] };
+  const saved = { mode: 'slots', slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' }] };
+  const overridesOf = async () => (await json(await call('/api/me'))).user.settings.scheduleOverrides;
+
+  beforeEach(() => {
+    vi.mocked(resolveScope).mockResolvedValue({
+      mode: 'mine',
+      mine: new Set([5, 6]),
+      courses: [{ id: 5 }, { id: 6 }, { id: 300907 }],
+    } as never);
+  });
+
+  it('sets, replaces and removes overrides through the shared service and returns them with the settings', async () => {
+    const set = await patch({ scheduleOverrides: { '300907': friday, '5': { mode: 'on-demand', slots: [] } } });
+    expect(set.status).toBe(200);
+    const expected = { '300907': saved, '5': { mode: 'on-demand', slots: [] } };
+    expect((await json(set)).settings).toEqual({ ...DEFAULTS, scheduleOverrides: expected });
+    expect(await overridesOf()).toEqual(expected);
+    const scopeCtx = vi.mocked(resolveScope).mock.calls[0]?.[0];
+    expect(scopeCtx).toMatchObject({ source: 'Console', user: { moodleUserId: 1001 } });
+
+    const none = { mode: 'none', slots: [] };
+    const next = await patch({ scheduleOverrides: { '5': null, '6': none } });
+    expect((await json(next)).settings.scheduleOverrides).toEqual({ '300907': saved, '6': none });
+    expect(await overridesOf()).toEqual({ '300907': saved, '6': none });
+    expect(setMyCourses).not.toHaveBeenCalled();
+  });
+
+  it('applies nothing when any entry is invalid or not enrolled (all validated first)', async () => {
+    const bad = [
+      { '5': friday, '6': { mode: 'slots', slots: [] } },
+      { '5': friday, '6': { mode: 'slots', slots: [{ weekday: 9, periodFrom: 1, periodTo: 1 }] } },
+      { '5': friday, '999': friday },
+      { abc: friday },
+      [friday],
+      'x',
+      null,
+      Object.fromEntries(Array.from({ length: 61 }, (_, i) => [String(i + 1), null])),
+    ];
+    for (const scheduleOverrides of bad) {
+      const res = await patch({ writeMode: 'off', scheduleOverrides });
+      expect(res.status, JSON.stringify(scheduleOverrides).slice(0, 40)).toBe(400);
+    }
+    expect((await json(await call('/api/me'))).user.settings).toEqual(DEFAULTS);
+  });
+
+  it('combines with the course scope and the plain fields, and later patches keep the overrides', async () => {
+    const res = await patch({ myCourseIds: [5, 6], writeMode: 'console', scheduleOverrides: { '6': friday } });
+    expect(res.status).toBe(200);
+    const expected = { ...DEFAULTS, writeMode: 'console', myCourseIds: [5, 6], scheduleOverrides: { '6': saved } };
+    expect((await json(res)).settings).toEqual(expected);
+    expect((await json(await call('/api/me'))).user.settings).toEqual(expected);
+
+    await patch({ uiLang: 'ja' });
+    expect(await overridesOf()).toEqual({ '6': saved });
+  });
+
+  it('applies neither part when the course scope is rejected or a plain field is bad', async () => {
+    vi.mocked(setMyCourses).mockRejectedValueOnce(new InvalidInput('You are not enrolled in course 9.'));
+    expect((await patch({ myCourseIds: [9], scheduleOverrides: { '6': friday } })).status).toBe(400);
+    expect((await patch({ uiLang: 'fr', scheduleOverrides: { '6': friday } })).status).toBe(400);
+    expect(await overridesOf()).toEqual({});
   });
 });
 

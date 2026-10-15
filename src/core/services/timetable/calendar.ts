@@ -4,6 +4,8 @@
  * without any holiday knowledge, flagged `official: false`.
  */
 
+import type { DayNote } from '../../types';
+
 type DateRange = readonly [from: string, to: string]; // inclusive 'YYYY-MM-DD'
 
 export interface AcademicCalendar {
@@ -23,7 +25,8 @@ export interface AcademicCalendar {
   weekdayOverride: Record<string, number>;
 }
 
-const WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+/** `春学期／秋学期` (a course given in both) is one string; the syllabus joins terms with this. */
+export const TERM_JOIN = '／';
 
 // ------------------------------------------------------------------ ISO date helpers (no timezone involved)
 
@@ -122,17 +125,16 @@ const windowsOf = (calendar: AcademicCalendar, term: string, short: boolean): Da
   (short ? calendar.shortTerms[term] : undefined) ?? calendar.terms[term];
 
 /**
- * Whether `term` holds classes on `iso` (breaks and closed days are NOT considered here).
- * `null` (a cell without a recognised term) counts as a semester course; 集中 never has weekly classes.
+ * Whether `term` (one name or a `／`-joined list: any of them) holds classes on `iso` (breaks and closed days are NOT
+ * considered here). `null` (a cell without a recognised term) counts as a semester course; 集中 never has weekly classes.
  */
 export function termCovers(
   calendar: AcademicCalendar,
   query: { iso: string; term: string | null; short: boolean },
 ): boolean {
   const { iso, term, short } = query;
-  if (term === '集中') return false;
-  if (term === null) return ['春学期', '秋学期'].some((t) => inRanges(iso, windowsOf(calendar, t, short)));
-  return inRanges(iso, windowsOf(calendar, term, short));
+  const names = term === null ? ['春学期', '秋学期'] : term.split(TERM_JOIN);
+  return names.some((t) => t !== '集中' && inRanges(iso, windowsOf(calendar, t, short)));
 }
 
 export interface DayStatus {
@@ -140,31 +142,31 @@ export interface DayStatus {
   closed: boolean;
   /** Weekday whose schedule applies (differs from the calendar weekday on a 振替 day). */
   weekday: number;
-  note: string | null;
+  notes: DayNote[];
 }
 
-const insideAnyTerm = (calendar: AcademicCalendar, iso: string) =>
+/** Inside a class window of some term (a break inside it is a separate question: see `dayStatus`). */
+export const insideAnyTerm = (calendar: AcademicCalendar, iso: string) =>
   Object.values(calendar.terms).some((ranges) => inRanges(iso, ranges));
 
-/** Closed / held / swapped status of a date with the note shown to the user. */
+/** Why a date has no regular class, if it has none. */
+function closure(calendar: AcademicCalendar, iso: string): DayNote | null {
+  const closedName = calendar.closed[iso];
+  if (closedName !== undefined) return { kind: 'closed', name: closedName };
+  if (inRanges(iso, calendar.breaks)) return { kind: 'winter-break' };
+  if (calendar.official && !insideAnyTerm(calendar, iso)) return { kind: 'term-break' };
+  return null;
+}
+
+/** Closed / held / swapped status of a date with the notes the renderers word for the user. */
 export function dayStatus(calendar: AcademicCalendar, iso: string): DayStatus {
   const calendarWeekday = weekdayOf(iso);
   const weekday = calendar.weekdayOverride[iso] ?? calendarWeekday;
-  const closedName = calendar.closed[iso];
-  const notes: string[] = [];
-  let closed = false;
-  if (closedName !== undefined) {
-    closed = true;
-    notes.push(`No classes: ${closedName}`);
-  } else if (inRanges(iso, calendar.breaks)) {
-    closed = true;
-    notes.push('No classes: winter break');
-  } else if (calendar.official && !insideAnyTerm(calendar, iso)) {
-    closed = true;
-    notes.push('No classes: outside the class period (term break)');
-  }
+  const notes: DayNote[] = [];
+  const closed = closure(calendar, iso);
+  if (closed) notes.push(closed);
   const heldName = calendar.held[iso];
-  if (heldName !== undefined && !closed) notes.push(`Classes are held: ${heldName}`);
-  if (weekday !== calendarWeekday) notes.push(`Follows the ${WEEKDAY_NAMES[weekday - 1] ?? ''} schedule (振替)`);
-  return { closed, weekday, note: notes.join('; ') || null };
+  if (heldName !== undefined && !closed) notes.push({ kind: 'held', name: heldName });
+  if (weekday !== calendarWeekday) notes.push({ kind: 'swap', weekday });
+  return { closed: closed !== null, weekday, notes };
 }

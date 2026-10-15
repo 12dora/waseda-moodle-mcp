@@ -5,7 +5,7 @@ import { MAX_TEXT_CHARS } from '../../src/core/mcp/render/common';
 import { renderTimetable } from '../../src/core/mcp/render/timetable';
 import { buildMcpServer } from '../../src/core/mcp/server';
 import { getTimetable } from '../../src/core/services/timetable';
-import type { Timetable, TimetableClass, TimetableDay } from '../../src/core/types';
+import type { DayNote, Timetable, TimetableClass, TimetableDay } from '../../src/core/types';
 import { makeFakeContext } from '../helpers/fake-context';
 
 vi.mock('../../src/core/services/timetable', () => ({ getTimetable: vi.fn() }));
@@ -27,18 +27,14 @@ const klass = (patch: Partial<TimetableClass>): TimetableClass => ({
   classroom: '11-502',
   campus: '早稲田',
   url: 'https://moodle.example.edu/course/view.php?id=101',
+  source: 'syllabus',
   ...patch,
 });
 
-const day = (
-  date: string,
-  weekday: number,
-  classes: TimetableClass[] = [],
-  note: string | null = null,
-): TimetableDay => ({
+const day = (date: string, weekday: number, classes: TimetableClass[] = [], notes: DayNote[] = []): TimetableDay => ({
   date,
   weekday,
-  note,
+  notes,
   classes,
 });
 
@@ -59,10 +55,12 @@ const timetable = (patch: Partial<Timetable> = {}): Timetable => ({
       }),
     ]),
     day('2026-10-20', 2),
-    day('2026-10-21', 3, [], 'Classes are held: 創立記念日'),
+    day('2026-10-21', 3, [], [{ kind: 'held', name: '創立記念日' }]),
   ],
-  onDemand: [{ courseId: 103, courseName: 'Online Japanese', url: 'u', term: '秋学期', kind: 'on-demand' }],
-  unknown: [{ courseId: 104, courseName: 'Mystery Course', url: 'u' }],
+  onDemand: [
+    { courseId: 103, courseName: 'Online Japanese', url: 'u', term: '秋学期', kind: 'on-demand', alsoInClass: false },
+  ],
+  unknown: [{ courseId: 104, courseName: 'Mystery Course', url: 'u', reason: 'pending' }],
   periodTimes: PERIODS,
   scopeMode: 'mine',
   approximate: false,
@@ -77,11 +75,10 @@ describe('renderTimetable', () => {
     expect(text).toContain('- 08:50–12:20 Strategic Marketing (P1–2, 11-502) course_id 101');
     expect(text).toContain('- 18:30–22:00 Night Strategy (P6–7 evening) course_id 102');
     expect(text).toContain('Tue 10/20 — no classes');
-    expect(text).toContain('Wed 10/21 — no classes (Classes are held: 創立記念日)');
+    expect(text).toContain('Wed 10/21 — no classes (Classes held: 創立記念日)');
     expect(text).toContain('On-demand / no fixed weekly time');
     expect(text).toContain('Online Japanese (course_id 103)');
-    expect(text).toContain('Time unknown');
-    expect(text).toContain('Mystery Course (course_id 104)');
+    expect(text).toContain('Time unknown (not loaded yet, ask again to retry): Mystery Course (course_id 104).');
   });
 
   it('names a campus other than Waseda, and says when the day has classes plus a note', () => {
@@ -89,13 +86,13 @@ describe('renderTimetable', () => {
       timetable({
         from: '2026-10-12',
         to: '2026-10-12',
-        days: [day('2026-10-12', 1, [klass({ campus: '所沢' })], 'Classes are held: スポーツの日')],
+        days: [day('2026-10-12', 1, [klass({ campus: '所沢' })], [{ kind: 'held', name: 'スポーツの日' }])],
         onDemand: [],
         unknown: [],
       }),
     );
     expect(text).toContain('Timetable 2026-10-12.');
-    expect(text).toContain('Mon 10/12 — (Classes are held: スポーツの日)');
+    expect(text).toContain('Mon 10/12 — (Classes held: スポーツの日)');
     expect(text).toContain('(P1–2, 11-502, 所沢)');
     expect(text).not.toContain('On-demand');
   });
@@ -119,6 +116,119 @@ describe('renderTimetable', () => {
     const text = renderTimetable(timetable({ from: '2026-10-12', to: '2026-10-25', days }));
     expect(text.length).toBeLessThanOrEqual(MAX_TEXT_CHARS + 200);
     expect(text).toMatch(/… \d+ more \(ask for fewer days\)/);
+  });
+});
+
+describe('renderTimetable: day notes', () => {
+  const only = (days: TimetableDay[]) => {
+    const [first, last] = [days[0]?.date ?? '', days.at(-1)?.date ?? ''];
+    return renderTimetable(timetable({ from: first, to: last, days, onDemand: [], unknown: [] }));
+  };
+
+  it('words each note kind in English', () => {
+    const text = only([
+      day('2026-11-05', 4, [], [{ kind: 'closed', name: '臨時の休業日' }]),
+      day('2026-10-20', 2, [klass({})], [{ kind: 'swap', weekday: 1 }]),
+      day('2026-12-23', 3, [], [{ kind: 'winter-break' }]),
+    ]);
+    expect(text).toContain('Thu 11/05 — No classes: 臨時の休業日');
+    expect(text).toContain('Tue 10/20 — (Follows the Monday schedule (振替))');
+    expect(text).toContain('Wed 12/23 — No classes: winter break');
+  });
+
+  it('prints a run of break days once, and a single break day on its own', () => {
+    const brk = (date: string, weekday: number) => day(date, weekday, [], [{ kind: 'term-break' }]);
+    const text = only([
+      day('2026-10-15', 4, [klass({})]),
+      brk('2026-10-16', 5),
+      brk('2026-10-17', 6),
+      brk('2026-10-18', 7),
+      day('2026-10-19', 1, [klass({})]),
+      brk('2026-10-20', 2),
+      day('2026-10-21', 3, [klass({})]),
+    ]);
+    expect(text).toContain('10/16–10/18: no classes (term break)');
+    expect(text).not.toContain('Fri 10/16');
+    expect(text).toContain('Tue 10/20 — No classes: term break');
+    expect(text.match(/term break/g)).toHaveLength(2);
+  });
+
+  it('does not merge different breaks or a break day that has a note of its own', () => {
+    const text = only([
+      day('2026-12-21', 1, [klass({})]),
+      day('2026-12-22', 2, [], [{ kind: 'winter-break' }]),
+      day('2026-12-23', 3, [], [{ kind: 'winter-break' }]),
+      day('2026-12-24', 4, [], [{ kind: 'term-break' }]),
+      day('2026-12-25', 5, [], [{ kind: 'closed', name: '臨時の休業日' }]),
+    ]);
+    expect(text).toContain('12/22–12/23: no classes (winter break)');
+    expect(text).toContain('Thu 12/24 — No classes: term break');
+    expect(text).toContain('Fri 12/25 — No classes: 臨時の休業日');
+  });
+});
+
+describe('renderTimetable: sources, hybrids and unknown courses', () => {
+  it('marks user-set and Moodle-inferred times and leaves syllabus times unmarked', () => {
+    const text = renderTimetable(
+      timetable({
+        from: '2026-10-19',
+        to: '2026-10-19',
+        days: [
+          day('2026-10-19', 1, [
+            klass({}),
+            klass({ courseId: 2, courseName: 'Mine', start: '13:10', end: '14:50', periods: 'P3', source: 'user' }),
+            klass({ courseId: 3, courseName: 'Seen', start: '15:05', end: '16:45', periods: 'P4', source: 'moodle' }),
+          ]),
+        ],
+        onDemand: [],
+        unknown: [],
+      }),
+    );
+    expect(text).toContain('Strategic Marketing (P1–2, 11-502) course_id 101');
+    expect(text).toContain('Mine (P3, 11-502) (set by user) course_id 2');
+    expect(text).toContain('Seen (P4, 11-502) (from Moodle attendance) course_id 3');
+  });
+
+  const listed = (
+    courseId: number,
+    courseName: string,
+    kind: 'on-demand' | 'no-fixed-time',
+    alsoInClass: boolean,
+  ): Timetable['onDemand'][number] => ({ courseId, courseName, url: 'u', term: '秋学期', kind, alsoInClass });
+
+  it('lists hybrids apart from plain on-demand courses', () => {
+    const text = renderTimetable(
+      timetable({
+        onDemand: [
+          listed(103, 'Online Japanese', 'on-demand', false),
+          listed(105, 'Hybrid Writing', 'on-demand', true),
+          listed(106, 'Block Seminar', 'no-fixed-time', false),
+        ],
+        unknown: [],
+      }),
+    );
+    expect(text).toContain(
+      'On-demand / no fixed weekly time (no start time to show): Online Japanese (course_id 103); Block Seminar (course_id 106).',
+    );
+    expect(text).toContain('On-demand (also meets in class): Hybrid Writing (course_id 105).');
+  });
+
+  it('offers a retry only for courses not loaded yet; the others can be set with set_course_schedule', () => {
+    const ref = (courseId: number, reason: Timetable['unknown'][number]['reason']) => ({
+      courseId,
+      courseName: `Course ${courseId}`,
+      url: 'u',
+      reason,
+    });
+    const unknown = [ref(1, 'pending'), ref(2, 'not-found'), ref(3, 'unparsed'), ref(4, 'lookup-off')];
+    const mixed = renderTimetable(timetable({ onDemand: [], unknown }));
+    expect(mixed).toContain('Time unknown (not loaded yet, ask again to retry): Course 1 (course_id 1).');
+    expect(mixed).toContain(
+      'Time unknown (can be set with set_course_schedule once the user says it): Course 2 (course_id 2); Course 3 (course_id 3); Course 4 (course_id 4).',
+    );
+    const settable = renderTimetable(timetable({ onDemand: [], unknown: [ref(2, 'not-found')] }));
+    expect(settable).not.toContain('retry');
+    expect(settable).toContain('set_course_schedule');
   });
 });
 
@@ -172,6 +282,13 @@ describe('get_timetable tool', () => {
       );
     }
     expect(vi.mocked(getTimetable)).toHaveBeenCalledTimes(1);
+  });
+
+  it("describes the scope as the user's courses (confirmed or suggested)", async () => {
+    const client = await connect(['moodle:read']);
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'get_timetable');
+    expect(tool?.description).toContain("the user's courses (confirmed, or the automatic suggestion)");
+    expect(tool?.description).not.toContain('confirmed courses only');
   });
 
   it('is mentioned in the server instructions', async () => {
