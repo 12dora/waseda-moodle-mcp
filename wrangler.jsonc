@@ -19,7 +19,15 @@
       "/f/*",
       "/u/*",
       "/cal/*",
-      "/health"
+      "/health",
+      "/",
+      "/en",
+      "/en/",
+      "/zh",
+      "/zh/",
+      "/landing/*",
+      "/robots.txt",
+      "/sitemap.xml"
     ]
   },
   "d1_databases": [

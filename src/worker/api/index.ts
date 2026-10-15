@@ -10,6 +10,7 @@ import { type AppEnv, csrfGuard } from '../auth';
 import { calendarRoutes } from '../calendar/routes';
 import { filesRoutes } from '../files-routes';
 import { errorPayload } from '../http-errors';
+import { landingRoutes } from '../landing';
 import { accountRoutes } from './account';
 import { dataRoutes } from './data';
 import { handoffRoutes } from './handoff';
@@ -52,6 +53,7 @@ export function createApi(): Hono<AppEnv> {
   app.route('/', keyRoutes());
   app.route('/', dataRoutes());
   app.route('/', calendarRoutes());
+  app.route('/', landingRoutes());
   app.route('/', oauthRoutes());
   // signed file tickets (no cookies, CORS *)
   app.route('/', filesRoutes());
