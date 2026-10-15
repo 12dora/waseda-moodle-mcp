@@ -12,7 +12,7 @@
     "dev": "wrangler dev",
     "deploy": "pnpm --filter waseda-moodle-mcp-web run build && wrangler deploy",
     "pack:ext": "node scripts/pack-extension.mjs",
-    "build:stdio": "esbuild src/node/stdio.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/stdio.js --banner:js='#!/usr/bin/env node'",
+    "build:stdio": "esbuild src/node/stdio.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/stdio.js --banner:js='#!/usr/bin/env node\nimport { createRequire } from \"node:module\"; const require = createRequire(import.meta.url);'",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json",
     "test": "vitest run",
     "lint": "biome check .",
