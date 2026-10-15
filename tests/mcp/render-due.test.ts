@@ -469,6 +469,47 @@ describe('renderDueList budget order', () => {
     expect(t.indexOf('## Today')).toBeLessThan(t.indexOf('Due today'));
   });
 
+  it('keeps the auto-scope note and closed summary when every date group overflows', () => {
+    const closed = due({
+      name: 'Expired quiz',
+      kind: 'quiz',
+      dueAt: '2026-09-20T23:59:00+09:00',
+      overdue: true,
+      closed: true,
+    });
+    const many = (n: number, patch: Partial<DueItem>) =>
+      Array.from({ length: n }, (_, i) =>
+        due({ ...patch, name: `${patch.name ?? 'Item'} ${i}`, cmid: (patch.cmid ?? 0) + i }),
+      );
+    const t = renderDueList(
+      dueList(
+        [
+          ...many(40, { name: 'Overdue', dueAt: '2026-10-01T23:59:00+09:00', overdue: true, cmid: 100 }),
+          ...many(40, { name: 'Today', dueAt: '2026-10-14T18:00:00+09:00', cmid: 200 }),
+          ...many(40, { name: 'Tomorrow', dueAt: '2026-10-15T18:00:00+09:00', cmid: 300 }),
+          ...many(40, { name: 'Week', dueAt: '2026-10-20T18:00:00+09:00', cmid: 400 }),
+          ...many(40, { name: 'Later', dueAt: '2026-11-10T18:00:00+09:00', cmid: 500 }),
+          ...many(12, { source: 'activity', dueAt: null, name: 'Undated', cmid: 600 }),
+          closed,
+        ],
+        { scope: { mode: 'auto', courseIds: [101], otherCount: 0 } },
+      ),
+    );
+    expect(t.length).toBeLessThanOrEqual(LIMIT);
+    expect(t).toContain('## Overdue (40)');
+    expect(t).toContain('## Today (40)');
+    expect(t).toContain('## Tomorrow (40)');
+    expect(t).toContain('## Next 7 days (40)');
+    expect(t).toContain('## Later (40)');
+    expect(t).toContain('## No deadline (12)');
+    expect(t).toMatch(/… \d+ more \(use course_id, kinds or a smaller days_ahead\)/);
+    expect(t).toContain('more without a deadline');
+    expect(t).toContain('Using suggested courses (1)');
+    expect(t).toContain('Ask which courses they attend, then confirm with set_my_courses.');
+    expect(t).toContain('1 closed item no longer accepted: Expired quiz (Strategic Marketing)');
+    expect(t.trimEnd().endsWith('…')).toBe(false);
+  });
+
   it('groups a deadline at 00:00 with the day it is shown on and uses generatedAt as now', () => {
     const list = dueList(
       [

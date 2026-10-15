@@ -128,6 +128,42 @@ describe('renderDueByCourse', () => {
     expect(t).toContain('## Course B (course_id 202) — overdue 0 · to do 1 · draft 0 · submitted 0');
   });
 
+  it('keeps a later course heading and note when earlier submitted lines fill the leftover', () => {
+    // 41 A overdue lines: B fits as heading+note only; A's submitted then spend the leftover.
+    const keepA = Array.from({ length: 41 }, (_, i) =>
+      due({
+        name: `Keep-${String(i).padStart(2, '0')}`,
+        overdue: true,
+        dueAt: '2026-10-01T23:59:00+09:00',
+        cmid: 100 + i,
+      }),
+    );
+    const doneA = Array.from({ length: 80 }, (_, i) =>
+      due({
+        name: `D${String(i).padStart(2, '0')}`,
+        cmid: 4000 + i,
+        submission: submittedAt,
+      }),
+    );
+    const overdueB = due({
+      name: 'B'.repeat(90),
+      overdue: true,
+      dueAt: '2026-10-01T23:59:00+09:00',
+      courseId: 202,
+      courseName: 'Course B',
+      cmid: 9,
+      evidence: 'e'.repeat(160),
+    });
+    const t = renderDueByCourse(
+      dueList([...keepA, ...doneA, overdueB], { scope: { mode: 'mine', courseIds: [101, 202], otherCount: 0 } }),
+    );
+    expect(t.length).toBeLessThanOrEqual(LIMIT);
+    expect(t).toContain('## Course B (course_id 202)');
+    expect(t).toMatch(/## Course B \(course_id 202\)[^\n]*\n… 1 more \(/);
+    expect(t).toContain('~~D00~~');
+    expect(t).not.toMatch(/… \d+ more courses/);
+  });
+
   it('keeps the other-courses section and footer, and leaves closed items out of the course list', () => {
     const other = due({ courseId: 300, courseName: 'Other', name: 'Pre-course quiz', cmid: 9 });
     const closed = due({ name: 'Expired', overdue: true, closed: true, cmid: 8 });

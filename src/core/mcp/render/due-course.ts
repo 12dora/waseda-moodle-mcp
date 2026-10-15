@@ -137,11 +137,12 @@ function fitKeepRows(blocks: CourseBlock[], budget: { left: number }, view: DueV
   const rows: FittedCourse[] = [];
   for (const [i, b] of blocks.entries()) {
     const rest = restCoursesCost(blocks.length - i - 1, view);
-    if (headingCost(b.heading) + noteFloor(b, view) + rest > budget.left) break;
-    budget.left -= headingCost(b.heading);
+    const floor = noteFloor(b, view);
+    if (headingCost(b.heading) + floor + rest > budget.left) break;
+    budget.left -= headingCost(b.heading) + floor;
     const inner = { left: budget.left - rest };
     const k = takeFitting(b.keep, inner);
-    budget.left = inner.left + rest;
+    budget.left = inner.left + rest + (k.dropped === 0 ? floor : 0);
     rows.push({ heading: b.heading, keep: k.shown, done: [], dropped: k.dropped, note: null });
   }
   return rows;
@@ -164,9 +165,14 @@ function fitCourseBody(blocks: CourseBlock[], budget: number, view: DueView): st
   const skippedKeep = blocks.length - rows.length;
   slot.left -= restCoursesCost(skippedKeep, view);
   for (const [i, row] of rows.entries()) {
-    const d = takeFitting(blocks[i]?.done ?? [], slot);
+    const b = blocks[i];
+    if (!b) continue;
+    const floor = noteFloor(b, view);
+    if (row.dropped === 0) slot.left -= floor;
+    const d = takeFitting(b.done, slot);
     row.done = d.shown;
     row.dropped += d.dropped;
+    slot.left += floor;
     fitNote(row, slot, view);
   }
   const shown = rows.filter(courseVisible);

@@ -132,11 +132,49 @@ function listable(group: DueGroup, items: DueItem[]): DueItem[] {
   return group === 'No deadline' ? newestFirst(items).slice(0, MAX_NO_DEADLINE_LINES) : items;
 }
 
+/** How the list was asked for and where it is read: the filters are echoed, console pointers only exist hosted. */
+export interface DueView {
+  stdio?: boolean;
+  kinds?: readonly DueKind[];
+  includeSubmitted?: boolean;
+}
+
 interface Section {
   heading: string;
   lines: string[];
   dropped: number;
   capped: number; // items not even offered to the budget (the "No deadline" cap)
+}
+
+function lineCost(s: string): number {
+  return s.length + 1;
+}
+
+function droppedNote(n: number): string {
+  return `… ${n} more (use course_id, kinds or a smaller days_ahead)`;
+}
+
+/** Undated items beyond the cap are only in structuredContent when there is no console to browse them. */
+function undatedMore(n: number, view: DueView): string {
+  const where = view.stdio
+    ? 'pass course_id to narrow; all are in structuredContent'
+    : "see the console's Assignments & deadlines page";
+  return `… ${n} more without a deadline (${where})`;
+}
+
+function noteFloors(offered: number, capped: number, view: DueView): { drop: number; cap: number } {
+  return {
+    drop: offered > 0 ? lineCost(droppedNote(offered)) : 0,
+    cap: capped > 0 ? lineCost(undatedMore(capped, view)) : 0,
+  };
+}
+
+interface PlannedGroup {
+  group: DueGroup;
+  offered: DueItem[];
+  section: Section;
+  drop: number;
+  cap: number;
 }
 
 /** Overdue-but-open items may use at most this share of what is left, so upcoming ones are never crowded out. */
@@ -175,34 +213,63 @@ function groupAllowance(group: DueGroup, left: number): number {
   return group === 'Overdue' ? Math.floor(left * OVERDUE_SHARE) : left;
 }
 
-/** Open lines first in BUDGET_ORDER (overdue share unchanged); submitted lines take what remains. */
-function fitSections(groups: Map<DueGroup, DueItem[]>, budget: number): Map<DueGroup, Section> {
-  const out = new Map<DueGroup, Section>();
-  const kept = new Map<DueGroup, DueItem[]>();
-  const offeredOf = (g: DueGroup) => listable(g, groups.get(g) ?? []);
-  let left = budget;
-  for (const g of BUDGET_ORDER) {
-    const items = groups.get(g) ?? [];
+function planGroups(groups: Map<DueGroup, DueItem[]>, view: DueView): PlannedGroup[] {
+  const plans: PlannedGroup[] = [];
+  for (const group of BUDGET_ORDER) {
+    const items = groups.get(group) ?? [];
     if (items.length === 0) continue;
-    const section = emptySection(g, items);
-    const headingCost = section.heading.length + 2;
-    const open = { left: left - headingCost, allowance: groupAllowance(g, left) - headingCost };
-    kept.set(
-      g,
-      takeDueItems(offeredOf(g), (i) => !isSubmitted(i), open),
-    );
-    left = open.left;
-    out.set(g, section);
+    const section = emptySection(group, items);
+    const offered = listable(group, items);
+    const { drop, cap } = noteFloors(offered.length, section.capped, view);
+    plans.push({ group, offered, section, drop, cap });
   }
-  for (const g of BUDGET_ORDER) {
-    const section = out.get(g);
-    if (!section) continue;
-    const done = { left, allowance: left };
-    const shown = new Set([...takeDueItems(offeredOf(g), isSubmitted, done), ...(kept.get(g) ?? [])]);
-    const offered = offeredOf(g);
-    section.lines = offered.filter((i) => shown.has(i)).map(dueLine);
-    section.dropped = offered.length - section.lines.length;
-    left = done.left;
+  return plans;
+}
+
+function laterOverhead(plans: readonly PlannedGroup[]): number {
+  let n = 0;
+  for (const p of plans) n += p.section.heading.length + 2 + p.drop + p.cap;
+  return n;
+}
+
+function takeOpenLines(plan: PlannedGroup, left: number, rest: number): { kept: DueItem[]; left: number } | null {
+  const heading = plan.section.heading.length + 2;
+  const mine = heading + plan.drop + plan.cap;
+  if (mine + rest > left) return null;
+  const lineBudget = left - mine - rest;
+  const open = { left: lineBudget, allowance: Math.min(groupAllowance(plan.group, left) - heading, lineBudget) };
+  const kept = takeDueItems(plan.offered, (i) => !isSubmitted(i), open);
+  const openN = plan.offered.filter((i) => !isSubmitted(i)).length;
+  const release = kept.length === openN ? plan.drop : 0;
+  return { kept, left: open.left + rest + release };
+}
+
+function takeDoneLines(plan: PlannedGroup, kept: DueItem[], left: number): number {
+  const openN = plan.offered.filter((i) => !isSubmitted(i)).length;
+  const hold = kept.length < openN ? 0 : plan.drop;
+  const done = { left: left - hold, allowance: left - hold };
+  const shown = new Set([...takeDueItems(plan.offered, isSubmitted, done), ...kept]);
+  plan.section.lines = plan.offered.filter((i) => shown.has(i)).map(dueLine);
+  plan.section.dropped = plan.offered.length - plan.section.lines.length;
+  return done.left + (plan.section.dropped === 0 ? hold : 0);
+}
+
+/** Open lines first in BUDGET_ORDER (overdue share unchanged); submitted lines take what remains. */
+function fitSections(groups: Map<DueGroup, DueItem[]>, budget: number, view: DueView): Map<DueGroup, Section> {
+  const plans = planGroups(groups, view);
+  const kept = new Map<DueGroup, DueItem[]>();
+  const out = new Map<DueGroup, Section>();
+  let left = budget;
+  for (const [i, plan] of plans.entries()) {
+    const taken = takeOpenLines(plan, left, laterOverhead(plans.slice(i + 1)));
+    if (!taken) continue;
+    kept.set(plan.group, taken.kept);
+    left = taken.left;
+    out.set(plan.group, plan.section);
+  }
+  for (const plan of plans) {
+    if (!out.has(plan.group)) continue;
+    left = takeDoneLines(plan, kept.get(plan.group) ?? [], left);
   }
   return out;
 }
@@ -254,26 +321,11 @@ function otherCoursesSection(list: DueList): string[] {
   return ['', `## Other enrolled courses (${items.length})`, ...shown, ...(more > 0 ? [`… ${more} more`] : [])];
 }
 
-/** How the list was asked for and where it is read: the filters are echoed, console pointers only exist hosted. */
-export interface DueView {
-  stdio?: boolean;
-  kinds?: readonly DueKind[];
-  includeSubmitted?: boolean;
-}
-
 function filterNote({ kinds, includeSubmitted }: DueView): string[] {
   const parts: string[] = [];
   if (kinds && kinds.length > 0) parts.push(`only kinds: ${kinds.join(', ')}`);
   if (includeSubmitted === false) parts.push('submitted items hidden');
   return parts.length > 0 ? [`Filtered: ${parts.join('; ')}.`] : [];
-}
-
-/** Undated items beyond the cap are only in structuredContent when there is no console to browse them. */
-function undatedMore(n: number, view: DueView): string {
-  const where = view.stdio
-    ? 'pass course_id to narrow; all are in structuredContent'
-    : "see the console's Assignments & deadlines page";
-  return `… ${n} more without a deadline (${where})`;
 }
 
 function sectionLines(sections: Map<DueGroup, Section>, view: DueView): string[] {
@@ -282,7 +334,7 @@ function sectionLines(sections: Map<DueGroup, Section>, view: DueView): string[]
     const s = sections.get(g);
     if (!s) continue;
     body.push('', s.heading, ...s.lines);
-    if (s.dropped > 0) body.push(`… ${s.dropped} more (use course_id, kinds or a smaller days_ahead)`);
+    if (s.dropped > 0) body.push(droppedNote(s.dropped));
     if (s.capped > 0) body.push(undatedMore(s.capped, view));
   }
   return body;
@@ -325,7 +377,7 @@ export function renderDueList(list: DueList, view: DueView = {}): string {
     groups.set(g, [...(groups.get(g) ?? []), item]);
   }
   const reserved = [...layout.head, ...layout.notes, ...layout.tail, ...layout.other].join('\n').length + 160;
-  const sections = fitSections(groups, MAX_TEXT_CHARS - reserved);
+  const sections = fitSections(groups, MAX_TEXT_CHARS - reserved, view);
   const body = sectionLines(sections, view);
   return hardCap([...layout.head, ...body, ...layout.other, ...layout.notes, ...layout.tail].join('\n'));
 }
