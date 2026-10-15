@@ -340,6 +340,19 @@ describe('previews and audit', () => {
     expect(t.store.actions.get(preview.actionId)!.payload.discussionId).toBe(4);
   });
 
+  it('refuses an hsuforum reply whose post is not in the given discussion', async () => {
+    const t = createTestContext();
+    t.moodle.handlers.mod_hsuforum_get_forum_discussion_posts = { posts: [{ id: 9, subject: 'Ask' }] };
+    const input = { forumType: 'hsuforum' as const, replyToPostId: 10, discussionId: 4, message: 'hi' };
+    const err = await prepareForumPost(t.ctx, input).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InvalidInput);
+    expect((err as Error).message).toBe('post 10 is not in discussion 4; open it with get_discussion');
+    // a discussion that cannot be read is not proof of anything: the preview falls back to the bare post id
+    const down = createTestContext();
+    const preview = await prepareForumPost(down.ctx, input);
+    expect(preview.details).toContain('Replying to post 10');
+  });
+
   it('adds a warning when console approval is unavailable locally', async () => {
     const t = createTestContext({ mode: 'stdio', user: makeUser({ settings: { writeMode: 'console' } }) });
     const preview = await prepareMessage(t.ctx, { conversationId: 1, text: 'x' });

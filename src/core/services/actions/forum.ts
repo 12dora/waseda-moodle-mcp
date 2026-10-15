@@ -106,12 +106,17 @@ async function lookupForumPost(api: MoodleApi, postId: number): Promise<ParentPo
   };
 }
 
-/** mod_hsuforum only lists a discussion's posts, so the caller must know the discussion. */
+/**
+ * mod_hsuforum only lists a discussion's posts, so the caller must know the discussion; a listed discussion
+ * that lacks the post is refused (the reply would land in the wrong place or fail).
+ */
 async function lookupHsuforumPost(api: MoodleApi, postId: number, discussionId: number): Promise<ParentPost | null> {
   const r = await tryCall<Raw>(api, 'mod_hsuforum_get_forum_discussion_posts', { discussionid: discussionId });
-  const posts = r && Array.isArray(r.posts) ? r.posts : [];
-  const post = posts.find((p): p is Raw => isRec(p) && num(p.id) === postId);
-  if (!post) return null;
+  if (!r || !Array.isArray(r.posts)) return null;
+  const post = r.posts.find((p): p is Raw => isRec(p) && num(p.id) === postId);
+  if (!post) {
+    throw new InvalidInput(`post ${postId} is not in discussion ${discussionId}; open it with get_discussion`);
+  }
   const author = isRec(post.author) ? post.author.fullname : post.userfullname;
   return { subject: decoded(post.subject), discussionId, author: decoded(author), canReply: true };
 }

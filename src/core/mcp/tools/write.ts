@@ -4,11 +4,13 @@ import {
   confirmAction,
   prepareCompletion,
   prepareForumPost,
+  prepareForumSubscription,
   prepareMessage,
   prepareSubmission,
 } from '../../services/actions';
 import type { InlineFile } from '../../types';
 import { renderActionPreview, renderActionResult } from '../render/actions';
+import { actionPreviewOut, actionResultOut } from '../schemas/actions';
 import { defineTool, id, PREPARE_HINTS } from './define';
 
 interface FileArg {
@@ -88,6 +90,7 @@ export function prepareSubmissionTool(stdio: boolean) {
       'Unless keep_existing_files is false, files already in the submission are kept.',
     annotations: PREPARE_HINTS,
     input: submissionInput(stdio),
+    output: actionPreviewOut,
     async run(ctx, a) {
       const r = await prepareSubmission(ctx, {
         cmid: a.cmid,
@@ -119,6 +122,9 @@ const prepareForumPostTool = defineTool({
     forum_id: id(
       'forum_id to start a new discussion in (from list_discussions / get_activity). Use this OR reply_to_post_id.',
     ).optional(),
+    discussion_id: id(
+      'Discussion id of the post being replied to (from get_discussion). Required for hsuforum replies so the preview can name the post; ignored for new discussions.',
+    ).optional(),
     subject: z
       .string()
       .max(255)
@@ -126,14 +132,35 @@ const prepareForumPostTool = defineTool({
       .optional(),
     message: z.string().min(1).describe('Post body in plain text or simple Markdown.'),
   }),
+  output: actionPreviewOut,
   async run(ctx, a) {
     const r = await prepareForumPost(ctx, {
       forumType: a.forum_type,
       replyToPostId: a.reply_to_post_id,
       forumId: a.forum_id,
+      discussionId: a.discussion_id,
       subject: a.subject,
       message: a.message,
     });
+    return { text: renderActionPreview(r), data: r };
+  },
+});
+
+const prepareForumSubscriptionTool = defineTool({
+  name: 'prepare_forum_subscription',
+  title: 'Prepare forum subscription',
+  description:
+    'Step 1 of 2: prepares subscribing to or unsubscribing from the email notifications of a standard forum (forum_cmid from list_discussions or get_activity) and returns a PREVIEW. ' +
+    'Show it to the user and call confirm_action after they agree. ' +
+    'Forums with mandatory subscription and Advanced Forums (hsuforum) cannot be changed.',
+  annotations: PREPARE_HINTS,
+  input: z.object({
+    forum_cmid: id('cmid of the forum activity.'),
+    subscribe: z.boolean().describe('true = subscribe, false = unsubscribe.'),
+  }),
+  output: actionPreviewOut,
+  async run(ctx, a) {
+    const r = await prepareForumSubscription(ctx, { forumCmid: a.forum_cmid, subscribe: a.subscribe });
     return { text: renderActionPreview(r), data: r };
   },
 });
@@ -151,6 +178,7 @@ const prepareMessageTool = defineTool({
     to_user_id: id('Moodle user id of the recipient. Use this OR conversation_id.').optional(),
     text: z.string().min(1).describe('Message text.'),
   }),
+  output: actionPreviewOut,
   async run(ctx, a) {
     const r = await prepareMessage(ctx, { conversationId: a.conversation_id, toUserId: a.to_user_id, text: a.text });
     return { text: renderActionPreview(r), data: r };
@@ -169,6 +197,7 @@ const prepareCompletionTool = defineTool({
     cmid: id('Activity cmid.'),
     completed: z.boolean().describe('true = mark as done, false = mark as not done.'),
   }),
+  output: actionPreviewOut,
   async run(ctx, a) {
     const r = await prepareCompletion(ctx, { cmid: a.cmid, completed: a.completed });
     return { text: renderActionPreview(r), data: r };
@@ -179,11 +208,12 @@ const confirmActionTool = defineTool({
   name: 'confirm_action',
   title: 'Confirm action',
   description:
-    'Step 2 of 2: executes a prepared action (submission, forum post, message, completion mark) in Moodle. ' +
+    'Step 2 of 2: executes a prepared action (submission, forum post, forum subscription, message, completion mark, mark as read) in Moodle. ' +
     'Call it only after the user has seen the preview and clearly agreed in this conversation; never to "test" or on your own judgment. ' +
     'If the preview said the action must be approved in the console, this tool cannot do it.',
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   input: z.object({ action_id: z.string().min(1).describe('action_id from the prepare_* preview.') }),
+  output: actionResultOut,
   async run(ctx, a) {
     const r = await confirmAction(ctx, a.action_id, 'mcp');
     return { text: renderActionResult(r), data: r };
@@ -198,6 +228,7 @@ const cancelActionTool = defineTool({
     'After cancelling, prepare a new action if needed. Already executed actions cannot be cancelled.',
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   input: z.object({ action_id: z.string().min(1).describe('action_id from the prepare_* preview.') }),
+  output: actionResultOut,
   async run(ctx, a) {
     const r = await cancelAction(ctx, a.action_id);
     return { text: renderActionResult(r), data: r };
@@ -206,6 +237,7 @@ const cancelActionTool = defineTool({
 
 export const writeTools = [
   prepareForumPostTool,
+  prepareForumSubscriptionTool,
   prepareMessageTool,
   prepareCompletionTool,
   confirmActionTool,

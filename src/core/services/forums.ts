@@ -2,11 +2,14 @@
 
 import type { MoodleApi, ServiceContext } from '../context';
 import { InvalidInput, MoodleError, NotFound } from '../errors';
-import { decodeEntities, htmlToMarkdown } from '../html';
+import { decodeEntities } from '../html';
 import { fromTs, nowSec, toMs } from '../time';
-import type { Discussion, DiscussionSummary, IsoJst, Post } from '../types';
+import type { Discussion, DiscussionSummary, IsoJst } from '../types';
 import { listCourses } from './courses';
-import { clampInt, courseNameMap, getCourseModule, mapFiles, type RawFile } from './shared';
+import { loadPosts, type MappedPosts } from './forums-posts';
+import { clampInt, courseNameMap, getCourseModule } from './shared';
+
+export type { RawForumPosts, RawHsuPosts } from './forums-posts';
 
 export type ForumType = 'forum' | 'hsuforum';
 
@@ -28,11 +31,13 @@ export interface RawForum {
   numdiscussions?: number | null;
 }
 
-interface RawDiscussion {
+export interface RawDiscussion {
   id: number; // first post id
   discussion?: number | null; // discussion id
   name?: string | null;
   subject?: string | null;
+  message?: string | null; // first post, HTML
+  userid?: number | null; // author
   userfullname?: string | null;
   created?: number | null;
   modified?: number | null;
@@ -44,43 +49,6 @@ interface RawDiscussion {
 
 export interface RawDiscussionList {
   discussions?: RawDiscussion[] | null;
-}
-
-interface RawForumPost {
-  id: number;
-  subject?: string | null;
-  message?: string | null;
-  author?: { id?: number | null; fullname?: string | null } | null;
-  hasparent?: boolean | null;
-  parentid?: number | null;
-  timecreated?: number | null;
-  timemodified?: number | null;
-  unread?: boolean | null;
-  attachments?: RawFile[] | null;
-  capabilities?: { reply?: boolean | null } | null;
-}
-
-export interface RawForumPosts {
-  posts?: RawForumPost[] | null;
-  forumid?: number | null;
-  courseid?: number | null;
-}
-
-interface RawHsuPost {
-  id: number;
-  parent?: number | null;
-  created?: number | null;
-  modified?: number | null;
-  subject?: string | null;
-  message?: string | null;
-  userfullname?: string | null;
-  attachments?: RawFile[] | null;
-  postread?: boolean | null;
-  canreply?: boolean | null;
-}
-
-export interface RawHsuPosts {
-  posts?: RawHsuPost[] | null;
 }
 
 // ------------------------------------------------------------------ forum lookup
@@ -124,7 +92,7 @@ export async function fetchForums(api: MoodleApi, forumType: ForumType, courseId
   return Array.isArray(list) ? list.map((f) => mapForumRef(f, forumType)) : [];
 }
 
-async function fetchForumsOfTypes(api: MoodleApi, types: ForumType[], courseIds: number[]): Promise<ForumRef[]> {
+export async function fetchForumsOfTypes(api: MoodleApi, types: ForumType[], courseIds: number[]): Promise<ForumRef[]> {
   const lists = await Promise.all(types.map((t) => fetchForums(api, t, courseIds)));
   return lists.flat();
 }
@@ -157,15 +125,10 @@ export function mapDiscussion(raw: RawDiscussion, ref: ForumRef, courseName: str
 }
 
 /**
- * Latest discussions of one forum, one Moodle call. Moodle lists pinned discussions first, then by last post,
+ * Latest raw discussions of one forum, one Moodle call. Moodle lists pinned discussions first, then by last post,
  * so a small `limit` can be filled by pinned ones; callers that merge forums re-sort by modification time.
  */
-export async function fetchDiscussions(
-  api: MoodleApi,
-  ref: ForumRef,
-  courseName: string,
-  limit: number,
-): Promise<DiscussionSummary[]> {
+export async function fetchRawDiscussions(api: MoodleApi, ref: ForumRef, limit: number): Promise<RawDiscussion[]> {
   const res =
     ref.forumType === 'forum'
       ? await api.call<RawDiscussionList>('mod_forum_get_forum_discussions', {
@@ -181,7 +144,16 @@ export async function fetchDiscussions(
           page: 0,
           perpage: limit,
         });
-  return (res?.discussions ?? []).map((d) => mapDiscussion(d, ref, courseName));
+  return res?.discussions ?? [];
+}
+
+export async function fetchDiscussions(
+  api: MoodleApi,
+  ref: ForumRef,
+  courseName: string,
+  limit: number,
+): Promise<DiscussionSummary[]> {
+  return (await fetchRawDiscussions(api, ref, limit)).map((d) => mapDiscussion(d, ref, courseName));
 }
 
 interface ForumSelection {
@@ -246,30 +218,44 @@ function selectForums(ctx: ServiceContext, api: MoodleApi, opts: ListOptions): P
   return selectAnnouncements(ctx, api);
 }
 
-/** Reads up to MAX_FORUMS_PER_CALL forums in parallel; forums that cannot be read count as skipped. */
+/** Forums worth a Moodle call: those known to be empty cost nothing. */
+const nonEmptyForums = (refs: ForumRef[]) => refs.filter((r) => r.numDiscussions !== 0);
+
+/**
+ * Runs `read` for up to MAX_FORUMS_PER_CALL forums in parallel (one Moodle call each); forums that cannot be read
+ * (no permission, ...) and those over the cap count as skipped.
+ */
+export async function readEach<T>(
+  refs: ForumRef[],
+  read: (ref: ForumRef) => Promise<T[]>,
+): Promise<{ items: T[]; skipped: number }> {
+  const nonEmpty = nonEmptyForums(refs);
+  const candidates = nonEmpty.slice(0, MAX_FORUMS_PER_CALL);
+  let skipped = nonEmpty.length - candidates.length;
+  const lists = await Promise.all(
+    candidates.map(async (ref) => {
+      try {
+        return await read(ref);
+      } catch (e) {
+        if (!(e instanceof MoodleError)) throw e;
+        skipped++;
+        return [];
+      }
+    }),
+  );
+  return { items: lists.flat(), skipped };
+}
+
 async function readForums(
   api: MoodleApi,
   selection: ForumSelection,
   limit: number,
 ): Promise<{ discussions: DiscussionSummary[]; skipped: number }> {
-  // forums known to be empty cost nothing
-  const nonEmpty = selection.refs.filter((r) => r.numDiscussions !== 0);
-  const candidates = nonEmpty.slice(0, MAX_FORUMS_PER_CALL);
-  const perForum = candidates.length > 1 ? Math.min(limit, PER_FORUM_WHEN_MANY) : limit;
-  let skipped = nonEmpty.length - candidates.length;
-  const lists = await Promise.all(
-    candidates.map(async (ref) => {
-      try {
-        const name = selection.names.get(ref.courseId) ?? `Course ${ref.courseId}`;
-        return await fetchDiscussions(api, ref, name, perForum);
-      } catch (e) {
-        if (!(e instanceof MoodleError)) throw e;
-        skipped++; // e.g. no permission to view this forum
-        return [];
-      }
-    }),
+  const perForum = nonEmptyForums(selection.refs).length > 1 ? Math.min(limit, PER_FORUM_WHEN_MANY) : limit;
+  const { items, skipped } = await readEach(selection.refs, (ref) =>
+    fetchDiscussions(api, ref, selection.names.get(ref.courseId) ?? `Course ${ref.courseId}`, perForum),
   );
-  return { discussions: lists.flat(), skipped };
+  return { discussions: items, skipped };
 }
 
 const modifiedMs = (d: DiscussionSummary) => (d.modifiedAt ? toMs(d.modifiedAt) : 0);
@@ -289,111 +275,6 @@ export async function listDiscussions(
   const recent = cutoff ? discussions.filter((d) => modifiedMs(d) >= cutoff) : discussions;
   recent.sort((a, b) => modifiedMs(b) - modifiedMs(a));
   return { discussions: recent.slice(0, limit), skippedForums: skipped };
-}
-
-// ------------------------------------------------------------------ discussion posts
-
-const POST_MAX_CHARS = 12_000;
-
-interface NormPost {
-  id: number;
-  parentId: number | null;
-  author: string | null | undefined;
-  created: number | null | undefined;
-  modified: number | null | undefined;
-  subject: string | null | undefined;
-  message: string | null | undefined;
-  attachments: RawFile[] | null | undefined;
-  unread: boolean;
-}
-
-interface MappedPosts {
-  posts: Post[];
-  canReply: boolean;
-  modified: IsoJst | null; // newest post modification
-  unread: number | null;
-}
-
-function buildPosts(list: NormPost[], canReply: boolean): MappedPosts {
-  const latest = Math.max(0, ...list.map((p) => Math.max(p.modified ?? 0, p.created ?? 0)));
-  const posts = list.map(
-    (p): Post => ({
-      id: p.id,
-      parentId: p.parentId,
-      author: decodeEntities(p.author ?? ''),
-      createdAt: fromTs(p.created),
-      subject: decodeEntities(p.subject ?? ''),
-      message: htmlToMarkdown(p.message, { maxChars: POST_MAX_CHARS }),
-      attachments: mapFiles(p.attachments),
-    }),
-  );
-  return { posts, canReply, modified: fromTs(latest), unread: list.filter((p) => p.unread).length };
-}
-
-function mapForumPosts(raw: RawForumPosts): MappedPosts {
-  const list = raw.posts ?? [];
-  const norm = list.map(
-    (p): NormPost => ({
-      id: p.id,
-      parentId: p.hasparent === false ? null : (p.parentid ?? null),
-      author: p.author?.fullname,
-      created: p.timecreated,
-      modified: p.timemodified,
-      subject: p.subject,
-      message: p.message,
-      attachments: p.attachments,
-      unread: p.unread === true,
-    }),
-  );
-  return buildPosts(norm, list[0]?.capabilities?.reply === true);
-}
-
-function mapHsuforumPosts(raw: RawHsuPosts): MappedPosts {
-  const list = [...(raw.posts ?? [])].sort((a, b) => (a.created ?? 0) - (b.created ?? 0) || a.id - b.id);
-  const norm = list.map(
-    (p): NormPost => ({
-      id: p.id,
-      parentId: p.parent ? p.parent : null,
-      author: p.userfullname,
-      created: p.created,
-      modified: p.modified,
-      subject: p.subject,
-      message: p.message,
-      attachments: p.attachments,
-      unread: p.postread === false,
-    }),
-  );
-  return buildPosts(norm, list[0]?.canreply === true);
-}
-
-interface LoadedPosts {
-  mapped: MappedPosts;
-  forumId?: number;
-  courseId?: number;
-}
-
-async function loadPosts(api: MoodleApi, forumType: ForumType, discussionId: number): Promise<LoadedPosts> {
-  try {
-    if (forumType === 'forum') {
-      const res = await api.call<RawForumPosts>('mod_forum_get_discussion_posts', {
-        discussionid: discussionId,
-        sortby: 'created',
-        sortdirection: 'ASC',
-      });
-      return {
-        mapped: mapForumPosts(res ?? {}),
-        forumId: res?.forumid ?? undefined,
-        courseId: res?.courseid ?? undefined,
-      };
-    }
-    const res = await api.call<RawHsuPosts>('mod_hsuforum_get_forum_discussion_posts', { discussionid: discussionId });
-    return { mapped: mapHsuforumPosts(res ?? {}) };
-  } catch (e) {
-    if (e instanceof MoodleError) {
-      throw new NotFound(`Discussion ${discussionId} was not found or is not accessible (${e.message}).`);
-    }
-    throw e;
-  }
 }
 
 /** Summary rebuilt from the posts; `ref` fills the forum and course fields when the forum could be resolved. */
