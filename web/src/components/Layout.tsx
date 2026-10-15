@@ -1,8 +1,9 @@
-import { type ReactNode, type RefObject, useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router';
-import { logout } from '../api/endpoints';
+import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
+import { listActions, logout } from '../api/endpoints';
 import { type MessageKey, useT } from '../i18n';
 import { errorText } from '../lib/errors';
+import { PENDING_LIMIT, pendingCountText } from '../lib/pending';
 import { useSession } from '../session';
 import { Button } from './Button';
 import { useToast } from './Toast';
@@ -13,11 +14,66 @@ const NAV: ReadonlyArray<{ to: string; key: MessageKey; end?: boolean }> = [
   { to: '/courses', key: 'nav.courses' },
   { to: '/timetable', key: 'nav.timetable' },
   { to: '/actions', key: 'nav.actions' },
-  { to: '/keys', key: 'nav.keys' },
-  { to: '/apps', key: 'nav.apps' },
-  { to: '/activity', key: 'nav.activity' },
   { to: '/settings', key: 'nav.settings' },
 ];
+
+/** Fired after an approval is approved or cancelled so the sidebar badge refreshes at once. */
+const ACTIONS_CHANGED = 'wmm:actions-changed';
+const BADGE_REFRESH_MS = 30_000;
+
+export function notifyActionsChanged() {
+  window.dispatchEvent(new Event(ACTIONS_CHANGED));
+}
+
+/** Pending approvals count: on mount and route change (at most every 30 s), at once on ACTIONS_CHANGED. */
+function usePendingCount(): number {
+  const { pathname } = useLocation();
+  const [count, setCount] = useState(0);
+  const lastFetch = useRef(0);
+  const seq = useRef(0);
+
+  const refresh = useCallback((force: boolean) => {
+    const now = Date.now();
+    if (!force && now - lastFetch.current < BADGE_REFRESH_MS) return;
+    lastFetch.current = now;
+    const mine = ++seq.current;
+    listActions('pending', PENDING_LIMIT).then(
+      (list) => {
+        if (mine === seq.current) setCount(list.length);
+      },
+      () => {
+        // The badge is a hint only; errors surface on the Approvals page.
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    // Opening Approvals always re-syncs the badge with the list shown there.
+    refresh(pathname === '/actions');
+  }, [pathname, refresh]);
+
+  useEffect(() => {
+    const onChanged = () => refresh(true);
+    window.addEventListener(ACTIONS_CHANGED, onChanged);
+    return () => window.removeEventListener(ACTIONS_CHANGED, onChanged);
+  }, [refresh]);
+
+  return count;
+}
+
+function PendingBadge({ count }: { count: number }) {
+  const t = useT();
+  if (count === 0) return null;
+  const text = pendingCountText(count);
+  return (
+    <>
+      <span className="nav-badge" aria-hidden="true">
+        {text}
+      </span>
+      <span className="sr-only">{t('nav.approvalsBadge', { count: text })}</span>
+    </>
+  );
+}
 
 /** Mobile menu: focus moves into the menu on open; Esc or a click outside closes it. */
 function useMobileMenu(menuRef: RefObject<HTMLElement | null>, buttonRef: RefObject<HTMLButtonElement | null>) {
@@ -55,6 +111,7 @@ export function Layout() {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menu = useMobileMenu(menuRef, buttonRef);
   const [signingOut, setSigningOut] = useState(false);
+  const pending = usePendingCount();
 
   const onSignOut = async () => {
     setSigningOut(true);
@@ -108,7 +165,8 @@ export function Layout() {
                   className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
                   onClick={() => menu.setOpen(false)}
                 >
-                  {t(n.key)}
+                  <span>{t(n.key)}</span>
+                  {n.to === '/actions' && <PendingBadge count={pending} />}
                 </NavLink>
               </li>
             ))}

@@ -1,19 +1,18 @@
 import { useState } from 'react';
-import { listApps, revokeApp } from '../api/endpoints';
-import type { AppGrant } from '../api/types';
-import { Button } from '../components/Button';
-import { Card } from '../components/Card';
-import { ConfirmDialog } from '../components/ConfirmDialog';
-import { EmptyState } from '../components/EmptyState';
-import { ErrorBox } from '../components/ErrorBox';
-import { PageHeader } from '../components/Layout';
-import { PageLoading } from '../components/Spinner';
-import { useToast } from '../components/Toast';
-import { useI18n } from '../i18n';
-import { formatDate } from '../lib/time';
-import { useAsync } from '../lib/useAsync';
+import { listApps, revokeApp } from '../../api/endpoints';
+import type { AppGrant } from '../../api/types';
+import { Button } from '../../components/Button';
+import { Card } from '../../components/Card';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { EmptyState } from '../../components/EmptyState';
+import { ErrorBox } from '../../components/ErrorBox';
+import { PageLoading } from '../../components/Spinner';
+import { useToast } from '../../components/Toast';
+import { useI18n } from '../../i18n';
+import { formatDate } from '../../lib/time';
+import { useAsync } from '../../lib/useAsync';
 
-export function AppsPage() {
+export function AppsTab() {
   const { t, lang } = useI18n();
   const toast = useToast();
   const apps = useAsync(listApps);
@@ -21,7 +20,7 @@ export function AppsPage() {
 
   return (
     <>
-      <PageHeader title={t('apps.title')} desc={t('apps.desc')} />
+      <p className="muted">{t('apps.desc')}</p>
       <Card>
         {apps.loading && !apps.data && <PageLoading label={t('common.loading')} />}
         {apps.error != null && <ErrorBox error={apps.error} onRetry={apps.reload} />}

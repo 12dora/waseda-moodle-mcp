@@ -121,10 +121,10 @@ a:hover {
   padding: 8px 12px;
   background: var(--surface);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
 }
 .skip-link:focus {
   top: 8px;
+  box-shadow: var(--shadow-lg);
 }
 
 .mono {
@@ -260,6 +260,23 @@ a:hover {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
+}
+.nav-link:has(.nav-badge) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.nav-badge {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
 }
 
 .sidenav-foot {
@@ -808,10 +825,23 @@ fieldset {
 .tabs {
   display: flex;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin; /* a visible hint when the tabs overflow on narrow desktop windows */
+}
+@media (max-width: 600px) {
+  .tabs {
+    scrollbar-width: none; /* swipe to scroll on phones; the active tab is scrolled into view */
+  }
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
 }
 .tab {
+  flex-shrink: 0;
   padding: 8px 12px;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -836,6 +866,9 @@ fieldset {
 }
 .tab-panel[hidden] {
   display: none; /* the class's display: grid would otherwise beat the hidden attribute */
+}
+.settings-panel {
+  gap: 16px;
 }
 .client-steps textarea {
   field-sizing: content; /* fit multi-line snippets where supported; rows=3 elsewhere */
@@ -894,6 +927,11 @@ fieldset {
   font-size: 14px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+.due-row-done .due-name,
+.due-row-done .due-when time {
+  text-decoration: line-through;
+  color: var(--text-muted);
 }
 @media (max-width: 520px) {
   .due-row {
@@ -1430,4 +1468,69 @@ fieldset {
 }
 .slot-remove:focus-visible {
   outline: 2px solid var(--focus);
+}
+
+/* My courses (/courses, /courses/:courseId) ------------------------------- */
+.cv-row {
+  flex-wrap: wrap;
+}
+.cv-row .row-main {
+  flex: 1 1 240px;
+}
+.cv-row .due-name {
+  overflow-wrap: anywhere;
+}
+.cv-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.cv-back {
+  display: inline-block;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+.cv-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cv-group + .cv-group {
+  margin-top: 16px;
+}
+.cv-group-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.cv-note {
+  margin: 0;
+}
+.cv-notice {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.rows + .cv-note {
+  margin-top: 10px;
+}
+.cv-time {
+  font-variant-numeric: tabular-nums;
+}
+.cv-grading {
+  min-width: 420px;
+}
+.cv-grading .cv-weight {
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cv-grading .cv-criteria {
+  color: var(--text-muted);
+}
+.cv-grading-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

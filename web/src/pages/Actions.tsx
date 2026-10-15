@@ -6,7 +6,7 @@ import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBox } from '../components/ErrorBox';
-import { PageHeader } from '../components/Layout';
+import { notifyActionsChanged, PageHeader } from '../components/Layout';
 import { PageLoading } from '../components/Spinner';
 import { useToast } from '../components/Toast';
 import { useI18n } from '../i18n';
@@ -119,6 +119,7 @@ export function ActionsPage() {
       setBusy(null);
       pending.reload();
       history.reload();
+      notifyActionsChanged();
     }
   };
 

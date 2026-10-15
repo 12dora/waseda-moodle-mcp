@@ -1,17 +1,16 @@
 import { useState } from 'react';
-import { getCourses, patchSettings } from '../api/endpoints';
-import type { Course, CoursesResponse } from '../api/types';
-import { AsyncBlock } from '../components/AsyncBlock';
-import { Button } from '../components/Button';
-import { Card } from '../components/Card';
-import { EmptyState } from '../components/EmptyState';
-import { PageHeader } from '../components/Layout';
-import { useToast } from '../components/Toast';
-import { useI18n } from '../i18n';
-import { errorText } from '../lib/errors';
-import { formatDate } from '../lib/time';
-import { useAsync } from '../lib/useAsync';
-import { useSession } from '../session';
+import { getCourses, patchSettings } from '../../api/endpoints';
+import type { Course, CoursesResponse } from '../../api/types';
+import { AsyncBlock } from '../../components/AsyncBlock';
+import { Button } from '../../components/Button';
+import { Card } from '../../components/Card';
+import { EmptyState } from '../../components/EmptyState';
+import { useToast } from '../../components/Toast';
+import { useI18n } from '../../i18n';
+import { errorText } from '../../lib/errors';
+import { formatDate } from '../../lib/time';
+import { useAsync } from '../../lib/useAsync';
+import { useSession } from '../../session';
 
 function CourseItem({ course, checked, onToggle }: { course: Course; checked: boolean; onToggle: () => void }) {
   const { t, lang } = useI18n();
@@ -119,12 +118,12 @@ function CourseEditor({ data, onSaved }: { data: CoursesResponse; onSaved: () =>
   );
 }
 
-export function MyCoursesPage() {
+export function CourseSelectionTab() {
   const { t } = useI18n();
   const courses = useAsync(getCourses);
   return (
     <>
-      <PageHeader title={t('courses.title')} desc={t('courses.desc')} />
+      <p className="muted">{t('courses.desc')}</p>
       <AsyncBlock state={courses}>
         {(data) => <CourseEditor key={data.mode} data={data} onSaved={courses.reload} />}
       </AsyncBlock>

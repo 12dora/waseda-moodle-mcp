@@ -1,17 +1,12 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
-import { deleteAccount, patchSettings } from '../api/endpoints';
-import type { SettingsPatch, UiLang, WriteMode } from '../api/types';
-import { Button } from '../components/Button';
-import { CalendarCard } from '../components/CalendarCard';
-import { Card } from '../components/Card';
-import { ConfirmDialog } from '../components/ConfirmDialog';
-import { LangSelect } from '../components/LangSelect';
-import { PageHeader } from '../components/Layout';
-import { useToast } from '../components/Toast';
-import { type MessageKey, useI18n } from '../i18n';
-import { errorText } from '../lib/errors';
-import { useSession } from '../session';
+import { patchSettings } from '../../api/endpoints';
+import type { SettingsPatch, UiLang, WriteMode } from '../../api/types';
+import { Card } from '../../components/Card';
+import { LangSelect } from '../../components/LangSelect';
+import { useToast } from '../../components/Toast';
+import { type MessageKey, useI18n } from '../../i18n';
+import { errorText } from '../../lib/errors';
+import { useSession } from '../../session';
 
 const WRITE_MODES: ReadonlyArray<{ mode: WriteMode; label: MessageKey; desc: MessageKey }> = [
   { mode: 'off', label: 'settings.write.off', desc: 'settings.write.offDesc' },
@@ -19,14 +14,13 @@ const WRITE_MODES: ReadonlyArray<{ mode: WriteMode; label: MessageKey; desc: Mes
   { mode: 'console', label: 'settings.write.console', desc: 'settings.write.consoleDesc' },
 ];
 
-export function SettingsPage() {
+/** Settings → General: write mode and interface language. */
+export function GeneralTab() {
   const { t, setUiLang } = useI18n();
   const toast = useToast();
-  const navigate = useNavigate();
   const { me, setSettings } = useSession();
   const settings = me.user.settings;
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   const save = async (patch: SettingsPatch) => {
     setSaving(true);
@@ -44,8 +38,6 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageHeader title={t('settings.title')} />
-
       <Card title={t('settings.write.title')}>
         <fieldset className="radio-group" disabled={saving}>
           <legend className="muted">{t('settings.write.desc')}</legend>
@@ -69,32 +61,6 @@ export function SettingsPage() {
       <Card title={t('settings.lang.title')}>
         <LangSelect showLabel={false} disabled={saving} onChange={(v: UiLang) => save({ uiLang: v })} />
       </Card>
-
-      <CalendarCard />
-
-      <Card title={t('settings.account.title')} className="card-danger">
-        <dl className="kv">
-          <dt>{t('overview.conn.account')}</dt>
-          <dd>{me.user.fullname}</dd>
-        </dl>
-        <p className="muted">{t('settings.account.deleteDesc')}</p>
-        <Button variant="danger" onClick={() => setDeleting(true)}>
-          {t('settings.account.delete')}
-        </Button>
-      </Card>
-
-      <ConfirmDialog
-        open={deleting}
-        title={t('settings.account.deleteTitle')}
-        description={t('settings.account.deleteDesc')}
-        confirmLabel={t('settings.account.delete')}
-        onClose={() => setDeleting(false)}
-        onConfirm={async () => {
-          await deleteAccount();
-          toast.show(t('settings.account.deleted'));
-          navigate('/connect', { replace: true });
-        }}
-      />
     </>
   );
 }

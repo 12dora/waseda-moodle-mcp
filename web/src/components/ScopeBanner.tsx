@@ -10,7 +10,7 @@ export function ScopeBanner() {
   return (
     <div className="alert alert-info">
       <span>{t('scope.banner')}</span>
-      <Link to="/courses">{t('scope.confirm')}</Link>
+      <Link to="/settings/courses">{t('scope.confirm')}</Link>
     </div>
   );
 }

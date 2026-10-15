@@ -1,22 +1,21 @@
 import { type FormEvent, useId, useState } from 'react';
-import { createKey, listKeys, revokeKey } from '../api/endpoints';
-import type { ApiKey, Scope } from '../api/types';
-import { Button } from '../components/Button';
-import { Card } from '../components/Card';
-import { ConfirmDialog } from '../components/ConfirmDialog';
-import { CopyField } from '../components/CopyField';
-import { Dialog } from '../components/Dialog';
-import { EmptyState } from '../components/EmptyState';
-import { ErrorBox } from '../components/ErrorBox';
-import { PageHeader } from '../components/Layout';
-import { PageLoading } from '../components/Spinner';
-import { useToast } from '../components/Toast';
-import { useI18n } from '../i18n';
-import { errorText } from '../lib/errors';
-import { formatDate, formatDateTime } from '../lib/time';
-import { useAsync } from '../lib/useAsync';
+import { createKey, listKeys, revokeKey } from '../../api/endpoints';
+import type { ApiKey, Scope } from '../../api/types';
+import { Button } from '../../components/Button';
+import { Card } from '../../components/Card';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { CopyField } from '../../components/CopyField';
+import { Dialog } from '../../components/Dialog';
+import { EmptyState } from '../../components/EmptyState';
+import { ErrorBox } from '../../components/ErrorBox';
+import { PageLoading } from '../../components/Spinner';
+import { useToast } from '../../components/Toast';
+import { useI18n } from '../../i18n';
+import { errorText } from '../../lib/errors';
+import { formatDate, formatDateTime } from '../../lib/time';
+import { useAsync } from '../../lib/useAsync';
 
-export function KeysPage() {
+export function KeysTab() {
   const { t, lang } = useI18n();
   const toast = useToast();
   const keys = useAsync(listKeys);
@@ -53,7 +52,7 @@ export function KeysPage() {
 
   return (
     <>
-      <PageHeader title={t('keys.title')} desc={t('keys.desc')} />
+      <p className="muted">{t('keys.desc')}</p>
 
       <Card title={t('keys.create')}>
         <form className="form-row" onSubmit={onCreate}>

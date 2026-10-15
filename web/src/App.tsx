@@ -11,16 +11,13 @@ import { PageLoading } from './components/Spinner';
 import { ToastProvider } from './components/Toast';
 import { I18nProvider, useT } from './i18n';
 import { ActionsPage } from './pages/Actions';
-import { ActivityPage } from './pages/Activity';
-import { AppsPage } from './pages/Apps';
 import { ConnectPage } from './pages/Connect';
+import { CoursesPage } from './pages/Courses';
 import { DuePage } from './pages/Due';
-import { KeysPage } from './pages/Keys';
-import { MyCoursesPage } from './pages/MyCourses';
 import { OAuthConsentPage } from './pages/OAuthConsent';
 import { OverviewPage } from './pages/Overview';
 import { PrivacyPage } from './pages/Privacy';
-import { SettingsPage } from './pages/Settings';
+import { SettingsPage } from './pages/settings/SettingsPage';
 import { TimetablePage } from './pages/Timetable';
 import { ConfigProvider, RequireSession } from './session';
 
@@ -45,13 +42,11 @@ function AppRoutes() {
         <Route element={<Layout />}>
           <Route index element={<OverviewPage />} />
           <Route path="due" element={<DuePage />} />
-          <Route path="courses" element={<MyCoursesPage />} />
+          <Route path="courses" element={<CoursesPage />} />
+          <Route path="courses/:courseId" element={<CoursesPage />} />
           <Route path="timetable" element={<TimetablePage />} />
-          <Route path="keys" element={<KeysPage />} />
-          <Route path="apps" element={<AppsPage />} />
           <Route path="actions" element={<ActionsPage />} />
-          <Route path="activity" element={<ActivityPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route path="settings/:tab?" element={<SettingsPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

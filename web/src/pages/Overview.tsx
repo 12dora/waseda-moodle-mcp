@@ -4,7 +4,7 @@ import type { Me } from '../api/types';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { ClassLink } from '../components/ClassLink';
-import { ClientCard } from '../components/ClientCard';
+import { CopyField } from '../components/CopyField';
 import { DueRow } from '../components/DueRow';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBox } from '../components/ErrorBox';
@@ -14,12 +14,11 @@ import { Spinner } from '../components/Spinner';
 import { useI18n, useT } from '../i18n';
 import { notesText } from '../lib/dayNotes';
 import { outstandingItems } from '../lib/due';
+import { PENDING_LIMIT, pendingCountText } from '../lib/pending';
 import { formatDateTime } from '../lib/time';
 import { todayJst } from '../lib/timetable';
 import { useAsync } from '../lib/useAsync';
-import { useSession } from '../session';
-
-const PENDING_LIMIT = 100;
+import { useConfig, useSession } from '../session';
 
 function ConnectionCard({ me }: { me: Me }) {
   const { t, lang } = useI18n();
@@ -77,7 +76,7 @@ function UpcomingCard() {
       {due.data && due.data.otherCourses.length > 0 && (
         <p className="muted small">
           {t('overview.due.other', { count: due.data.otherCourses.length })}{' '}
-          <Link to="/courses">{t('due.manage')}</Link>
+          <Link to="/settings/courses">{t('due.manage')}</Link>
         </p>
       )}
     </Card>
@@ -102,6 +101,17 @@ function TodayCard() {
           ))}
         </div>
       )}
+    </Card>
+  );
+}
+
+/** MCP URL at hand; the per-client setup lives in Settings → AI clients. */
+function ConnectCard() {
+  const t = useT();
+  const { mcpUrl } = useConfig();
+  return (
+    <Card title={t('client.title')} actions={<Link to="/settings/connect">{t('overview.client.guide')}</Link>}>
+      <CopyField label={t('client.mcpUrl')} value={mcpUrl} />
     </Card>
   );
 }
@@ -151,7 +161,7 @@ export function OverviewPage() {
       <ScopeBanner />
       {count > 0 && (
         <div className="alert alert-info">
-          <span>{t('overview.pending', { count: count >= PENDING_LIMIT ? `${PENDING_LIMIT}+` : count })}</span>
+          <span>{t('overview.pending', { count: pendingCountText(count) })}</span>
           <Link to="/actions">{t('overview.review')}</Link>
         </div>
       )}
@@ -161,7 +171,7 @@ export function OverviewPage() {
         <TodayCard />
         <UpdatesCard />
       </div>
-      <ClientCard />
+      <ConnectCard />
     </>
   );
 }

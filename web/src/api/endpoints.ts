@@ -10,12 +10,14 @@ import type {
   CalendarStatus,
   ConnectRequest,
   ConnectResult,
+  CourseOverview,
   CoursesResponse,
   DueList,
   Me,
   OAuthRequestInfo,
   Scope,
   SettingsPatch,
+  SyllabusSummary,
   Timetable,
   UpdatesResponse,
   UserSettings,
@@ -38,7 +40,11 @@ export const getDue = (days = 14) => api.get<DueList>('/api/due', { query: { day
 export const getCourses = () => api.get<CoursesResponse>('/api/courses');
 export const getTimetable = (date: string, days: number) =>
   api.get<Timetable>('/api/timetable', { query: { date, days } });
-export const getUpdates = (days = 7) => api.get<UpdatesResponse>('/api/updates', { query: { days } });
+export const getUpdates = (days = 7, courseId?: number) =>
+  api.get<UpdatesResponse>('/api/updates', { query: { days, course_id: courseId } });
+export const getCourseOverview = () => api.get<CourseOverview>('/api/courses/overview');
+export const getSyllabusSummary = (courseId: number) =>
+  api.get<SyllabusSummary>('/api/syllabus', { query: { course_id: courseId } });
 
 export const listKeys = () => api.get<ApiKey[]>('/api/keys');
 export const createKey = (name: string, scopes: Scope[]) =>

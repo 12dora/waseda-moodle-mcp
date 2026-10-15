@@ -7,6 +7,7 @@ describe('safeReturn', () => {
   it('accepts same-origin paths', () => {
     expect(safeReturn('/oauth/consent?req=abc', O)).toBe('/oauth/consent?req=abc');
     expect(safeReturn('/settings#hidden', O)).toBe('/settings#hidden');
+    expect(safeReturn('/settings/keys', O)).toBe('/settings/keys');
   });
 
   it('rejects other origins and protocol-relative tricks', () => {
