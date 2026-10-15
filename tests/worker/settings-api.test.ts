@@ -145,7 +145,12 @@ describe('PATCH /api/settings', () => {
 
 describe('PATCH /api/settings scheduleOverrides', () => {
   const friday = { mode: 'slots', slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: ' 22-909 ' }] };
-  const saved = { mode: 'slots', slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' }] };
+  const saved = {
+    mode: 'slots',
+    slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, night: false, classroom: '22-909' }],
+    alsoOnDemand: false,
+  };
+  const stored = (mode: string) => ({ mode, slots: [], alsoOnDemand: false });
   const overridesOf = async () => (await json(await call('/api/me'))).user.settings.scheduleOverrides;
 
   beforeEach(() => {
@@ -159,7 +164,7 @@ describe('PATCH /api/settings scheduleOverrides', () => {
   it('sets, replaces and removes overrides through the shared service and returns them with the settings', async () => {
     const set = await patch({ scheduleOverrides: { '300907': friday, '5': { mode: 'on-demand', slots: [] } } });
     expect(set.status).toBe(200);
-    const expected = { '300907': saved, '5': { mode: 'on-demand', slots: [] } };
+    const expected = { '300907': saved, '5': stored('on-demand') };
     expect((await json(set)).settings).toEqual({ ...DEFAULTS, scheduleOverrides: expected });
     expect(await overridesOf()).toEqual(expected);
     const scopeCtx = vi.mocked(resolveScope).mock.calls[0]?.[0];
@@ -167,8 +172,8 @@ describe('PATCH /api/settings scheduleOverrides', () => {
 
     const none = { mode: 'none', slots: [] };
     const next = await patch({ scheduleOverrides: { '5': null, '6': none } });
-    expect((await json(next)).settings.scheduleOverrides).toEqual({ '300907': saved, '6': none });
-    expect(await overridesOf()).toEqual({ '300907': saved, '6': none });
+    expect((await json(next)).settings.scheduleOverrides).toEqual({ '300907': saved, '6': stored('none') });
+    expect(await overridesOf()).toEqual({ '300907': saved, '6': stored('none') });
     expect(setMyCourses).not.toHaveBeenCalled();
   });
 
@@ -176,6 +181,8 @@ describe('PATCH /api/settings scheduleOverrides', () => {
     const bad = [
       { '5': friday, '6': { mode: 'slots', slots: [] } },
       { '5': friday, '6': { mode: 'slots', slots: [{ weekday: 9, periodFrom: 1, periodTo: 1 }] } },
+      { '5': friday, '6': { mode: 'slots', slots: [{ weekday: 6, periodFrom: 6, periodTo: 7, night: true }] } },
+      { '5': friday, '6': { mode: 'slots', slots: friday.slots, alsoOnDemand: 'yes' } },
       { '5': friday, '999': friday },
       { abc: friday },
       [friday],
@@ -199,6 +206,36 @@ describe('PATCH /api/settings scheduleOverrides', () => {
 
     await patch({ uiLang: 'ja' });
     expect(await overridesOf()).toEqual({ '6': saved });
+  });
+
+  it('keeps night and alsoOnDemand, and a request without them stores false', async () => {
+    const evening = { weekday: 2, periodFrom: 6, periodTo: 7, night: true, classroom: null };
+    const res = await patch({ scheduleOverrides: { '5': { mode: 'slots', slots: [evening], alsoOnDemand: true } } });
+    expect(res.status).toBe(200);
+    expect(await overridesOf()).toEqual({ '5': { mode: 'slots', slots: [evening], alsoOnDemand: true } });
+    await patch({ scheduleOverrides: { '5': friday } });
+    expect(await overridesOf()).toEqual({ '5': saved });
+  });
+
+  it('refuses a request that would pass 60 schedules in total before the course scope is written', async () => {
+    const store = createD1Store(env.DB);
+    const user = await store.getUserByMoodleId(1001);
+    const many = Object.fromEntries(Array.from({ length: 59 }, (_, i) => [String(1000 + i), saved]));
+    await store.updateSettings(user?.id ?? 0, { ...DEFAULTS, scheduleOverrides: many } as never);
+
+    const scheduleOverrides = { '5': friday, '6': friday };
+    const over = await patch({ myCourseIds: [5, 6], writeMode: 'off', scheduleOverrides });
+    expect(over.status).toBe(400);
+    expect(setMyCourses).not.toHaveBeenCalled();
+    const after = (await json(await call('/api/me'))).user.settings;
+    expect(after).toMatchObject({ writeMode: 'chat', myCourseIds: null });
+    expect(Object.keys(after.scheduleOverrides as object)).toHaveLength(59);
+
+    // the same request fits once it removes one (59 + 2 - 1 = 60)
+    const fits = await patch({ myCourseIds: [5, 6], scheduleOverrides: { ...scheduleOverrides, '1000': null } });
+    expect(fits.status).toBe(200);
+    expect(Object.keys((await json(fits)).settings.scheduleOverrides as object)).toHaveLength(60);
+    expect(await myCourseIdsOf()).toEqual([5, 6]);
   });
 
   it('applies neither part when the course scope is rejected or a plain field is bad', async () => {

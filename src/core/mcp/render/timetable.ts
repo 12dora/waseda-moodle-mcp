@@ -36,14 +36,15 @@ function classLine(c: TimetableClass): string {
   return `- ${c.start}–${c.end} ${oneLine(c.courseName, 70)} (${detail})${SOURCE_MARK[c.source]} course_id ${c.courseId}`;
 }
 
-function dayEntries(d: TimetableDay): Entry[] {
+/** `empty` = how to say a day has no class: "no known classes" while some course times are still unknown. */
+function dayEntries(d: TimetableDay, empty: string): Entry[] {
   const notes = d.notes.map(noteText);
   const paren = notes.length > 0 ? ` (${notes.join('; ')})` : '';
   if (d.classes.length > 0) {
     return [{ text: `${dayLabel(d)} —${paren}` }, ...d.classes.map<Entry>((c) => ({ text: classLine(c), item: true }))];
   }
   // a closure note already says "No classes"
-  const text = d.notes.some(isClosure) ? notes.join('; ') : `no classes${paren}`;
+  const text = d.notes.some(isClosure) ? notes.join('; ') : `${empty}${paren}`;
   return [{ text: `${dayLabel(d)} — ${text}`, item: true }];
 }
 
@@ -69,11 +70,11 @@ function runsOf(days: TimetableDay[]): TimetableDay[][] {
   return runs;
 }
 
-function runEntries(run: TimetableDay[]): Entry[] {
+function runEntries(run: TimetableDay[], empty: string): Entry[] {
   const [first] = run;
   const last = run.at(-1);
   const kind = breakKind(first);
-  if (run.length < 2 || !first || !last || kind === null) return run.flatMap(dayEntries);
+  if (run.length < 2 || !first || !last || kind === null) return run.flatMap((d) => dayEntries(d, empty));
   return [{ text: `${monthDay(first.date)}–${monthDay(last.date)}: no classes (${BREAK_TEXT[kind]})`, item: true }];
 }
 
@@ -82,13 +83,19 @@ function runEntries(run: TimetableDay[]): Entry[] {
 const names = (list: Array<{ courseName: string; courseId: number }>) =>
   oneLine(list.map((c) => `${oneLine(c.courseName, 50)} (course_id ${c.courseId})`).join('; '), 500);
 
+/** The separate list, grouped by what the course is (the label follows `kind`, not only `alsoInClass`). */
+const UNSCHEDULED_GROUPS = [
+  { kind: 'on-demand', alsoInClass: false, label: 'On-demand' },
+  { kind: 'on-demand', alsoInClass: true, label: 'On-demand (also meets in class)' },
+  { kind: 'no-fixed-time', alsoInClass: false, label: 'No weekly class (intensive or other)' },
+  { kind: 'no-fixed-time', alsoInClass: true, label: 'Intensive (also meets in class)' },
+] as const;
+
 function onDemandLines(t: Timetable): string[] {
-  const hybrid = t.onDemand.filter((c) => c.alsoInClass);
-  const plain = t.onDemand.filter((c) => !c.alsoInClass);
-  const out: string[] = [];
-  if (plain.length > 0) out.push(`On-demand / no fixed weekly time (no start time to show): ${names(plain)}.`);
-  if (hybrid.length > 0) out.push(`On-demand (also meets in class): ${names(hybrid)}.`);
-  return out;
+  return UNSCHEDULED_GROUPS.flatMap(({ kind, alsoInClass, label }) => {
+    const list = t.onDemand.filter((c) => c.kind === kind && c.alsoInClass === alsoInClass);
+    return list.length > 0 ? [`${label}: ${names(list)}.`] : [];
+  });
 }
 
 function unknownLines(t: Timetable): string[] {
@@ -114,7 +121,7 @@ export function renderTimetable(t: Timetable): string {
   const range = t.from === t.to ? t.from : `${t.from} to ${t.to}`;
   return assemble({
     head: [`Timetable ${range}. Times are JST; periods follow the official 時限 table.`],
-    entries: runsOf(t.days).flatMap(runEntries),
+    entries: runsOf(t.days).flatMap((run) => runEntries(run, t.unknown.length > 0 ? 'no known classes' : 'no classes')),
     footer: footer(t),
     hint: 'ask for fewer days',
   });

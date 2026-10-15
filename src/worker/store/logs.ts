@@ -4,6 +4,7 @@ import { changes, parseJson, toJson } from './rows';
 export const AUDIT_RETENTION_MS = 90 * 86_400_000;
 const RATE_LIMIT_RETENTION_MS = 86_400_000;
 const COURSE_SNAPSHOT_RETENTION_MS = 30 * 86_400_000;
+const INFERRED_SCHEDULE_RETENTION_MS = 30 * 86_400_000; // read for 7 days; older rows only serve as a fallback
 const SYLLABUS_RETENTION_MS = 400 * 86_400_000; // a syllabus is valid for its academic year
 
 interface AuditRaw {
@@ -73,5 +74,9 @@ export async function purgeExpired(db: D1Database, now: number): Promise<Record<
     ),
     syllabusCache: await run('DELETE FROM syllabus_cache WHERE fetched_at < ?', now - SYLLABUS_RETENTION_MS),
     courseSnapshots: await run('DELETE FROM course_snapshots WHERE checked_at < ?', now - COURSE_SNAPSHOT_RETENTION_MS),
+    inferredSchedules: await run(
+      'DELETE FROM inferred_schedules WHERE checked_at < ?',
+      now - INFERRED_SCHEDULE_RETENTION_MS,
+    ),
   };
 }

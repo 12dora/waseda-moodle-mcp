@@ -314,9 +314,13 @@ describe('read tools', () => {
   });
 
   describe('set_course_schedule', () => {
+    interface ItemsSchema {
+      items?: { properties?: object; required?: string[] };
+    }
     const friday12: ScheduleOverride = {
       mode: 'slots',
-      slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' }],
+      slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, night: false, classroom: '22-909' }],
+      alsoOnDemand: false,
     };
 
     const schedule = (client: Client, args: Record<string, unknown>) =>
@@ -349,21 +353,69 @@ describe('read tools', () => {
     it('words a single period without a room, on-demand and none', async () => {
       const f = fake();
       const client = await connect(f.ctx);
-      const mon3 = { weekday: 1, periodFrom: 3, periodTo: 3, classroom: null };
-      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': { mode: 'slots', slots: [mon3] } });
+      const mon3 = { weekday: 1, periodFrom: 3, periodTo: 3, night: false, classroom: null };
+      const mon3Override = { mode: 'slots' as const, slots: [mon3], alsoOnDemand: false };
+      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': mon3Override });
       const one = await schedule(client, { mode: 'slots', slots: [{ weekday: 1, period_from: 3, period_to: 3 }] });
-      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, { mode: 'slots', slots: [mon3] });
+      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, mon3Override);
       expect(textOf(one)).toBe('Saved: 総合日本語３Ｘ — Mon P3.');
 
-      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': { mode: 'on-demand', slots: [] } });
-      const od = await schedule(client, { mode: 'on-demand' });
-      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, { mode: 'on-demand', slots: [] });
+      const onDemand = { mode: 'on-demand' as const, slots: [], alsoOnDemand: false };
+      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': onDemand });
+      const od = await schedule(client, { mode: 'on-demand', also_on_demand: true }); // only meaningful with slots
+      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, onDemand);
       expect(textOf(od)).toContain('on-demand');
 
-      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': { mode: 'none', slots: [] } });
+      const noneOverride = { mode: 'none' as const, slots: [], alsoOnDemand: false };
+      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': noneOverride });
       const none = await schedule(client, { mode: 'none' });
-      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, { mode: 'none', slots: [] });
+      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, noneOverride);
       expect(textOf(none)).toContain('no weekly class');
+    });
+
+    it('takes night per slot and also_on_demand, both optional and false by default', async () => {
+      const f = fake();
+      const client = await connect(f.ctx);
+      const tool = (await client.listTools()).tools.find((t) => t.name === 'set_course_schedule');
+      const props = tool?.inputSchema.properties as Record<string, ItemsSchema>;
+      expect(Object.keys(props.slots?.items?.properties ?? {})).toContain('night');
+      expect(props.slots?.items?.required).not.toContain('night');
+      expect(props).toHaveProperty('also_on_demand');
+      expect(tool?.inputSchema.required).toEqual(['course_id', 'mode']);
+
+      const evening = { weekday: 2, periodFrom: 6, periodTo: 7, night: true, classroom: null };
+      const saved = { mode: 'slots' as const, slots: [evening], alsoOnDemand: true };
+      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': saved });
+      const slots = [{ weekday: 2, period_from: 6, period_to: 7, night: true }];
+      const r = await schedule(client, { mode: 'slots', slots, also_on_demand: true });
+      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, saved);
+      expect(textOf(r)).toBe('Saved: 総合日本語３Ｘ — Tue P6–7 evening; also on-demand.');
+    });
+
+    it("adds one line when the saved time will not show: a course outside the user's timetable", async () => {
+      const f = fake();
+      const client = await connect(f.ctx);
+      vi.mocked(setScheduleOverride).mockResolvedValue({ '300907': friday12 });
+      const resolve = (patch: Partial<Course>) =>
+        vi.mocked(resolveScope).mockResolvedValue({
+          mode: 'mine',
+          mine: new Set([300907]),
+          courses: [course({ id: 300907, name: '総合日本語３Ｘ', ...patch })],
+        });
+      const slots = [{ weekday: 5, period_from: 1, period_to: 2, classroom: '22-909' }];
+
+      resolve({ mine: false });
+      expect(textOf(await schedule(client, { mode: 'slots', slots }))).toBe(
+        'Saved: 総合日本語３Ｘ — Fri P1–2 (22-909). Not in your courses — add it with set_my_courses to see it in the timetable.',
+      );
+      resolve({ kind: 'other' });
+      expect(textOf(await schedule(client, { mode: 'slots', slots }))).toContain('Not a class course');
+      resolve({});
+      expect(textOf(await schedule(client, { mode: 'slots', slots }))).not.toContain('Not in your courses');
+
+      vi.mocked(setScheduleOverride).mockResolvedValue({});
+      resolve({ mine: false });
+      expect(textOf(await schedule(client, { mode: 'auto' }))).toBe('Cleared: 総合日本語３Ｘ — automatic times again.');
     });
 
     it("mode 'auto' removes the override", async () => {
@@ -381,9 +433,11 @@ describe('read tools', () => {
         { course_id: undefined, mode: 'auto' },
         {},
         { mode: 'weekly' },
-        { mode: 'slots', slots: [] },
         { mode: 'slots', slots: [{ weekday: 8, period_from: 1, period_to: 2 }] },
         { mode: 'slots', slots: [{ weekday: 5, period_from: 1, period_to: 8 }] },
+        { mode: 'slots', slots: [{ weekday: 5, period_from: 1, period_to: 2, night: 'yes' }] },
+        { mode: 'slots', slots: Array.from({ length: 7 }, () => ({ weekday: 5, period_from: 1, period_to: 2 })) },
+        { mode: 'slots', also_on_demand: 'yes' },
       ]) {
         expect((await schedule(client, args)).isError, JSON.stringify(args)).toBe(true);
       }
@@ -392,6 +446,19 @@ describe('read tools', () => {
       vi.mocked(setScheduleOverride).mockRejectedValueOnce(new InvalidInput('Not enrolled in course(s): 9.'));
       const refused = await schedule(client, { course_id: 9, mode: 'none' });
       expect(refused.isError).toBe(true);
+    });
+
+    it("leaves 'slots' without slots to the service's own validation (the schema has no minimum)", async () => {
+      const f = fake();
+      const client = await connect(f.ctx);
+      vi.mocked(setScheduleOverride).mockRejectedValueOnce(new InvalidInput('mode slots needs 1 to 6 slots.'));
+      const r = await schedule(client, { mode: 'slots', slots: [] });
+      expect(r.isError).toBe(true);
+      expect(setScheduleOverride).toHaveBeenLastCalledWith(sameUser(f.ctx), 300907, {
+        mode: 'slots',
+        slots: [],
+        alsoOnDemand: false,
+      });
     });
   });
 

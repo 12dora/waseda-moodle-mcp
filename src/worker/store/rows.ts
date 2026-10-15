@@ -11,7 +11,8 @@ export function normalizeSettings(input: unknown): UserSettings {
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
   const writeMode = WRITE_MODES.find((m) => m === o.writeMode) ?? DEFAULT_SETTINGS.writeMode;
   const uiLang = UI_LANGS.find((l) => l === o.uiLang) ?? DEFAULT_SETTINGS.uiLang;
-  const scheduleOverrides = normalizeScheduleOverrides(o.scheduleOverrides); // rows saved before it existed read as {}
+  // rows saved before it existed read as {}; entries without `night` / `alsoOnDemand` read them as false
+  const scheduleOverrides = normalizeScheduleOverrides(o.scheduleOverrides);
   return { writeMode, myCourseIds: normalizeCourseIds(o.myCourseIds), uiLang, scheduleOverrides };
 }
 

@@ -115,11 +115,17 @@ describe('users', () => {
   });
 
   it('keeps schedule overrides, drops invalid entries and reads a row saved without them as {}', async () => {
-    const slots = [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' }];
-    const good = { mode: 'slots' as const, slots };
+    const slots = [{ weekday: 5, periodFrom: 1, periodTo: 2, night: false, classroom: '22-909' }];
+    const good = { mode: 'slots' as const, slots, alsoOnDemand: false };
     const mixed = { '300907': good, '5': { mode: 'slots', slots: [] }, '0': good, abc: good, '6': { mode: 'x' } };
     expect(normalizeSettings({ scheduleOverrides: mixed }).scheduleOverrides).toEqual({ '300907': good });
     expect(normalizeSettings({ scheduleOverrides: [good] }).scheduleOverrides).toEqual({});
+    // entries saved before night / alsoOnDemand existed read as false; a bad type or an off-grid night slot is dropped
+    const old = { mode: 'slots', slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' }] };
+    const badNight = { mode: 'slots', slots: [{ weekday: 6, periodFrom: 6, periodTo: 7, night: true }] };
+    const badFlag = { mode: 'slots', slots, alsoOnDemand: 'yes' };
+    const legacy = { '1': old, '2': badNight, '3': badFlag };
+    expect(normalizeSettings({ scheduleOverrides: legacy }).scheduleOverrides).toEqual({ '1': good });
 
     await store.updateSettings(user.id, { ...user.settings, scheduleOverrides: { '300907': good } });
     expect((await store.getUser(user.id))?.settings.scheduleOverrides).toEqual({ '300907': good });
@@ -187,6 +193,21 @@ describe('sessions', () => {
 
     await store.deleteSession('h1');
     expect(await store.getSession('h1')).toBeNull();
+  });
+
+  it('getSessionWithUser carries the remembered scope like getUser', async () => {
+    await store.createSession({
+      idHash: 'h2',
+      userId: user.id,
+      createdAt: 1000,
+      expiresAt: 9000,
+      lastSeenAt: 1000,
+      userAgent: null,
+    });
+    expect((await store.getSessionWithUser('h2'))?.user.scopeCourseIds).toBeUndefined();
+    await store.setScopeCourseIds(user.id, [3, 8]);
+    expect((await store.getSessionWithUser('h2'))?.user.scopeCourseIds).toEqual([3, 8]);
+    expect((await store.getUser(user.id))?.scopeCourseIds).toEqual([3, 8]);
   });
 
   it('deleteUserSessions removes every session of the user', async () => {
@@ -596,6 +617,15 @@ describe('purgeExpired', () => {
     await store.putSyllabusCache('old', 'null', now - 401 * 86_400_000);
     await store.putSyllabusCache('current', 'null', now - 86_400_000);
 
+    const inferred = (checkedAt: number) => ({ slots: [], firstDate: null, lastDate: null, checkedAt });
+    await store.putInferredSchedules(
+      user.id,
+      new Map([
+        [1, inferred(now - 31 * 86_400_000)], // older than 30 days
+        [2, inferred(now - 29 * 86_400_000)], // stale for reading (7 days) but still kept as a fallback
+      ]),
+    );
+
     const res = await store.purgeExpired(now);
     expect(res).toMatchObject({
       audit: 1,
@@ -609,7 +639,9 @@ describe('purgeExpired', () => {
       actionsDeleted: 1,
       courseSnapshots: 1,
       syllabusCache: 1,
+      inferredSchedules: 1,
     });
+    expect([...(await store.getInferredSchedules(user.id)).keys()]).toEqual([2]);
     expect([...(await store.getSyllabusCache(['old', 'current'])).keys()]).toEqual(['current']);
     expect((await store.getCourseSnapshots(user.id)).map((r) => r.courseId)).toEqual([2]);
     expect(await store.takeHandoff('live', now)).toBe('x');

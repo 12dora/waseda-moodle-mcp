@@ -17,10 +17,12 @@ const slot = (over: Partial<ScheduleOverride['slots'][number]> = {}) => ({
   weekday: 5,
   periodFrom: 1,
   periodTo: 2,
+  night: false,
   classroom: '22-909' as string | null,
   ...over,
 });
-const slots = (...s: ScheduleOverride['slots']): ScheduleOverride => ({ mode: 'slots', slots: s });
+const slots = (...s: ScheduleOverride['slots']): ScheduleOverride => ({ mode: 'slots', slots: s, alsoOnDemand: false });
+const onDemand: ScheduleOverride = { mode: 'on-demand', slots: [], alsoOnDemand: false };
 
 function setup(overrides: Record<string, ScheduleOverride> = {}) {
   const t = makeFakeContext({ user: { settings: { scheduleOverrides: overrides } } });
@@ -53,8 +55,8 @@ describe('setScheduleOverride', () => {
   it('replaces one course and leaves the others; null removes only that course', async () => {
     const other = slots(slot({ weekday: 1, periodFrom: 3, periodTo: 3, classroom: null }));
     const t = setup({ '101': other, '300907': slots(slot()) });
-    const replaced = await setScheduleOverride(t.ctx, 300907, { mode: 'on-demand', slots: [] });
-    expect(replaced).toEqual({ '101': other, '300907': { mode: 'on-demand', slots: [] } });
+    const replaced = await setScheduleOverride(t.ctx, 300907, onDemand);
+    expect(replaced).toEqual({ '101': other, '300907': onDemand });
     expect(await setScheduleOverride(t.ctx, 300907, null)).toEqual({ '101': other });
     expect(settingsOf(t)?.scheduleOverrides).toEqual({ '101': other });
   });
@@ -70,8 +72,8 @@ describe('setScheduleOverride', () => {
     const raw = [slot({ classroom: '  22-909  ' }), slot({ weekday: 2, classroom: '   ' })];
     const map = await setScheduleOverride(t.ctx, 101, slots(...raw, slot({ weekday: 3, classroom: undefined })));
     expect(map['101']?.slots.map((s) => s.classroom)).toEqual(['22-909', null, null]);
-    const none = await setScheduleOverride(t.ctx, 102, { mode: 'none', slots: [slot()] });
-    expect(none['102']).toEqual({ mode: 'none', slots: [] });
+    const none = await setScheduleOverride(t.ctx, 102, { mode: 'none', slots: [slot()], alsoOnDemand: true });
+    expect(none['102']).toEqual({ mode: 'none', slots: [], alsoOnDemand: false });
   });
 
   it('rejects a course the user is not enrolled in and writes nothing', async () => {
@@ -94,6 +96,12 @@ describe('setScheduleOverride', () => {
     ['an unknown mode', { mode: 'weekly', slots: [] } as unknown as ScheduleOverride],
     ['a non-text classroom', slots(slot({ classroom: 5 as unknown as string }))],
     ['a slot that is not an object', slots(5 as unknown as ReturnType<typeof slot>)],
+    ['a night slot on Saturday', slots(slot({ weekday: 6, periodFrom: 6, periodTo: 7, night: true }))],
+    ['a night slot on Sunday', slots(slot({ weekday: 7, periodFrom: 7, periodTo: 7, night: true }))],
+    ['a night slot before period 6', slots(slot({ weekday: 2, periodFrom: 5, periodTo: 6, night: true }))],
+    ['a night slot in period 1-2', slots(slot({ night: true }))],
+    ['a non-boolean night', slots(slot({ night: 'yes' as unknown as boolean }))],
+    ['a non-boolean alsoOnDemand', { ...slots(slot()), alsoOnDemand: 1 as unknown as boolean }],
   ])('rejects %s', async (_name, override) => {
     const t = setup();
     await expect(setScheduleOverride(t.ctx, 101, override)).rejects.toBeInstanceOf(InvalidInput);
@@ -107,6 +115,21 @@ describe('setScheduleOverride', () => {
     expect(map['101']?.slots).toHaveLength(6);
   });
 
+  it('keeps night (Mon-Fri evening periods) and alsoOnDemand of a slots override', async () => {
+    const t = setup();
+    const evening = [
+      slot({ weekday: 1, periodFrom: 6, periodTo: 7, night: true }),
+      slot({ weekday: 5, periodFrom: 7, periodTo: 7, night: true }),
+      slot({ weekday: 6, periodFrom: 6, periodTo: 7 }), // Saturday evening is on the standard clock
+    ];
+    const map = await setScheduleOverride(t.ctx, 101, { ...slots(...evening), alsoOnDemand: true });
+    expect(map['101']).toEqual({ mode: 'slots', slots: evening, alsoOnDemand: true });
+    // a request that leaves the flags out reads them as false
+    const bare = { mode: 'slots', slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: null }] };
+    const raw = await validateScheduleOverrides(t.ctx, { '102': bare });
+    expect(raw.get(102)).toEqual(slots(slot({ classroom: null })));
+  });
+
   it('allows at most 60 overrides in total', async () => {
     const others = Array.from({ length: 59 }, (_, i) => [String(1000 + i), slots(slot())]);
     const t = setup({ '101': slots(slot()), ...Object.fromEntries(others) });
@@ -114,6 +137,32 @@ describe('setScheduleOverride', () => {
     expect(t.state.audit).toEqual([]);
     // replacing an existing entry does not grow the map
     expect(Object.keys(await setScheduleOverride(t.ctx, 101, slots(slot({ weekday: 2 }))))).toHaveLength(60);
+  });
+});
+
+describe('the 60 overrides limit counts the whole list when validating', () => {
+  const stored = (n: number) =>
+    Object.fromEntries(Array.from({ length: n }, (_, i) => [String(1000 + i), slots(slot())]));
+
+  it('rejects a request that would grow the list past 60, before anything is written', async () => {
+    const t = setup(stored(59));
+    const raw = { '101': slots(slot()), '102': slots(slot()) };
+    await expect(validateScheduleOverrides(t.ctx, raw)).rejects.toThrow('At most 60');
+    expect(t.state.audit).toEqual([]);
+    expect(resolveScope).not.toHaveBeenCalled(); // refused before the enrolment lookup
+  });
+
+  it('counts removals and replacements of the same request', async () => {
+    const t = setup(stored(59));
+    const ids = [...ENROLLED, 1001]; // 1001 is stored and enrolled: replaced, not added
+    vi.mocked(resolveScope).mockResolvedValue({
+      mode: 'mine',
+      mine: new Set(ids),
+      courses: ids.map((id) => ({ id })),
+    } as never);
+    const raw = { '101': slots(slot()), '102': slots(slot()), '1000': null, '1001': onDemand };
+    const changes = await validateScheduleOverrides(t.ctx, raw);
+    expect(Object.keys(await applyScheduleOverrides(t.ctx, changes))).toHaveLength(60);
   });
 });
 
@@ -167,8 +216,15 @@ describe('normalizeScheduleOverrides', () => {
       x: good,
       '14': 'nope',
     };
-    expect(normalizeScheduleOverrides(stored)).toEqual({ '300907': good, '12': { mode: 'none', slots: [] } });
+    const none = { mode: 'none', slots: [], alsoOnDemand: false };
+    expect(normalizeScheduleOverrides(stored)).toEqual({ '300907': good, '12': none });
     for (const bad of [undefined, null, 'x', [good], 5]) expect(normalizeScheduleOverrides(bad)).toEqual({});
+  });
+
+  it('reads entries without night / alsoOnDemand as false and drops a night slot off the evening grid', () => {
+    const old = { mode: 'slots', slots: [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' }] };
+    const offGrid = { mode: 'slots', slots: [{ weekday: 6, periodFrom: 6, periodTo: 7, night: true }] };
+    expect(normalizeScheduleOverrides({ '1': old, '2': offGrid })).toEqual({ '1': slots(slot()) });
   });
 
   it('keeps at most 60 entries', () => {

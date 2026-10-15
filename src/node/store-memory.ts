@@ -91,7 +91,7 @@ export class MemoryStore implements Store {
       for (const u of data.users ?? []) {
         const merged = { ...DEFAULT_SETTINGS, ...u.settings };
         const settings: UserSettings = {
-          // drops retired fields; a file saved before the schedule overrides existed reads as {}
+          // drops retired fields; an old file reads no overrides as {} and a missing night / alsoOnDemand as false
           writeMode: merged.writeMode,
           myCourseIds: merged.myCourseIds ?? null,
           uiLang: merged.uiLang,

@@ -42,7 +42,7 @@ export const addDays = (iso: string, n: number): string =>
 export const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s) && addDays(s, 0) === s;
 
 /** The academic year starts in April: January-March belong to the previous year. */
-const academicYearOf = (iso: string): number => Number(iso.slice(0, 4)) - (Number(iso.slice(5, 7)) <= 3 ? 1 : 0);
+export const academicYearOf = (iso: string): number => Number(iso.slice(0, 4)) - (Number(iso.slice(5, 7)) <= 3 ? 1 : 0);
 
 const inRanges = (iso: string, ranges: readonly DateRange[] | undefined): boolean =>
   (ranges ?? []).some(([from, to]) => iso >= from && iso <= to);
@@ -148,6 +148,15 @@ export interface DayStatus {
 /** Inside a class window of some term (a break inside it is a separate question: see `dayStatus`). */
 export const insideAnyTerm = (calendar: AcademicCalendar, iso: string) =>
   Object.values(calendar.terms).some((ranges) => inRanges(iso, ranges));
+
+/** Last day of the latest-ending class window of any term that holds `iso`; null outside every term. */
+export function termEndOn(calendar: AcademicCalendar, iso: string): string | null {
+  const ends = Object.values(calendar.terms)
+    .flat()
+    .filter(([from, to]) => iso >= from && iso <= to)
+    .map(([, to]) => to);
+  return ends.sort().at(-1) ?? null;
+}
 
 /** Why a date has no regular class, if it has none. */
 function closure(calendar: AcademicCalendar, iso: string): DayNote | null {

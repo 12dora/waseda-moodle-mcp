@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InvalidInput } from '../../src/core/errors';
+import { InvalidInput, MoodleError } from '../../src/core/errors';
 import type { SyllabusInfo, SyllabusSlot } from '../../src/core/services/syllabus';
 import { classesOn, getTimetable } from '../../src/core/services/timetable';
 import { ACADEMIC_CALENDAR, type AcademicCalendar } from '../../src/core/services/timetable/calendar';
@@ -9,9 +9,10 @@ import {
   syllabusEntry,
   type TimetableEntry,
 } from '../../src/core/services/timetable/entries';
-import { inferSchedules } from '../../src/core/services/timetable/moodle-slots';
+import { type Inference, inferSchedules } from '../../src/core/services/timetable/moodle-slots';
 import { slotClock } from '../../src/core/services/timetable/periods';
 import type { Course, InferredSchedule, ScheduleOverride } from '../../src/core/types';
+import { MemoryStore } from '../../src/node/store-memory';
 import { makeFakeContext } from '../helpers/fake-context';
 
 vi.mock('../../src/core/services/timetable/moodle-slots', () => ({ inferSchedules: vi.fn() }));
@@ -25,7 +26,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
   vi.mocked(inferSchedules).mockReset();
-  vi.mocked(inferSchedules).mockResolvedValue(new Map());
+  vi.mocked(inferSchedules).mockResolvedValue(inference());
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => new Response('', { status: 500 })),
@@ -90,6 +91,11 @@ const inferred = (slots: InferredSchedule['slots'], firstDate: string | null, la
   checkedAt: NOW.getTime(),
 });
 const friP1_2 = { weekday: 5, periodFrom: 1, periodTo: 2, night: false, classroom: null };
+
+/** What inferSchedules answers: `checked` defaults to the courses with a schedule. */
+function inference(found: Map<number, InferredSchedule> = new Map(), checked = [...found.keys()]): Inference {
+  return { found, checked: new Set(checked) };
+}
 
 const names = (iso: string, entries: TimetableEntry[], calendar?: AcademicCalendar) =>
   classesOn(iso, entries, calendar).classes.map((c) => c.courseName);
@@ -437,13 +443,16 @@ describe('getTimetable', () => {
 
 // ------------------------------------------------------------------ sources (contract §15.1)
 
-const override = (o: ScheduleOverride): ScheduleOverride => o;
-const userSlot = (weekday: number, periodFrom: number, periodTo = periodFrom, classroom: string | null = null) => ({
-  weekday,
-  periodFrom,
-  periodTo,
-  classroom,
+const override = (o: Pick<ScheduleOverride, 'mode' | 'slots'> & { alsoOnDemand?: boolean }): ScheduleOverride => ({
+  alsoOnDemand: false,
+  ...o,
 });
+const userSlot = (
+  weekday: number,
+  periodFrom: number,
+  periodTo = periodFrom,
+  extra: Partial<ScheduleOverride['slots'][number]> = {},
+) => ({ weekday, periodFrom, periodTo, night: false, classroom: null, ...extra });
 
 describe("getTimetable: the user's own times", () => {
   function withOverrides(overrides: Record<string, ScheduleOverride>) {
@@ -455,7 +464,7 @@ describe("getTimetable: the user's own times", () => {
 
   it('win over the syllabus; none and on-demand are listed; overridden courses cost no lookup', async () => {
     const { t } = withOverrides({
-      '2': override({ mode: 'slots', slots: [userSlot(1, 4, 5, '22-101')] }),
+      '2': override({ mode: 'slots', slots: [userSlot(1, 4, 5, { classroom: '22-101' })] }),
       '1': override({ mode: 'none', slots: [] }),
       '3': override({ mode: 'on-demand', slots: [] }),
     });
@@ -464,8 +473,8 @@ describe("getTimetable: the user's own times", () => {
     expect(found).toEqual([['2026-10-19', 2, '15:05', 'user', '22-101']]); // the syllabus Wed / Fri classes are gone
     expect(res.days[0]?.classes).toEqual([]);
     expect(res.onDemand.map((c) => [c.courseId, c.kind, c.term, c.alsoInClass])).toEqual([
-      [1, 'no-fixed-time', null, false],
-      [3, 'on-demand', null, false],
+      [1, 'no-fixed-time', '秋クォーター', false], // the term of the syllabus, when it is known
+      [3, 'on-demand', '秋学期', false],
       [4, 'no-fixed-time', '集中', false],
     ]);
     expect(res.unknown.map((c) => c.courseId)).toEqual([5]); // course 1 (none) is not unknown either
@@ -476,20 +485,20 @@ describe("getTimetable: the user's own times", () => {
     const wed = overrideEntry(
       course(2, 'Wed', { start: '2026-10-14T00:00:00+09:00', end: '2026-10-21T00:00:00+09:00' }),
       override({ mode: 'slots', slots: [userSlot(3, 1)] }),
+      null,
     );
-    const open = overrideEntry(course(3, 'Open', {}), override({ mode: 'slots', slots: [userSlot(3, 1)] }));
+    const open = overrideEntry(course(3, 'Open', {}), override({ mode: 'slots', slots: [userSlot(3, 1)] }), null);
     const dates = ['2026-10-07', '2026-10-14', '2026-10-21', '2026-10-28', '2026-11-04', '2026-08-19', '2026-12-23'];
     const hits = (e: TimetableEntry) => dates.filter((d) => classesOn(d, [e]).classes.length > 0);
     expect(hits(wed)).toEqual(['2026-10-14', '2026-10-21']);
     // an open window still needs a running term: not the summer or the winter break
     expect(hits(open)).toEqual(['2026-10-07', '2026-10-14', '2026-10-21', '2026-10-28', '2026-11-04']);
-    expect(overrideEntry(course(4, 'None'), override({ mode: 'none', slots: [] })).listing).toBe('no-fixed-time');
+    expect(overrideEntry(course(4, 'None'), override({ mode: 'none', slots: [] }), null).listing).toBe('no-fixed-time');
   });
 });
 
 describe('getTimetable: Moodle attendance sessions', () => {
-  const fri = (first: string, last: string): Map<number, InferredSchedule> =>
-    new Map([[5, inferred([friP1_2], first, last)]]);
+  const fri = (first: string, last: string): Inference => inference(new Map([[5, inferred([friP1_2], first, last)]]));
 
   it('fill in courses the syllabus does not know, asked once with the Moodle course dates', async () => {
     const { t, seed } = setup({
@@ -598,7 +607,7 @@ describe('getTimetable: unknown reasons', () => {
       [2, 'unparsed'],
       [5, 'pending'], // nothing could be asked of Moodle either
     ]);
-    vi.mocked(inferSchedules).mockResolvedValue(new Map([[5, inferred([], null, null)]]));
+    vi.mocked(inferSchedules).mockResolvedValue(inference(new Map(), [5])); // Moodle answered: nothing weekly
     expect(await reasons()).toEqual([
       [2, 'unparsed'],
       [5, 'not-found'],
@@ -619,8 +628,172 @@ describe('getTimetable: unknown reasons', () => {
   });
 });
 
+describe('getTimetable: a partly understood syllabus time', () => {
+  const partial = () => info('秋学期', [slot(3, 3)], { scheduleUnparsed: true });
+
+  it('is looked up in Moodle too, and what Moodle finds replaces it', async () => {
+    const { t, seed } = setup({ mine: [2] });
+    seed(ID_B, partial());
+    const seen = new Map([[2, inferred([friP1_2], '2026-10-09', '2026-12-18')]]);
+    vi.mocked(inferSchedules).mockResolvedValue(inference(seen));
+    const res = await getTimetable(t.ctx, { date: '2026-10-14', days: 3 });
+    expect(vi.mocked(inferSchedules).mock.calls[0]?.[1].map((c) => c.id)).toEqual([2]);
+    const found = res.days.flatMap((d) => d.classes.map((c) => [d.date, c.courseId, c.source]));
+    expect(found).toEqual([['2026-10-16', 2, 'moodle']]); // not the syllabus Wednesday
+    expect(res.unknown).toEqual([]);
+  });
+
+  it('is kept when Moodle finds nothing, and the course is listed as unparsed', async () => {
+    const { t, seed } = setup({ mine: [2] });
+    seed(ID_B, partial());
+    vi.mocked(inferSchedules).mockResolvedValue(inference(new Map(), [2]));
+    const res = await getTimetable(t.ctx, { date: '2026-10-14' });
+    expect(res.days[0]?.classes.map((c) => [c.courseId, c.source, c.start])).toEqual([[2, 'syllabus', '13:10']]);
+    expect(res.unknown.map((c) => [c.courseId, c.reason])).toEqual([[2, 'unparsed']]);
+  });
+
+  it('keeps a partly understood on-demand course in the list and as unparsed', async () => {
+    const { t, seed } = setup({ mine: [3] });
+    seed(ID_C, info('秋学期', [], { onDemand: true, scheduleUnparsed: true }));
+    const res = await getTimetable(t.ctx, { date: '2026-10-14' });
+    expect(res.onDemand.map((c) => [c.courseId, c.kind])).toEqual([[3, 'on-demand']]);
+    expect(res.unknown.map((c) => [c.courseId, c.reason])).toEqual([[3, 'unparsed']]);
+  });
+});
+
+describe('getTimetable: unknown reasons with the real Moodle lookup', () => {
+  const INFER = '../../src/core/services/timetable/moodle-slots';
+  const EVENTS_FN = 'core_calendar_get_calendar_events';
+
+  /** The real inferSchedules on a context whose inferred-schedule cache is a memory store. */
+  async function realInference() {
+    const real = await vi.importActual<typeof import('../../src/core/services/timetable/moodle-slots')>(INFER);
+    vi.mocked(inferSchedules).mockImplementation(real.inferSchedules);
+    const { t, seed } = setup({ mine: [5], courses: [RAW(5, ID_E, 'No Syllabus Course')] });
+    seed(ID_E, null);
+    const mem = new MemoryStore();
+    const own: Record<PropertyKey, unknown> = {
+      getInferredSchedules: mem.getInferredSchedules.bind(mem),
+      putInferredSchedules: mem.putInferredSchedules.bind(mem),
+    };
+    const store = new Proxy(t.ctx.store, {
+      get: (target, prop, receiver) => (prop in own ? own[prop] : Reflect.get(target, prop, receiver)),
+    });
+    return { t, mem, ctx: { ...t.ctx, store } };
+  }
+
+  it('a course Moodle already checked (cached empty answer) is not-found, not pending forever', async () => {
+    const { t, mem, ctx } = await realInference();
+    await mem.putInferredSchedules(ctx.user.id, new Map([[5, inferred([], null, null)]]));
+    const res = await getTimetable(ctx);
+    expect(res.unknown.map((c) => [c.courseId, c.reason])).toEqual([[5, 'not-found']]);
+    expect(t.api.count(EVENTS_FN)).toBe(0);
+  });
+
+  it('a fresh Moodle answer without attendance sessions is not-found and is cached for next time', async () => {
+    const { t, mem, ctx } = await realInference();
+    t.api.set(EVENTS_FN, { events: [] });
+    expect((await getTimetable(ctx)).unknown.map((c) => c.reason)).toEqual(['not-found']);
+    await Promise.all(t.deferred);
+    expect((await mem.getInferredSchedules(ctx.user.id)).get(5)?.slots).toEqual([]);
+  });
+
+  it('stays pending only while Moodle could not be asked', async () => {
+    const { t, ctx } = await realInference();
+    t.api.set(EVENTS_FN, new MoodleError('no access', 'nopermissions'));
+    expect((await getTimetable(ctx)).unknown.map((c) => [c.courseId, c.reason])).toEqual([[5, 'pending']]);
+  });
+});
+
+describe('getTimetable: user times, night clock and hybrids', () => {
+  it('uses the evening clock of a night slot and lists an alsoOnDemand course as a hybrid', async () => {
+    const { t, seed } = setup({ mine: [1, 2] });
+    seedAll(seed);
+    const scheduleOverrides = {
+      '1': override({ mode: 'slots', slots: [userSlot(3, 6, 7, { night: true })] }),
+      '2': override({ mode: 'slots', slots: [userSlot(3, 1)], alsoOnDemand: true }),
+    };
+    t.ctx.user.settings = { ...t.ctx.user.settings, scheduleOverrides };
+    const res = await getTimetable(t.ctx, { date: '2026-10-14' });
+    expect(res.days[0]?.classes.map((c) => [c.courseId, c.start, c.end, c.night, c.source])).toEqual([
+      [2, '08:50', '10:30', false, 'user'],
+      [1, '18:30', '22:00', true, 'user'],
+    ]);
+    expect(res.onDemand.map((c) => [c.courseId, c.kind, c.alsoInClass])).toEqual([[2, 'on-demand', true]]);
+  });
+
+  it('alsoOnDemand only makes a hybrid of a slots override', () => {
+    const c = course(2, 'B');
+    const slots = [userSlot(3, 1)];
+    const hybrid = overrideEntry(c, override({ mode: 'slots', slots, alsoOnDemand: true }), null);
+    expect([hybrid.listing, hybrid.alsoInClass]).toEqual(['on-demand', true]);
+    const plain = overrideEntry(c, override({ mode: 'slots', slots }), null);
+    expect([plain.listing, plain.alsoInClass]).toEqual([null, false]);
+    const none = overrideEntry(c, override({ mode: 'none', slots: [], alsoOnDemand: true }), null);
+    expect([none.listing, none.alsoInClass]).toEqual(['no-fixed-time', false]);
+    const od = overrideEntry(c, override({ mode: 'on-demand', slots: [], alsoOnDemand: true }), null);
+    expect([od.listing, od.alsoInClass]).toEqual(['on-demand', false]);
+  });
+});
+
+describe('overrideEntry: when the user times apply', () => {
+  const thursdays = override({ mode: 'slots', slots: [userSlot(4, 1)] });
+  const hits = (e: TimetableEntry, dates: string[]) => dates.filter((d) => classesOn(d, [e]).classes.length > 0);
+
+  it('inside the syllabus term of the course, with the short WBS / CJL calendar', () => {
+    const wbs = overrideEntry(course(1, 'WBS'), thursdays, info('秋学期', [], { pKey: WBS_PKEY }));
+    const commerce = overrideEntry(course(2, 'Commerce'), thursdays, info('秋学期', []));
+    const dates = ['2027-01-21', '2027-01-28', '2027-02-04'];
+    expect(hits(wbs, dates)).toEqual(['2027-01-21']); // WBS ends 01-26
+    expect(hits(commerce, dates)).toEqual(['2027-01-21', '2027-01-28']); // the university ends 02-02
+  });
+
+  it('not outside that term, even when the Moodle course dates are open', () => {
+    const spring = overrideEntry(course(3, 'Spring Q'), thursdays, info('春クォーター', []));
+    expect(hits(spring, ['2026-05-14', '2026-10-15'])).toEqual(['2026-05-14']);
+    expect(spring.coverage).toMatchObject({ kind: 'term', term: '春クォーター', year: 2026 });
+  });
+
+  it('uses the Moodle window when there is no usable syllabus term, one academic year when it has no end', () => {
+    const openEnd = course(4, 'Open end', { start: '2026-09-21T00:00:00+09:00', end: null });
+    const dates = ['2026-10-15', '2027-10-14'];
+    expect(hits(overrideEntry(openEnd, thursdays, null), dates)).toEqual(['2026-10-15']);
+    expect(hits(overrideEntry(openEnd, thursdays, info('集中', [])), dates)).toEqual(['2026-10-15']);
+    expect(hits(overrideEntry(openEnd, thursdays, info(null, [])), dates)).toEqual(['2026-10-15']);
+    const year = course(5, 'Both ends', { start: '2026-09-21T00:00:00+09:00', end: '2027-03-31T00:00:00+09:00' });
+    expect(hits(overrideEntry(year, thursdays, null), ['2027-01-21', '2027-04-15'])).toEqual(['2027-01-21']);
+  });
+});
+
 describe('inferredEntry', () => {
+  const NOW_MS = NOW.getTime(); // 2026-10-14
+  const fridays = ['2026-10-16', '2026-11-13', '2026-12-18', '2027-01-15', '2027-02-05'];
+  const hits = (e: TimetableEntry | null) => fridays.filter((d) => e && classesOn(d, [e]).classes.length > 0);
+
   it('has no entry when Moodle showed no weekly meeting', () => {
-    expect(inferredEntry(course(1, 'x'), inferred([], null, null))).toBeNull();
+    expect(inferredEntry(course(1, 'x'), inferred([], null, null), NOW_MS)).toBeNull();
+  });
+
+  it('stops at the last session when it is old or already in the future', () => {
+    const old = inferredEntry(course(5, 'Seen'), inferred([friP1_2], '2026-09-18', '2026-09-25'), NOW_MS);
+    expect(old?.coverage).toEqual({ kind: 'window', from: '2026-09-18', to: '2026-09-25' });
+    const ahead = inferredEntry(course(5, 'Seen'), inferred([friP1_2], '2026-10-02', '2026-11-13'), NOW_MS);
+    expect(hits(ahead)).toEqual(['2026-10-16', '2026-11-13']);
+  });
+
+  it('runs to the end of the term when the last session is from the past two weeks (made week by week)', () => {
+    const recent = inferred([friP1_2], '2026-10-02', '2026-10-09');
+    expect(hits(inferredEntry(course(5, 'Seen'), recent, NOW_MS))).toEqual(fridays.slice(0, 4)); // term ends 2027-02-02
+    // the Moodle end of the course cuts it short
+    const ends = course(5, 'Seen', { end: '2026-12-18T23:59:00+09:00' });
+    expect(hits(inferredEntry(ends, recent, NOW_MS))).toEqual(['2026-10-16', '2026-11-13', '2026-12-18']);
+  });
+
+  it('counts 14 days back as recent and 15 as old', () => {
+    const on20th = Date.parse('2026-10-20T03:00:00Z');
+    const sessions = (lastDate: string) => inferred([friP1_2], '2026-10-02', lastDate);
+    const at = (lastDate: string) => inferredEntry(course(5, 'Seen'), sessions(lastDate), on20th);
+    expect(at('2026-10-06')?.coverage).toMatchObject({ to: '2027-02-02' });
+    expect(at('2026-10-05')?.coverage).toMatchObject({ to: '2026-10-05' });
   });
 });

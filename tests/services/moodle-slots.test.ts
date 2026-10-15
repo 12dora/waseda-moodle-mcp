@@ -105,6 +105,58 @@ describe('schedulesFromEvents', () => {
     expect(out.has(COURSE)).toBe(false);
     expect(out.get(8)?.slots).toEqual([{ weekday: 7, periodFrom: 1, periodTo: 1, night: false, classroom: null }]);
   });
+
+  it('accepts the standard 7限 (50 minutes, 3000 s ± 60) and nothing else of that length', () => {
+    const at = (time: string, timeduration: number, courseid: number) =>
+      ['2026-10-08', '2026-10-15'].map((d) => attendance(`${d}T${time}`, { timeduration }, courseid));
+    const out = schedulesFromEvents(
+      [...at('20:45', 3000, 1), ...at('20:45', 3060, 2), ...at('20:45', 3100, 3), ...at('08:50', 3000, 4)],
+      1,
+    );
+    const thu7 = { weekday: 4, periodFrom: 7, periodTo: 7, night: false, classroom: null };
+    expect(out.get(1)?.slots).toEqual([thu7]);
+    expect(out.get(2)?.slots).toEqual([thu7]);
+    expect([...out.keys()]).toEqual([1, 2]); // 3100 s and a 50-minute 1限 start are no class meetings
+  });
+
+  it('reads one event over a block of periods: start matches a period start, start + duration a period end', () => {
+    const block = (time: string, timeduration: number, courseid: number) =>
+      ['2026-10-02', '2026-10-09'].map((d) => attendance(`${d}T${time}`, { timeduration }, courseid));
+    const out = schedulesFromEvents(
+      [
+        ...block('08:50', 12_600, 1), // to 12:20: 1限-2限
+        ...block('13:10', 19_800, 2), // to 18:40: 3限-5限
+        ...block('13:10', 18_000, 3), // to 18:10: ends between two periods
+        ...block('18:30', 12_600, 4), // to 22:00: 夜6-7 on the night clock
+        ...block('18:55', 9_600, 5), // to 21:35: 6限-7限 on the standard clock
+        ...block('10:40', 6_000, 6), // one period, as before
+      ],
+      1,
+    );
+    const fri = (periodFrom: number, periodTo: number, night = false) => [
+      { weekday: 5, periodFrom, periodTo, night, classroom: null },
+    ];
+    expect(out.get(1)?.slots).toEqual(fri(1, 2));
+    expect(out.get(2)?.slots).toEqual(fri(3, 5));
+    expect(out.get(4)?.slots).toEqual(fri(6, 7, true));
+    expect(out.get(5)?.slots).toEqual(fri(6, 7));
+    expect(out.get(6)?.slots).toEqual(fri(2, 2));
+    expect([...out.keys()]).toEqual([1, 2, 4, 5, 6]);
+  });
+
+  it('still needs two sessions: a block seen once is a one-off, two different blocks make their periods', () => {
+    const once = [attendance('2026-10-02T08:50', { timeduration: 12_600 }, 1)];
+    expect(schedulesFromEvents(once, 1).size).toBe(0);
+    const mixed = [
+      attendance('2026-10-02T08:50', { timeduration: 12_600 }, 1), // 1-2
+      attendance('2026-10-09T08:50', { timeduration: 6000 }, 1), // 1
+      attendance('2026-10-16T10:40', { timeduration: 6000 }, 1), // 2
+    ];
+    // P1 on two dates, P2 on two dates: both recur, so the slot is P1–2
+    expect(schedulesFromEvents(mixed, 1).get(1)?.slots).toEqual([FRI_1_2]);
+    const dates = schedulesFromEvents(mixed, 1).get(1);
+    expect([dates?.firstDate, dates?.lastDate]).toEqual(['2026-10-02', '2026-10-16']);
+  });
 });
 
 describe('inferSchedules', () => {
@@ -139,8 +191,13 @@ describe('inferSchedules', () => {
     const { t, ctx } = setup({ events: [...fridays(FRIDAYS), attendance('2026-10-01T08:50', {}, 99)] });
     const out = await inferSchedules(ctx, [course, { id: 99, start: null, end: null }, { id: 5, start: 0, end: 0 }]);
 
-    expect([...out.keys()]).toEqual([COURSE]);
-    expect(out.get(COURSE)).toMatchObject({ slots: [FRI_1_2], firstDate: '2026-10-02', checkedAt: NOW.getTime() });
+    expect([...out.found.keys()]).toEqual([COURSE]);
+    expect([...out.checked].sort((a, b) => a - b)).toEqual([5, 99, COURSE]); // looked and found none: still checked
+    expect(out.found.get(COURSE)).toMatchObject({
+      slots: [FRI_1_2],
+      firstDate: '2026-10-02',
+      checkedAt: NOW.getTime(),
+    });
     expect(t.api.count(EVENTS)).toBe(1);
     expect(t.api.calls[0]?.params).toEqual({
       events: { courseids: [COURSE, 99, 5] },
@@ -171,8 +228,9 @@ describe('inferSchedules', () => {
       ]),
     );
     const out = await inferSchedules(ctx, [course, { id: 6, start, end }]);
-    expect([...out.keys()]).toEqual([COURSE]);
-    expect(out.get(COURSE)?.slots).toEqual([FRI_1_2]);
+    expect([...out.found.keys()]).toEqual([COURSE]);
+    expect([...out.checked].sort((a, b) => a - b)).toEqual([6, COURSE]); // an empty cached row is an answer too
+    expect(out.found.get(COURSE)?.slots).toEqual([FRI_1_2]);
     expect(t.api.count(EVENTS)).toBe(0);
     expect(t.api.callsMade).toBe(0);
   });
@@ -188,7 +246,8 @@ describe('inferSchedules', () => {
     );
     const out = await inferSchedules(ctx, [course, { id: 6, start, end }, { id: 7, start, end }]);
     expect(t.api.calls[0]?.params.events).toMatchObject({ courseids: [6, 7] });
-    expect([...out.keys()].sort((a, b) => a - b)).toEqual([7, 300907]); // 6 was re-checked: nothing found any more
+    // 6 was re-checked: nothing found any more
+    expect([...out.found.keys()].sort((a, b) => a - b)).toEqual([7, 300907]);
     await Promise.all(t.deferred);
     expect((await cached()).get(6)?.checkedAt).toBe(NOW.getTime());
   });
@@ -198,7 +257,7 @@ describe('inferSchedules', () => {
     await inferSchedules(ctx, [course]);
     await Promise.all(t.deferred);
     t.api.set(EVENTS, new MoodleError('should not be called'));
-    expect((await inferSchedules(ctx, [course])).get(COURSE)?.slots).toEqual([FRI_1_2]);
+    expect((await inferSchedules(ctx, [course])).found.get(COURSE)?.slots).toEqual([FRI_1_2]);
     expect(t.api.count(EVENTS)).toBe(1);
   });
 
@@ -210,7 +269,8 @@ describe('inferSchedules', () => {
     const { t, ctx } = setup(error);
     await store.putInferredSchedules(1, new Map([[COURSE, entry(NOW.getTime() - 30 * DAY_MS, [FRI_1_2])]]));
     const out = await inferSchedules(ctx, [course, { id: 8, start, end }]);
-    expect([...out.keys()]).toEqual([COURSE]);
+    expect([...out.found.keys()]).toEqual([COURSE]);
+    expect([...out.checked]).toEqual([COURSE]); // 8 was never answered: neither found nor checked ('pending')
     expect(t.api.count(EVENTS)).toBe(1);
     await Promise.all(t.deferred);
     expect((await cached()).get(COURSE)?.checkedAt).toBe(NOW.getTime() - 30 * DAY_MS);
@@ -223,13 +283,13 @@ describe('inferSchedules', () => {
 
     const { t, ctx } = setup();
     vi.spyOn(store, 'putInferredSchedules').mockRejectedValue(new Error('D1 down'));
-    expect((await inferSchedules(ctx, [course])).get(COURSE)?.slots).toEqual([FRI_1_2]);
+    expect((await inferSchedules(ctx, [course])).found.get(COURSE)?.slots).toEqual([FRI_1_2]);
     await expect(Promise.all(t.deferred)).resolves.toBeDefined();
   });
 
   it('makes no call for an empty list and de-duplicates course ids', async () => {
     const { t, ctx } = setup();
-    expect((await inferSchedules(ctx, [])).size).toBe(0);
+    expect((await inferSchedules(ctx, [])).found.size).toBe(0);
     expect(t.api.callsMade).toBe(0);
     await inferSchedules(ctx, [course, course]);
     expect(t.api.calls[0]?.params.events).toMatchObject({ courseids: [COURSE] });

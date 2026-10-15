@@ -15,6 +15,8 @@ const MAX_SLOTS = 6;
 const MAX_CLASSROOM = 40;
 const LAST_WEEKDAY = 7;
 const LAST_PERIOD = 7;
+const LAST_NIGHT_WEEKDAY = 5; // the evening clock exists Monday to Friday
+const FIRST_NIGHT_PERIOD = 6;
 const MAX_COURSE_ID = 2_147_483_647;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -29,6 +31,13 @@ function parseClassroom(v: unknown): string | null {
   return room === '' ? null : room;
 }
 
+/** A missing flag is false. */
+function parseFlag(v: unknown, name: string): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v !== 'boolean') throw new InvalidInput(`${name} must be true or false.`);
+  return v;
+}
+
 function parseSlot(v: unknown): Slot {
   if (!isRecord(v)) throw new InvalidInput('Each slot needs weekday, periodFrom, periodTo and classroom.');
   const { weekday, periodFrom, periodTo } = v;
@@ -36,20 +45,24 @@ function parseSlot(v: unknown): Slot {
   if (!isInt(periodFrom, 1, LAST_PERIOD) || !isInt(periodTo, 1, LAST_PERIOD) || periodFrom > periodTo) {
     throw new InvalidInput(`periodFrom and periodTo must be periods 1 to ${LAST_PERIOD}, periodFrom first.`);
   }
-  return { weekday, periodFrom, periodTo, classroom: parseClassroom(v.classroom) };
+  const night = parseFlag(v.night, 'night');
+  if (night && (weekday > LAST_NIGHT_WEEKDAY || periodFrom < FIRST_NIGHT_PERIOD)) {
+    throw new InvalidInput(`night applies to Monday to Friday, periods ${FIRST_NIGHT_PERIOD} to ${LAST_PERIOD} only.`);
+  }
+  return { weekday, periodFrom, periodTo, night, classroom: parseClassroom(v.classroom) };
 }
 
-/** Strict: throws InvalidInput. Slots are kept only for mode 'slots' (1 to MAX_SLOTS of them). */
+/** Strict: throws InvalidInput. Slots and alsoOnDemand are kept only for mode 'slots' (1 to MAX_SLOTS slots). */
 function parseOverride(v: unknown): ScheduleOverride {
   if (!isRecord(v)) throw new InvalidInput('A course schedule needs a mode and, for mode slots, its slots.');
   const mode = MODES.find((m) => m === v.mode);
   if (mode === undefined) throw new InvalidInput('mode must be slots, on-demand or none.');
-  if (mode !== 'slots') return { mode, slots: [] };
+  if (mode !== 'slots') return { mode, slots: [], alsoOnDemand: false };
   const slots = v.slots;
   if (!Array.isArray(slots) || slots.length < 1 || slots.length > MAX_SLOTS) {
     throw new InvalidInput(`mode slots needs 1 to ${MAX_SLOTS} slots.`);
   }
-  return { mode, slots: slots.map((s) => parseSlot(s)) };
+  return { mode, slots: slots.map((s) => parseSlot(s)), alsoOnDemand: parseFlag(v.alsoOnDemand, 'alsoOnDemand') };
 }
 
 /** Keys are course ids as plain decimal text. */
@@ -82,9 +95,23 @@ async function requireEnrolled(ctx: ServiceContext, ids: number[]): Promise<void
   if (unknown.length) throw new InvalidInput(`Not enrolled in course(s): ${unknown.join(', ')}.`);
 }
 
+/** The user's overrides with `changes` applied (`null` removes a course's entry). */
+function mergeOverrides(
+  current: Overrides,
+  changes: ReadonlyMap<number, ScheduleOverride | null>,
+): Map<string, ScheduleOverride> {
+  const merged = new Map(Object.entries(current));
+  for (const [id, override] of changes) {
+    if (override === null) merged.delete(String(id));
+    else merged.set(String(id), override);
+  }
+  return merged;
+}
+
 /**
  * Validates `{ [courseId]: override | null }` completely (shape, limits, enrolment) without writing anything, so a
- * caller can check every part of a request before it applies the first one. `null` removes the course's entry.
+ * caller can check every part of a request before it applies the first one. `null` removes the course's entry. The
+ * limit counts the user's whole list after the change, not only this request's entries.
  */
 export async function validateScheduleOverrides(
   ctx: ServiceContext,
@@ -95,6 +122,9 @@ export async function validateScheduleOverrides(
   if (entries.length > MAX_OVERRIDES) throw new InvalidInput(`At most ${MAX_OVERRIDES} course schedules can be set.`);
   const changes = new Map<number, ScheduleOverride | null>();
   for (const [key, value] of entries) changes.set(courseIdOf(key), value === null ? null : parseOverride(value));
+  if (mergeOverrides(ctx.user.settings.scheduleOverrides, changes).size > MAX_OVERRIDES) {
+    throw new InvalidInput(`At most ${MAX_OVERRIDES} course schedules can be set.`);
+  }
   await requireEnrolled(
     ctx,
     [...changes].filter(([, o]) => o !== null).map(([id]) => id),
@@ -102,18 +132,13 @@ export async function validateScheduleOverrides(
   return changes;
 }
 
-/** Writes validated changes in one settings update (our own stored choice, nothing in Moodle); returns the new map. */
+/** Writes changes that passed `validateScheduleOverrides` in one settings update (nothing in Moodle changes). */
 export async function applyScheduleOverrides(
   ctx: ServiceContext,
   changes: ReadonlyMap<number, ScheduleOverride | null>,
 ): Promise<Overrides> {
   if (changes.size === 0) return ctx.user.settings.scheduleOverrides;
-  const merged = new Map(Object.entries(ctx.user.settings.scheduleOverrides));
-  for (const [id, override] of changes) {
-    if (override === null) merged.delete(String(id));
-    else merged.set(String(id), override);
-  }
-  if (merged.size > MAX_OVERRIDES) throw new InvalidInput(`At most ${MAX_OVERRIDES} course schedules can be set.`);
+  const merged = mergeOverrides(ctx.user.settings.scheduleOverrides, changes);
   const scheduleOverrides = Object.fromEntries(merged);
   const next = { ...ctx.user.settings, scheduleOverrides };
   await ctx.store.updateSettings(ctx.user.id, next);

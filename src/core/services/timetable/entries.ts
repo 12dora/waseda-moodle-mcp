@@ -3,9 +3,19 @@
  * public syllabus, or the attendance sessions seen in Moodle. Each source says when its slots apply (`coverage`).
  */
 
+import { isoJst } from '../../time';
 import type { Course, InferredSchedule, ScheduleOverride, TimetableClass, TimetableSource } from '../../types';
 import type { SyllabusInfo } from '../syllabus';
-import { type AcademicCalendar, calendarFor, insideAnyTerm, TERM_JOIN, termCovers } from './calendar';
+import {
+  type AcademicCalendar,
+  academicYearOf,
+  addDays,
+  calendarFor,
+  insideAnyTerm,
+  TERM_JOIN,
+  termCovers,
+  termEndOn,
+} from './calendar';
 import { periodsLabel, slotClock } from './periods';
 
 /** WBS (57) and CJL (92) end their classes a week before the university calendar. */
@@ -38,7 +48,12 @@ export interface TimetableEntry {
   alsoInClass: boolean;
 }
 
+/** Sessions created week by week: a last one this recent says nothing about when the classes end. */
+const RECENT_SESSION_DAYS = 14;
+
 const isIntensive = (term: string | null) => term?.split(TERM_JOIN).includes('集中') === true;
+/** A term with weekly classes (集中 alone has none). */
+const hasWeeklyTerm = (term: string | null) => term?.split(TERM_JOIN).some((t) => t !== '集中') === true;
 
 const jstDate = (iso: string | null) => (iso === null ? null : iso.slice(0, 10));
 
@@ -46,6 +61,13 @@ const courseWindow = (course: Course): Coverage => ({
   kind: 'window',
   from: jstDate(course.start),
   to: jstDate(course.end),
+});
+
+const termCoverage = (info: SyllabusInfo): Coverage => ({
+  kind: 'term',
+  term: info.term,
+  year: info.year,
+  short: SHORT_CALENDAR_SCHOOLS.has(info.pKey.slice(-2)),
 });
 
 // ------------------------------------------------------------------ builders
@@ -56,23 +78,33 @@ const OVERRIDE_LISTING: Record<ScheduleOverride['mode'], TimetableEntry['listing
   none: 'no-fixed-time',
 };
 
-/** The user's own times; `none` is listed as "no weekly class" so the user can still find and change it. */
-export function overrideEntry(course: Course, override: ScheduleOverride): TimetableEntry {
-  const slots =
-    override.mode === 'slots' ? override.slots.map((s): EntrySlot => ({ ...s, night: false, campus: null })) : [];
+/**
+ * The user's own times; `none` is listed as "no weekly class" so the user can still find and change it. They apply
+ * in the syllabus term of the course when that is known (the short WBS / CJL calendars included), else in its
+ * Moodle window.
+ */
+export function overrideEntry(course: Course, override: ScheduleOverride, info: SyllabusInfo | null): TimetableEntry {
+  const slots = override.mode === 'slots' ? override.slots.map((s): EntrySlot => ({ ...s, campus: null })) : [];
+  const hybrid = override.mode === 'slots' && override.alsoOnDemand;
   return {
     course,
     source: 'user',
     slots,
-    coverage: courseWindow(course),
-    listing: OVERRIDE_LISTING[override.mode],
-    alsoInClass: false,
+    coverage: info && hasWeeklyTerm(info.term) ? termCoverage(info) : courseWindow(course),
+    listing: hybrid ? 'on-demand' : OVERRIDE_LISTING[override.mode],
+    alsoInClass: hybrid,
   };
 }
 
-/** A syllabus gives something to show: weekly slots, on-demand, or an intensive course. */
-export const hasUsableSchedule = (info: SyllabusInfo): boolean =>
+const showsSomething = (info: SyllabusInfo): boolean =>
   (info.slots ?? []).length > 0 || info.onDemand === true || isIntensive(info.term);
+
+/** A syllabus gives something to show (weekly slots, on-demand, intensive) and all of it was understood. */
+export const hasUsableSchedule = (info: SyllabusInfo): boolean => !info.scheduleUnparsed && showsSomething(info);
+
+/** Part of the syllabus time was understood and part was not: what is known can be shown, but the course is unsure. */
+export const hasPartialSchedule = (info: SyllabusInfo): boolean =>
+  info.scheduleUnparsed === true && showsSomething(info);
 
 export function syllabusEntry(course: CourseRef, info: SyllabusInfo): TimetableEntry {
   const slots = info.slots ?? [];
@@ -85,25 +117,33 @@ export function syllabusEntry(course: CourseRef, info: SyllabusInfo): TimetableE
     course,
     source: 'syllabus',
     slots,
-    coverage: {
-      kind: 'term',
-      term: info.term,
-      year: info.year,
-      short: SHORT_CALENDAR_SCHOOLS.has(info.pKey.slice(-2)),
-    },
+    coverage: termCoverage(info),
     listing,
     alsoInClass: slots.length > 0 && !pure,
   };
 }
 
-/** Attendance-session slots of a course; null when Moodle showed no weekly meeting. */
-export function inferredEntry(course: Course, inferred: InferredSchedule): TimetableEntry | null {
+/**
+ * Last day the attendance-session slots apply: the last session seen, or, when that was in the past two weeks
+ * (sessions are created week by week), the end of the term it was in (the Moodle end of the course, if sooner).
+ */
+function sessionsEnd(course: Course, lastDate: string | null, now: number): string | null {
+  if (lastDate === null) return null;
+  const today = isoJst(now).slice(0, 10);
+  if (lastDate > today || lastDate < addDays(today, -RECENT_SESSION_DAYS)) return lastDate;
+  const ends = [termEndOn(calendarFor(lastDate), lastDate), jstDate(course.end)].filter((d): d is string => d !== null);
+  const end = ends.sort()[0];
+  return end !== undefined && end > lastDate ? end : lastDate;
+}
+
+/** Attendance-session slots of a course; null when Moodle showed no weekly meeting. `now` is in ms. */
+export function inferredEntry(course: Course, inferred: InferredSchedule, now: number): TimetableEntry | null {
   if (inferred.slots.length === 0) return null;
   return {
     course,
     source: 'moodle',
     slots: inferred.slots.map((s): EntrySlot => ({ ...s, campus: null })),
-    coverage: { kind: 'window', from: inferred.firstDate, to: inferred.lastDate },
+    coverage: { kind: 'window', from: inferred.firstDate, to: sessionsEnd(course, inferred.lastDate, now) },
     listing: null,
     alsoInClass: false,
   };
@@ -111,12 +151,20 @@ export function inferredEntry(course: Course, inferred: InferredSchedule): Timet
 
 // ------------------------------------------------------------------ queries
 
-const inWindow = (c: { from: string | null; to: string | null }, iso: string) =>
-  (c.from === null || iso >= c.from) && (c.to === null || iso <= c.to);
+type DateWindow = { from: string | null; to: string | null };
+
+/** Inside the window and in an academic year it touches: an open end (no Moodle end date) lasts one year only. */
+function inWindow(c: DateWindow, iso: string): boolean {
+  if ((c.from !== null && iso < c.from) || (c.to !== null && iso > c.to)) return false;
+  const first = c.from === null ? null : academicYearOf(c.from);
+  const last = c.to === null ? first : academicYearOf(c.to);
+  const year = academicYearOf(iso);
+  return (first === null || year >= first) && (last === null || year <= last);
+}
 
 /**
- * Whether the entry's weekly slots apply on `iso`. A syllabus slot belongs to its own academic year only; user and
- * Moodle times apply inside their window while some term is running.
+ * Whether the entry's weekly slots apply on `iso`. A syllabus slot (or a user time on a course with a known term)
+ * belongs to its own academic year and term; other user and Moodle times apply inside their window while a term runs.
  */
 export function covers(entry: TimetableEntry, iso: string, calendar: AcademicCalendar): boolean {
   const c = entry.coverage;
@@ -124,13 +172,14 @@ export function covers(entry: TimetableEntry, iso: string, calendar: AcademicCal
   return insideAnyTerm(calendar, iso) && inWindow(c, iso);
 }
 
-/** The term to show next to a listed course (the user and Moodle sources have none). */
+/** The term to show next to a listed course (Moodle times, and user times without a known term, have none). */
 export const termOf = (entry: TimetableEntry): string | null =>
   entry.coverage.kind === 'term' ? entry.coverage.term : null;
 
 /**
  * Whether the course belongs in the separate list for `dates`: its academic year is one of the dates', and its term
- * overlaps them (intensive courses have no weekly term, so the year decides). User times use the course window.
+ * overlaps them (intensive courses have no weekly term, so the year decides). A window (Moodle times, user times
+ * without a known term) is checked as it is.
  */
 export function listedIn(entry: TimetableEntry, dates: string[]): boolean {
   if (entry.listing === null) return false;

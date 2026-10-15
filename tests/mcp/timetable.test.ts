@@ -74,9 +74,9 @@ describe('renderTimetable', () => {
     expect(text).toContain('Mon 10/19 —');
     expect(text).toContain('- 08:50–12:20 Strategic Marketing (P1–2, 11-502) course_id 101');
     expect(text).toContain('- 18:30–22:00 Night Strategy (P6–7 evening) course_id 102');
-    expect(text).toContain('Tue 10/20 — no classes');
-    expect(text).toContain('Wed 10/21 — no classes (Classes held: 創立記念日)');
-    expect(text).toContain('On-demand / no fixed weekly time');
+    expect(text).toContain('Tue 10/20 — no known classes'); // a course time is still unknown
+    expect(text).toContain('Wed 10/21 — no known classes (Classes held: 創立記念日)');
+    expect(text).toContain('On-demand: Online Japanese');
     expect(text).toContain('Online Japanese (course_id 103)');
     expect(text).toContain('Time unknown (not loaded yet, ask again to retry): Mystery Course (course_id 104).');
   });
@@ -207,10 +207,27 @@ describe('renderTimetable: sources, hybrids and unknown courses', () => {
         unknown: [],
       }),
     );
-    expect(text).toContain(
-      'On-demand / no fixed weekly time (no start time to show): Online Japanese (course_id 103); Block Seminar (course_id 106).',
-    );
+    expect(text).toContain('On-demand: Online Japanese (course_id 103).');
+    expect(text).toContain('No weekly class (intensive or other): Block Seminar (course_id 106).');
     expect(text).toContain('On-demand (also meets in class): Hybrid Writing (course_id 105).');
+  });
+
+  it('labels each listed course by what it is: an intensive course that also meets is not "on-demand"', () => {
+    const text = renderTimetable(
+      timetable({
+        onDemand: [
+          listed(105, 'Hybrid Writing', 'on-demand', true),
+          listed(107, 'Intensive Plus', 'no-fixed-time', true),
+          listed(106, 'Block Seminar', 'no-fixed-time', false),
+        ],
+        unknown: [],
+      }),
+    );
+    expect(text).toContain('Intensive (also meets in class): Intensive Plus (course_id 107).');
+    expect(text).toContain('On-demand (also meets in class): Hybrid Writing (course_id 105).');
+    expect(text).toContain('No weekly class (intensive or other): Block Seminar (course_id 106).');
+    expect(text).not.toMatch(/On-demand[^:\n]*: [^\n]*Intensive Plus/);
+    expect(text).not.toContain('On-demand:');
   });
 
   it('offers a retry only for courses not loaded yet; the others can be set with set_course_schedule', () => {

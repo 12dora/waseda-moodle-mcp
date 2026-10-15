@@ -3,7 +3,9 @@
 /** A class time the user set for a course. `none` = no weekly meeting (listed under "no weekly class"). */
 export interface ScheduleOverride {
   mode: 'slots' | 'on-demand' | 'none';
-  slots: { weekday: number; periodFrom: number; periodTo: number; classroom: string | null }[]; // [] unless 'slots'
+  /** [] unless 'slots'. `night` = the WBS 夜間主 weekday evening clock (periods 6–7). */
+  slots: { weekday: number; periodFrom: number; periodTo: number; night: boolean; classroom: string | null }[];
+  alsoOnDemand: boolean; // 'slots' only: a hybrid that also has on-demand work
 }
 
 export interface PeriodTime {

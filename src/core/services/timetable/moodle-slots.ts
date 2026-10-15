@@ -6,17 +6,19 @@
 import type { ServiceContext } from '../../context';
 import { BudgetExceeded, MoodleError, MoodleUnavailable } from '../../errors';
 import { jstParts, nowMs } from '../../time';
-import type { InferredSchedule } from '../../types';
+import type { InferredSchedule, PeriodTime } from '../../types';
 import { EVENING_TIMES, STANDARD_TIMES } from './periods';
 
 const EVENTS_FN = 'core_calendar_get_calendar_events';
 const CACHE_TTL_MS = 7 * 86_400_000;
 /**
- * One 100-minute period is 6000 s, a 90-minute one 5400 s; a minute of slack either way. Anything longer is no class
- * meeting (the all-day on-demand attendance windows are ~86340 s).
+ * An event that starts with a period lasts one 100-minute period (6000 s) or a 90-minute one (5400 s); a minute of
+ * slack either way. Longer events count when they end with a period too (a block of periods, 7限 included); anything
+ * else is no class meeting (the all-day on-demand attendance windows are ~86340 s).
  */
 const MIN_DURATION_SEC = 5400 - 60;
 const MAX_DURATION_SEC = 6000 + 60;
+const END_SLACK_SEC = 60;
 /** A slot counts only when it recurs: a period seen on a single date is a one-off event. */
 const MIN_SESSIONS = 2;
 const DAY_SEC = 86_400;
@@ -55,29 +57,54 @@ interface Session {
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-/** Period and clock of a JST 'HH:MM' start on a weekday; null when it is no period start. */
-function periodAt(weekday: number, hhmm: string): Pick<Session, 'period' | 'night'> | null {
+const clockSec = (hhmm: string) => Number(hhmm.slice(0, 2)) * 3600 + Number(hhmm.slice(3, 5)) * 60;
+
+interface Block {
+  from: number;
+  to: number;
+}
+
+/** When an event runs: seconds into its JST day, and how long. */
+interface Timing {
+  startSec: number;
+  duration: number;
+}
+
+/** Periods an event covers on one clock: it starts with a period and lasts one period or ends with a later one. */
+function blockOn(clock: readonly PeriodTime[], event: Timing): Block | null {
+  const first = clock.find((t) => clockSec(t.start) === event.startSec);
+  if (!first) return null;
+  const endSec = event.startSec + event.duration;
+  const last = clock.find((t) => t.period >= first.period && Math.abs(clockSec(t.end) - endSec) <= END_SLACK_SEC);
+  if (last) return { from: first.period, to: last.period };
+  const onePeriod = event.duration >= MIN_DURATION_SEC && event.duration <= MAX_DURATION_SEC;
+  return onePeriod ? { from: first.period, to: first.period } : null;
+}
+
+/** The periods and clock of an event; weekday evening starts are tried on the night clock first. */
+function blockAt(weekday: number, event: Timing): (Block & { night: boolean }) | null {
   if (weekday <= LAST_WEEKDAY_WITH_NIGHT_CLOCK) {
-    const evening = EVENING_TIMES.find((t) => t.start === hhmm);
-    if (evening) return { period: evening.period, night: true };
+    const evening = blockOn(EVENING_TIMES, event);
+    if (evening) return { ...evening, night: true };
   }
-  const standard = STANDARD_TIMES.find((t) => t.start === hhmm);
-  return standard ? { period: standard.period, night: false } : null;
+  const standard = blockOn(STANDARD_TIMES, event);
+  return standard && { ...standard, night: false };
 }
 
-function isClassMeeting(e: CalendarEvent): boolean {
-  const duration = e.timeduration ?? 0;
-  if (e.eventtype !== 'attendance' && e.modulename !== 'attendance') return false;
-  if (duration < MIN_DURATION_SEC || duration > MAX_DURATION_SEC) return false;
-  return !ON_DEMAND_RE.test(e.name ?? '');
-}
+const isClassMeeting = (e: CalendarEvent): boolean =>
+  (e.eventtype === 'attendance' || e.modulename === 'attendance') && !ON_DEMAND_RE.test(e.name ?? '');
 
-function sessionOf(e: CalendarEvent): Session | null {
-  if (!e.courseid || !e.timestart || !isClassMeeting(e)) return null;
-  const p = jstParts(e.timestart * 1000);
+/** One session per period the event covers (a 2-period event is a session of each period). */
+function sessionsOf(e: CalendarEvent): Session[] {
+  const { courseid: courseId, timestart } = e;
+  if (!courseId || !timestart || !isClassMeeting(e)) return [];
+  const p = jstParts(timestart * 1000);
   const weekday = p.wd === 0 ? 7 : p.wd;
-  const at = periodAt(weekday, `${pad(p.h)}:${pad(p.mi)}`);
-  return at && { courseId: e.courseid, weekday, ...at, date: `${p.y}-${pad(p.mo)}-${pad(p.d)}` };
+  const block = blockAt(weekday, { startSec: p.h * 3600 + p.mi * 60, duration: e.timeduration ?? 0 });
+  if (!block) return [];
+  const date = `${p.y}-${pad(p.mo)}-${pad(p.d)}`;
+  const periods = Array.from({ length: block.to - block.from + 1 }, (_, i) => block.from + i);
+  return periods.map((period) => ({ courseId, weekday, period, night: block.night, date }));
 }
 
 /** Periods (per weekday and clock) seen on at least MIN_SESSIONS dates, each with its dates; in week order. */
@@ -129,16 +156,13 @@ function scheduleOf(sessions: Session[], checkedAt: number): InferredSchedule {
 }
 
 /**
- * Weekly meetings per course from calendar events: attendance sessions of one 90/100-minute period, mapped to a 時限
- * by their JST start (the night clock for weekday evening starts), recurring on at least two dates. Only courses with a
- * slot are in the result; the classroom is not known from the events. `at` becomes the schedules' checkedAt.
+ * Weekly meetings per course from calendar events: attendance sessions that start with a 時限 (JST; the night clock
+ * for weekday evening starts) and last one period or end with a later one, recurring on at least two dates. Only
+ * courses with a slot are in the result; the classroom is not known from the events. `at` becomes the checkedAt.
  */
 export function schedulesFromEvents(events: readonly CalendarEvent[], at: number): Answers {
   const byCourse = new Map<number, Session[]>();
-  for (const e of events) {
-    const s = sessionOf(e);
-    if (s) byCourse.set(s.courseId, [...(byCourse.get(s.courseId) ?? []), s]);
-  }
+  for (const s of events.flatMap(sessionsOf)) byCourse.set(s.courseId, [...(byCourse.get(s.courseId) ?? []), s]);
   const out: Answers = new Map();
   for (const [courseId, sessions] of byCourse) {
     const schedule = scheduleOf(sessions, at);
@@ -189,13 +213,20 @@ async function lookUp(ctx: ServiceContext, courses: CourseWindow[], now: number)
   return answers;
 }
 
+/** `found`: courses with a weekly meeting. `checked`: courses Moodle answered for (cache or fresh), found or not. */
+export interface Inference {
+  found: Answers;
+  checked: Set<number>;
+}
+
 /**
  * Weekly class times of the given courses from Moodle's attendance sessions, for courses the syllabus cannot place.
  * Reads the per-user cache (7 days; "none found" is cached too) and asks Moodle with ONE call for the missing or stale
- * courses only. When Moodle fails the cached answers (stale ones included) are returned. A course without a recurring
- * session is not in the result. `start` / `end` are the Moodle course dates in unix seconds.
+ * courses only. When Moodle fails the cached answers (stale ones included) are used. A checked course without a
+ * recurring session is in `checked` only; a course never answered (the call failed or did not run) is in neither.
+ * `start` / `end` are the Moodle course dates in unix seconds.
  */
-export async function inferSchedules(ctx: ServiceContext, courses: CourseWindow[]): Promise<Answers> {
+export async function inferSchedules(ctx: ServiceContext, courses: CourseWindow[]): Promise<Inference> {
   const now = nowMs();
   const unique = [...new Map(courses.map((c) => [c.id, c])).values()];
   const cached = await ctx.store.getInferredSchedules(ctx.user.id);
@@ -204,10 +235,13 @@ export async function inferSchedules(ctx: ServiceContext, courses: CourseWindow[
     return !hit || now - hit.checkedAt >= CACHE_TTL_MS;
   });
   const fresh: Answers = stale.length > 0 ? await lookUp(ctx, stale, now) : new Map();
-  const out: Answers = new Map();
+  const answers: Answers = new Map();
   for (const c of unique) {
     const schedule = fresh.get(c.id) ?? cached.get(c.id);
-    if (schedule && schedule.slots.length > 0) out.set(c.id, schedule);
+    if (schedule) answers.set(c.id, schedule);
   }
-  return out;
+  return {
+    found: new Map([...answers].filter(([, schedule]) => schedule.slots.length > 0)),
+    checked: new Set(answers.keys()),
+  };
 }

@@ -318,11 +318,21 @@ describe('MemoryStore persistence', () => {
     const path = join(dir, 'overrides.json');
     const a = new MemoryStore({ persistPath: path });
     const u = await a.upsertUser({ moodleUserId: 1001, fullname: 'Taro', lang: 'en' });
-    const slots = [{ weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' }];
-    await a.updateSettings(u.id, { ...DEFAULT_SETTINGS, scheduleOverrides: { '300907': { mode: 'slots', slots } } });
+    const slots = [{ weekday: 5, periodFrom: 1, periodTo: 2, night: false, classroom: '22-909' }];
+    const override = { mode: 'slots' as const, slots, alsoOnDemand: true };
+    await a.updateSettings(u.id, { ...DEFAULT_SETTINGS, scheduleOverrides: { '300907': override } });
     await a.flush();
     expect((await new MemoryStore({ persistPath: path }).getUser(u.id))?.settings.scheduleOverrides).toEqual({
-      '300907': { mode: 'slots', slots },
+      '300907': override,
+    });
+
+    // a file written before night / alsoOnDemand existed reads them as false
+    const legacySlot = { weekday: 5, periodFrom: 1, periodTo: 2, classroom: '22-909' };
+    const settings = { scheduleOverrides: { '9': { mode: 'slots', slots: [legacySlot] } } };
+    const before = { id: 1, moodleUserId: 5, fullname: 'T', lang: 'en', settings };
+    await writeFile(path, JSON.stringify({ version: 1, nextUserId: 2, users: [before], actions: [] }));
+    expect((await new MemoryStore({ persistPath: path }).getUser(1))?.settings.scheduleOverrides).toEqual({
+      '9': { mode: 'slots', slots, alsoOnDemand: false },
     });
 
     const old = { id: 1, moodleUserId: 5, fullname: 'T', lang: 'en', settings: { writeMode: 'off' } };
