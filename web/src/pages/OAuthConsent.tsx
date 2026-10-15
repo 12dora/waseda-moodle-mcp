@@ -12,7 +12,6 @@ import { PageLoading } from '../components/Spinner';
 import { useT } from '../i18n';
 import { errorText } from '../lib/errors';
 import { isSafeRedirect, rememberReturn, takeReturn } from '../lib/returnTo';
-import { PrivacyLink } from './Privacy';
 
 type State =
   | { kind: 'loading' }
@@ -188,7 +187,6 @@ export function OAuthConsentPage() {
           </>
         )}
         <ConsentBody state={state} reqId={reqId} reload={reload} onRedirect={() => setState({ kind: 'redirecting' })} />
-        <PrivacyLink />
       </div>
     </PublicShell>
   );

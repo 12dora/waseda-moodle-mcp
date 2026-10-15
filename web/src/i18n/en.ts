@@ -3,6 +3,11 @@ export const en = {
   'app.name': 'Waseda Moodle MCP',
   'app.source': 'Source code',
 
+  'public.home': 'Waseda Moodle MCP home',
+  'public.lang': 'Language',
+  'public.privacy': 'Privacy policy',
+  'public.unofficial': 'Unofficial · not affiliated with Waseda University',
+
   'common.loading': 'Loading',
   'common.retry': 'Retry',
   'common.cancel': 'Cancel',

@@ -4,6 +4,11 @@ export const ja: Dictionary = {
   'app.name': 'Waseda Moodle MCP',
   'app.source': 'ソースコード',
 
+  'public.home': 'Waseda Moodle MCP ホーム',
+  'public.lang': '言語',
+  'public.privacy': 'プライバシーポリシー',
+  'public.unofficial': '非公式ツール · 早稲田大学とは関係ありません',
+
   'common.loading': '読み込み中',
   'common.retry': '再試行',
   'common.cancel': 'キャンセル',

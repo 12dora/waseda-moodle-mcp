@@ -16,7 +16,7 @@ import { mcpApiHandler } from './mcp';
 import { createD1Store } from './store-d1';
 import { runCourseSweep } from './sweep-cron';
 
-export const PURGE_CURSOR_KEY = 'purge-cursor';
+const PURGE_CURSOR_KEY = 'purge-cursor';
 const ACCESS_TOKEN_TTL_SEC = 43_200; // 12 h: fewer refreshes = fewer KV writes (Free: 1000/day)
 const REFRESH_TOKEN_TTL_SEC = 7_776_000; // 90 d
 const PURGE_BATCH = 25;

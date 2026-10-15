@@ -8,10 +8,3 @@ import { zhCN } from './zh-CN';
 export const PRIVACY_EFFECTIVE_DATE = '2026-10-15';
 
 export const PRIVACY_DOCS: Record<Lang, PrivacyDoc> = { en, ja, 'zh-CN': zhCN };
-
-/** Footer link label for the public pages. */
-export const PRIVACY_LINK_LABEL: Record<Lang, string> = {
-  en: 'Privacy',
-  ja: 'プライバシー',
-  'zh-CN': '隐私政策',
-};

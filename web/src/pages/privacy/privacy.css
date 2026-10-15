@@ -34,10 +34,6 @@
 .privacy-meta {
   color: var(--text-muted);
 }
-.privacy-footer-link {
-  font-size: 0.85rem;
-  color: var(--text-muted);
-}
 .privacy section {
   display: grid;
   gap: 8px;

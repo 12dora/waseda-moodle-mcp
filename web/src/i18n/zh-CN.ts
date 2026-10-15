@@ -4,6 +4,11 @@ export const zhCN: Dictionary = {
   'app.name': 'Waseda Moodle MCP',
   'app.source': '源代码',
 
+  'public.home': 'Waseda Moodle MCP 首页',
+  'public.lang': '语言',
+  'public.privacy': '隐私政策',
+  'public.unofficial': '非官方工具 · 与早稻田大学无关',
+
   'common.loading': '加载中',
   'common.retry': '重试',
   'common.cancel': '取消',

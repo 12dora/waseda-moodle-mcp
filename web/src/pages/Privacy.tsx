@@ -1,6 +1,6 @@
 import { PublicShell } from '../components/PublicShell';
 import { useI18n } from '../i18n';
-import { PRIVACY_DOCS, PRIVACY_EFFECTIVE_DATE, PRIVACY_LINK_LABEL } from './privacy/content';
+import { PRIVACY_DOCS, PRIVACY_EFFECTIVE_DATE } from './privacy/content';
 import type { PrivacyBlock, PrivacyDoc } from './privacy/types';
 import './privacy/privacy.css';
 
@@ -95,15 +95,5 @@ export function PrivacyPage() {
         <Contact contact={doc.contact} />
       </article>
     </PublicShell>
-  );
-}
-
-/** Plain anchor (full load) so /privacy skips config loading even from inside the router. */
-export function PrivacyLink() {
-  const { lang } = useI18n();
-  return (
-    <a className="privacy-footer-link" href="/privacy">
-      {PRIVACY_LINK_LABEL[lang]}
-    </a>
   );
 }

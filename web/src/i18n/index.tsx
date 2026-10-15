@@ -1,5 +1,6 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { UiLang } from '../api/types';
+import { parseLangParam, stripLangParam } from '../lib/landing';
 import { DICTIONARIES, type Lang, resolveLang, type Translate, translate } from './core';
 
 export type { MessageKey } from './core';
@@ -13,6 +14,24 @@ function readStored(): UiLang | null {
   } catch {
     return null;
   }
+}
+
+function writeStored(v: UiLang): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, v);
+  } catch {
+    // storage unavailable: setting still applies for this page load
+  }
+}
+
+/** Landing-page hand-off (`?lang=`): adopts and persists the language, then drops the param from the address bar. */
+function takeLangParam(): UiLang | null {
+  if (typeof location === 'undefined') return null;
+  const lang = parseLangParam(location.search);
+  if (!lang) return null;
+  writeStored(lang);
+  history.replaceState(history.state, '', stripLangParam(location.href));
+  return lang;
 }
 
 function browserLangs(): string[] {
@@ -29,16 +48,12 @@ export interface I18n {
 const I18nContext = createContext<I18n | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [uiLang, setUiLangState] = useState<UiLang>(() => readStored() ?? 'auto');
+  const [uiLang, setUiLangState] = useState<UiLang>(() => takeLangParam() ?? readStored() ?? 'auto');
   const lang = resolveLang(uiLang, browserLangs());
 
   const setUiLang = useCallback((v: UiLang) => {
     setUiLangState(v);
-    try {
-      localStorage.setItem(STORAGE_KEY, v);
-    } catch {
-      // storage unavailable: setting still applies for this page load
-    }
+    writeStored(v);
   }, []);
 
   useEffect(() => {

@@ -4,17 +4,14 @@ import { NeedsReconnect } from '../../src/core/errors';
 import { refreshSnapshots } from '../../src/core/services/sweep/refresh';
 import { resetRateLimitMemory } from '../../src/worker/auth';
 import type { Env } from '../../src/worker/env';
-import worker, {
-  buildProviderOptions,
-  isPurgeRun,
-  PURGE_CURSOR_KEY,
-  providerFor,
-  runScheduled,
-} from '../../src/worker/index';
+import worker, { buildProviderOptions, isPurgeRun, providerFor, runScheduled } from '../../src/worker/index';
 import { mcpApiHandler } from '../../src/worker/mcp';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
 import { createTestD1 } from '../helpers/d1-sqlite';
 import { MemoryKV } from '../helpers/memory-kv';
+
+/** Mirrors the private KV key in src/worker/index.ts (workerd rejects non-handler exports from the entry). */
+const PURGE_CURSOR_KEY = 'purge-cursor';
 
 // `cloudflare:workers` only exists inside workerd, so the provider is replaced by a recording fake.
 const rec = vi.hoisted(() => ({
