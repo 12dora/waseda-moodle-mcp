@@ -2,24 +2,24 @@
 
 An [MCP](https://modelcontextprotocol.io) server that lets AI assistants read and act on
 **Waseda University's Moodle** (`https://wsdmoodle.waseda.jp`). It is Waseda-only by design:
-the Moodle origin, the login flow and several features (syllabus-based timetable, deadline
-sweep) are specific to that site.
+the Moodle origin, the login flow and several features (syllabus-based timetable,
+assignments & deadlines sweep) are specific to that site.
 
 It runs either as a hosted service on Cloudflare Workers (with a web console) or as a local
 stdio process.
 
 ## Features
 
-**Deadlines and course sweep**
-- Outstanding deadlines grouped Overdue / Today / Tomorrow / Next 7 days / Later, from the Moodle calendar plus a background sweep that finds undated activities and deadlines written in course text (marked "verify").
+**Assignments & deadlines**
+- Outstanding items grouped Overdue / Today / Tomorrow / Next 7 days / Later, or by course (`group_by=course`). Submitted items stay in their group struck through. From the Moodle calendar plus a background sweep that finds undated activities and deadlines written in course text (marked "verify").
 - Recent teacher additions and changes in your courses.
-- Calendar feed: a secret ICS subscription URL (console **Settings**) for deadlines and the timetable in Google Calendar, Apple Calendar or Outlook.
+- Calendar feed: a secret ICS subscription URL (console **Settings → Calendar feed**) for assignments & deadlines and the timetable in Google Calendar, Apple Calendar or Outlook.
 
 **Timetable**
 - Per-day classes with times, room and campus, built from the public Waseda syllabus and the academic calendar. On-demand and unknown slots listed separately.
 
 **Courses, content and grades**
-- Enrolled courses (this term by default), a confirmed "my courses" filter, course sections and activities, activity details, name search across courses, grades per course.
+- Enrolled courses (this term by default), a confirmed course selection (**Settings → This term's courses**), course sections and activities, activity details, name search across courses, grades per course.
 
 **Forums, messages and notifications**
 - Forum threads and posts, Moodle conversations, notifications with unread counts.
@@ -47,16 +47,24 @@ AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- REST -->
 
 1. Open the console (for example `https://wasemoodle.example.com`) and connect Moodle on the
    **Connect** page using the bookmarklet, the browser extension, or by pasting the launch link.
-2. Optionally confirm this term's courses on **My courses**.
+2. Optionally confirm this term's courses under **Settings → This term's courses**.
 3. Add the server to your AI client (see below). The MCP URL is `https://wasemoodle.example.com/mcp`.
+
+## Console
+
+The hosted console sidebar: **Overview**, **Assignments & deadlines**, **My courses**, **Timetable**, **Approvals**, **Settings**.
+
+**My courses** is the per-course view (tasks, timetable, syllabus grading, recent updates). Confirm which courses you attend under **Settings → This term's courses**.
+
+Settings tabs: **General**, **This term's courses**, **AI clients**, **API keys**, **Authorized apps**, **Calendar feed**, **Activity**, **Account**.
 
 ## Clients
 
 MCP URL: `https://wasemoodle.example.com/mcp` (Streamable HTTP). OAuth is the default: the client
 discovers the authorization server from the `401` response (RFC 9728), registers itself and opens
 the consent page, where you grant read-only or read+write access. API keys (`wmm_…`, created on the
-console **API keys** page) are for clients that can send an `Authorization: Bearer <API_KEY>` header.
-The console **Overview** page shows the same steps with your instance URL filled in.
+console **Settings → API keys**) are for clients that can send an `Authorization: Bearer <API_KEY>` header.
+The console **Settings → AI clients** page shows the same steps with your instance URL filled in.
 
 | Client | Setup |
 |---|---|
@@ -144,13 +152,13 @@ of writes or `create_upload_link`.
 
 | Tool | Purpose | Access |
 |---|---|---|
-| `get_due_items` | Outstanding deadlines grouped by day, with your submission state (draft, in progress, submitted) and sweep results | read |
+| `get_due_items` | Assignments and deadlines grouped by day or by course (`group_by=course`); submitted items stay in their group struck through; includes submission state and sweep results | read |
 | `list_courses` | Enrolled courses (`scope`: `mine` or `all`) | read |
 | `get_course` | Sections and activities of one course | read |
 | `search_course_content` | Search activity, section and file names | read |
 | `get_activity` | Full details of one activity | read |
 | `get_grades` | Grades for a course | read |
-| `set_my_courses` | Save this term's courses (server-side filter; does not change Moodle) | read scope |
+| `set_my_courses` | Save the course selection (This term's courses; server-side filter; does not change Moodle) | read scope |
 | `get_course_updates` | Recent teacher changes | read |
 | `get_timetable` | Classes per day with room and campus | read |
 | `set_course_schedule` | Set or clear a course's class time (server-side; does not change Moodle) | read scope |
@@ -183,7 +191,7 @@ are shown in JST. The server never takes quizzes.
 - No Moodle password is ever requested. The Moodle token is encrypted at rest (AES-256-GCM with the operator's `MASTER_KEY`).
 - File contents are streamed, not stored. Download and upload links are HMAC-signed and expire in 15 and 30 minutes.
 - API keys are stored as hashes. OAuth access tokens last 12 hours, refresh tokens 90 days.
-- Deleting your account in the console removes all of your data on the server.
+- Deleting your account under **Settings → Account** removes all of your data on the server.
 
 Details: [docs/privacy.md](docs/privacy.md).
 

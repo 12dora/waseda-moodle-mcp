@@ -113,7 +113,7 @@ function footer(t: Timetable): string[] {
   const out = [...onDemandLines(t), ...unknownLines(t)];
   if (t.approximate) out.push('Dates outside AY2026: holidays and term ends are estimated.');
   if (t.scopeMode === 'auto')
-    out.push('Using suggested courses; confirm which ones the user attends with set_my_courses.');
+    out.push("Using suggested courses; confirm the course selection with set_my_courses (This term's courses).");
   return out;
 }
 

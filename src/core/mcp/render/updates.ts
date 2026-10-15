@@ -53,5 +53,5 @@ export function renderMyCourses(ids: number[] | null): string {
   if (ids === null) {
     return 'Back to the automatic course suggestion. list_courses shows which courses it picks; ask the user to confirm them.';
   }
-  return `Saved: ${plural(ids.length, 'course')} (course_id ${ids.join(', ')}) are now the user's courses. get_due_items, list_courses, search_course_content and get_course_updates use this selection; pass course_id to look at another course.`;
+  return `Saved: ${plural(ids.length, 'course')} (course_id ${ids.join(', ')}) are now the course selection (This term's courses). get_due_items, list_courses, search_course_content and get_course_updates use this selection; pass course_id to look at another course.`;
 }

@@ -9,9 +9,10 @@ const DEFAULT_SINCE_DAYS = 7;
 
 const setMyCoursesTool = defineTool({
   name: 'set_my_courses',
-  title: 'Set my courses',
+  title: 'Set course selection',
   description:
-    'Saves which courses the user attends this term; due items, course lists, searches and updates then only cover these courses. ' +
+    "Saves the course selection (This term's courses): which courses the user attends this term. " +
+    'Assignments & deadlines, course lists, searches and updates then only cover these courses. ' +
     'Use it after the user confirms the courses (list_courses shows the candidates and marks suggestions); never guess. ' +
     'Pass null to go back to the automatic suggestion. This only changes the selection kept by this server, nothing in Moodle.',
   annotations: LOCAL_SETTING_HINTS,

@@ -40,7 +40,7 @@ function coursesFooter({ mode, scope }: CoursesView): string[] {
   const lines: string[] = [];
   if (mode === 'auto') {
     lines.push(
-      'These are suggestions, not confirmed yet: ask the user which courses they attend this term, then call set_my_courses with those course_ids.',
+      "These are suggestions, not confirmed yet: ask the user which courses they attend this term, then call set_my_courses with those course_ids to save the course selection (This term's courses).",
     );
   }
   if (scope === 'mine') lines.push('Pass scope "all" to see the other enrolled courses.');

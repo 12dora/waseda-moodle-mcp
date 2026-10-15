@@ -11,7 +11,7 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 ## Summary
 
 - We never ask for or see your Moodle password.
-- Your Moodle token is stored encrypted and is used only to act on Moodle at your request (and for a background deadline sweep).
+- Your Moodle token is stored encrypted and is used only to act on Moodle at your request (and for a background sweep of assignments and deadlines).
 - File contents are passed through, never stored.
 - Your data is not sold, shared, used for advertising, or used to train AI models.
 - You can delete everything from the console at any time.
@@ -29,10 +29,10 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 | Pending and past actions | The preview-then-confirm write flow | Includes what you asked to send (for example message text, forum post, submission file names). |
 | Upload drafts | Large file uploads | File names and sizes only, not contents. |
 | Activity (audit) log | So you can see what was done in your name | Action names and non-content details such as ids and booleans. |
-| Course snapshots | Deadline detection and "what's new" | Compact outline of your courses: activity names, dates, completion, file names and links, and short text snippets (up to about 2 KB) that mention deadlines. |
+| Course snapshots | Assignments & deadlines and "what's new" | Compact outline of your courses: activity names, dates, completion, file names and links, and short text snippets (up to about 2 KB) that mention deadlines. |
 | Syllabus cache | Timetable | Parsed public Waseda syllabus pages (times, rooms, instructors). Public data, shared across users, not tied to you. |
 | Class times from Moodle | Timetable | Weekly class times derived from the attendance sessions of your courses in Moodle, when the syllabus gives none. Kept per user and refreshed weekly. |
-| Calendar subscription | Calendar apps (only if you turn it on) | A hash of your private calendar link (the link itself is not stored), the time of the last fetch, and the generated calendar (deadlines and classes) for up to 30 minutes. |
+| Calendar subscription | Calendar apps (only if you turn it on) | A hash of your private calendar link (the link itself is not stored), the time of the last fetch, and the generated calendar (assignments & deadlines and classes) for up to 30 minutes. |
 | Rate-limit counters | Abuse protection | Keyed by IP address, user or token hash; short-lived. |
 
 ## What is never collected
@@ -73,9 +73,9 @@ models. What your AI client does with tool results is governed by that client's 
 
 In the console:
 
-- **Apps**: revoke an MCP client's OAuth access.
-- **API keys**: revoke a key.
-- **Settings -> Delete account**: revokes all OAuth grants and permanently deletes your user record, encrypted token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
+- **Settings → Authorized apps**: revoke an MCP client's OAuth access.
+- **Settings → API keys**: revoke a key.
+- **Settings → Account**: delete account — revokes all OAuth grants and permanently deletes your user record, encrypted token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
 
 The service never revokes or resets your Moodle token, because it is the same token the
 official Moodle mobile app uses; revoking it would sign your phone out. If you also want to

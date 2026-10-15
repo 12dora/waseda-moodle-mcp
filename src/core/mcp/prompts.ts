@@ -13,7 +13,7 @@ const COURSE_ARG = /^\d+(?:\s.*)?$/;
 const courseArg = () => z.string().regex(COURSE_ARG).describe('Course id from list_courses.');
 const leadingDigits = (arg: string) => /^\d+/.exec(arg)?.[0] ?? arg;
 
-/** Today: classes, due items, unread. Another day: its classes and the deadlines around it. */
+/** Today: classes, assignments & deadlines, unread. Another day: its classes and the assignments around it. */
 function briefingSteps(date: string | undefined): string[] {
   if (date) {
     return [
@@ -34,7 +34,7 @@ function registerDailyBriefing(server: McpServer): void {
     {
       title: 'Daily briefing',
       description:
-        'Classes, overdue and upcoming deadlines and unread notifications as a short plan for today (or for another date).',
+        'Classes, overdue and upcoming assignments & deadlines, and unread notifications as a short plan for today (or for another date).',
       argsSchema: z.object({
         date: z
           .string()
@@ -58,7 +58,8 @@ function registerWeeklyPlan(server: McpServer): void {
     'weekly_plan',
     {
       title: 'Weekly plan',
-      description: 'Everything due in the next 7 days grouped by day, with effort estimates and a suggested schedule.',
+      description:
+        'Assignments and deadlines in the next 7 days grouped by day, with effort estimates and a suggested schedule.',
     },
     () =>
       userPrompt([
