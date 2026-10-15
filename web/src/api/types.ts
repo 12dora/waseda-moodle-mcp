@@ -107,3 +107,10 @@ export interface UpdatesResponse {
 export type SettingsPatch = Partial<Omit<UserSettings, 'scheduleOverrides'>> & {
   scheduleOverrides?: Record<string, ScheduleOverride | null>;
 };
+
+/** GET /api/calendar (§17.2). The feed URL itself is only returned by POST, once. */
+export interface CalendarStatus {
+  enabled: boolean;
+  createdAt: IsoJst | null;
+  lastFetchAt: IsoJst | null;
+}

@@ -81,6 +81,11 @@ export const en: PrivacyDoc = {
                 'Timetable',
                 'Weekly class times derived from the attendance sessions of your courses in Moodle, when the syllabus gives none. Kept per user and refreshed weekly.',
               ],
+              [
+                'Calendar subscription',
+                'Calendar apps (only if you turn it on)',
+                'A hash of your private calendar link (the link itself is not stored), the time of the last fetch, and the generated calendar (deadlines and classes) for up to 30 minutes.',
+              ],
               ['Rate-limit counters', 'Abuse protection', 'Keyed by IP address, user or token hash; short-lived.'],
             ],
           },
@@ -113,6 +118,7 @@ export const en: PrivacyDoc = {
               ['Revoked API keys', '90 days after revocation'],
               ['Course snapshots', '30 days after last check'],
               ['Class times from Moodle', '30 days after last check'],
+              ['Calendar subscription', 'Until you turn it off or delete your account'],
               [
                 'Sessions, connect handoffs, OAuth requests, upload drafts',
                 'Until they expire (sessions: 30 days of inactivity; handoffs: 2 minutes; upload links: 30 minutes)',
@@ -149,7 +155,7 @@ export const en: PrivacyDoc = {
           ul: [
             'Apps: revoke an MCP client’s OAuth access.',
             'API keys: revoke a key.',
-            'Settings → Delete account: revokes all OAuth grants and permanently deletes your user record, encrypted token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots and class times from Moodle. Your Moodle account is not affected.',
+            'Settings → Delete account: revokes all OAuth grants and permanently deletes your user record, encrypted token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.',
           ],
         },
         {

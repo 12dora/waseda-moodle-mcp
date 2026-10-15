@@ -7,6 +7,7 @@ import type {
   AppConfig,
   AppGrant,
   AuditEntry,
+  CalendarStatus,
   ConnectRequest,
   ConnectResult,
   CoursesResponse,
@@ -43,6 +44,11 @@ export const listKeys = () => api.get<ApiKey[]>('/api/keys');
 export const createKey = (name: string, scopes: Scope[]) =>
   api.post<{ key: ApiKey; secret: string }>('/api/keys', { name, scopes });
 export const revokeKey = (keyId: string) => api.del<unknown>(`/api/keys/${id(keyId)}`);
+
+export const getCalendar = () => api.get<CalendarStatus>('/api/calendar');
+/** Creates the feed or rotates its secret; the returned URL is shown once. */
+export const createCalendar = () => api.post<{ url: string }>('/api/calendar');
+export const deleteCalendar = () => api.del<unknown>('/api/calendar');
 
 export const listApps = () => api.get<AppGrant[]>('/api/apps');
 export const revokeApp = (grantId: string) => api.del<unknown>(`/api/apps/${id(grantId)}`);

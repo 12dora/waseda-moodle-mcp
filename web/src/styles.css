@@ -837,6 +837,11 @@ fieldset {
 .tab-panel[hidden] {
   display: none; /* the class's display: grid would otherwise beat the hidden attribute */
 }
+.client-steps textarea {
+  field-sizing: content; /* fit multi-line snippets where supported; rows=3 elsewhere */
+  min-height: 2.6em;
+  max-height: 18em;
+}
 
 /* Lists -------------------------------------------------------------------- */
 .due-list,

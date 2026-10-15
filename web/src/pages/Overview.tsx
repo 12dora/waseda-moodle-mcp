@@ -1,33 +1,25 @@
-import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { getDue, getTimetable, getUpdates, listActions } from '../api/endpoints';
 import type { Me } from '../api/types';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { ClassLink } from '../components/ClassLink';
-import { CopyField } from '../components/CopyField';
+import { ClientCard } from '../components/ClientCard';
 import { DueRow } from '../components/DueRow';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBox } from '../components/ErrorBox';
 import { PageHeader } from '../components/Layout';
 import { ScopeBanner } from '../components/ScopeBanner';
 import { Spinner } from '../components/Spinner';
-import { type MessageKey, useI18n, useT } from '../i18n';
+import { useI18n, useT } from '../i18n';
 import { notesText } from '../lib/dayNotes';
 import { outstandingItems } from '../lib/due';
 import { formatDateTime } from '../lib/time';
 import { todayJst } from '../lib/timetable';
 import { useAsync } from '../lib/useAsync';
-import { useConfig, useSession } from '../session';
+import { useSession } from '../session';
 
 const PENDING_LIMIT = 100;
-
-type ClientTab = 'claude' | 'code' | 'other';
-const TABS: ReadonlyArray<{ id: ClientTab; key: MessageKey }> = [
-  { id: 'claude', key: 'overview.client.claude' },
-  { id: 'code', key: 'overview.client.claudeCode' },
-  { id: 'other', key: 'overview.client.other' },
-];
 
 function ConnectionCard({ me }: { me: Me }) {
   const { t, lang } = useI18n();
@@ -143,82 +135,6 @@ function UpdatesCard() {
           ))}
         </ul>
       )}
-    </Card>
-  );
-}
-
-function ClientPanels({ tab, mcpUrl }: { tab: ClientTab; mcpUrl: string }) {
-  const t = useT();
-  const command = `claude mcp add --transport http waseda-moodle ${mcpUrl} --header "Authorization: Bearer <API_KEY>"`;
-  const panel = (id: ClientTab) => ({
-    role: 'tabpanel',
-    id: `panel-${id}`,
-    'aria-labelledby': `tab-${id}`,
-    hidden: tab !== id,
-    className: 'tab-panel',
-  });
-  return (
-    <>
-      <div {...panel('claude')}>
-        <ol className="steps">
-          <li>{t('overview.client.claude1')}</li>
-          <li>{t('overview.client.claude2')}</li>
-          <li>{t('overview.client.claude3')}</li>
-        </ol>
-      </div>
-      <div {...panel('code')}>
-        <p>{t('overview.client.codeDesc')}</p>
-        <CopyField label={t('overview.client.claudeCode')} multiline value={command} />
-        <Link className="btn btn-secondary btn-sm" to="/keys">
-          {t('overview.client.createKey')}
-        </Link>
-      </div>
-      <div {...panel('other')}>
-        <p>{t('overview.client.otherDesc')}</p>
-        <pre className="code">Authorization: Bearer &lt;API_KEY&gt;</pre>
-      </div>
-    </>
-  );
-}
-
-function ClientCard() {
-  const t = useT();
-  const config = useConfig();
-  const [tab, setTab] = useState<ClientTab>('claude');
-
-  const move = (delta: number) => {
-    const i = TABS.findIndex((x) => x.id === tab);
-    const next = TABS[(i + delta + TABS.length) % TABS.length];
-    if (!next) return;
-    setTab(next.id);
-    document.getElementById(`tab-${next.id}`)?.focus();
-  };
-
-  return (
-    <Card title={t('overview.client.title')}>
-      <CopyField label={t('overview.client.mcpUrl')} value={config.mcpUrl} />
-      <div className="tabs" role="tablist" aria-label={t('overview.client.title')}>
-        {TABS.map((x) => (
-          <button
-            key={x.id}
-            type="button"
-            role="tab"
-            id={`tab-${x.id}`}
-            aria-selected={tab === x.id}
-            aria-controls={`panel-${x.id}`}
-            tabIndex={tab === x.id ? 0 : -1}
-            className={`tab${tab === x.id ? ' active' : ''}`}
-            onClick={() => setTab(x.id)}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowRight') move(1);
-              if (e.key === 'ArrowLeft') move(-1);
-            }}
-          >
-            {t(x.key)}
-          </button>
-        ))}
-      </div>
-      <ClientPanels tab={tab} mcpUrl={config.mcpUrl} />
     </Card>
   );
 }

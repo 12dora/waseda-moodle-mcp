@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { deleteAccount, patchSettings } from '../api/endpoints';
 import type { SettingsPatch, UiLang, WriteMode } from '../api/types';
 import { Button } from '../components/Button';
+import { CalendarCard } from '../components/CalendarCard';
 import { Card } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LangSelect } from '../components/LangSelect';
@@ -68,6 +69,8 @@ export function SettingsPage() {
       <Card title={t('settings.lang.title')}>
         <LangSelect showLabel={false} disabled={saving} onChange={(v: UiLang) => save({ uiLang: v })} />
       </Card>
+
+      <CalendarCard />
 
       <Card title={t('settings.account.title')} className="card-danger">
         <dl className="kv">
