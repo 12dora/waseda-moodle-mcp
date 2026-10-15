@@ -11,6 +11,7 @@ import { Spinner } from '../components/Spinner';
 import { useToast } from '../components/Toast';
 import { useT } from '../i18n';
 import { rememberReturn, takeReturn } from '../lib/returnTo';
+import { PrivacyLink } from './Privacy';
 
 /** Removes `code` (single-use handoff, §11) from the address bar and history. */
 function stripCode(): void {
@@ -113,6 +114,7 @@ export function ConnectPage() {
         {codeError != null && <ErrorBox error={codeError} />}
         <ConnectMethods onConnect={doConnect} />
         <p className="fine-print">{t('connect.privacy')}</p>
+        <PrivacyLink />
       </div>
     </PublicShell>
   );

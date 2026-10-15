@@ -19,6 +19,7 @@ import { KeysPage } from './pages/Keys';
 import { MyCoursesPage } from './pages/MyCourses';
 import { OAuthConsentPage } from './pages/OAuthConsent';
 import { OverviewPage } from './pages/Overview';
+import { PrivacyPage } from './pages/Privacy';
 import { SettingsPage } from './pages/Settings';
 import { TimetablePage } from './pages/Timetable';
 import { ConfigProvider, RequireSession } from './session';
@@ -88,7 +89,19 @@ function Boot() {
   );
 }
 
+/** Public static pages that must render without config, session or the paused gate. */
+function isStandalonePublicPath(): boolean {
+  return window.location.pathname.replace(/\/+$/, '') === '/privacy';
+}
+
 export function App() {
+  if (isStandalonePublicPath()) {
+    return (
+      <I18nProvider>
+        <PrivacyPage />
+      </I18nProvider>
+    );
+  }
   return (
     <I18nProvider>
       <ErrorBoundary>

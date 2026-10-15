@@ -1,0 +1,44 @@
+.privacy {
+  max-width: 760px;
+  margin: 0 auto;
+  display: grid;
+  gap: 12px;
+  line-height: 1.6;
+}
+.privacy h2 {
+  margin: 20px 0 0;
+  font-size: 1.15rem;
+}
+.privacy p,
+.privacy ul {
+  margin: 0;
+}
+.privacy ul {
+  padding-left: 1.25em;
+}
+.privacy-table-wrap {
+  overflow-x: auto;
+}
+.privacy table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+.privacy th,
+.privacy td {
+  text-align: left;
+  vertical-align: top;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.privacy-meta {
+  color: var(--text-muted);
+}
+.privacy-footer-link {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.privacy section {
+  display: grid;
+  gap: 8px;
+}
