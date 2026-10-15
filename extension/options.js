@@ -22,22 +22,32 @@ function say(key, cls = '') {
 
 let stored = await chrome.storage.local.get(['serviceUrl', 'consent']);
 
-/** Reflects the typed URL: privacy link for a valid URL; the box stays ticked only if consent exists for that URL. */
+// The URL the consent box state belongs to: typing keeps the box as is until the URL itself changes.
+let boxOrigin;
+
+/** Reflects the typed URL: privacy link for a valid URL; a new URL resets the box to its stored consent. */
 function syncForm() {
   const origin = normalizeServiceUrl(input.value);
   privacyLink.hidden = !origin;
   if (origin) privacyLink.href = privacyUrl(origin);
-  consentBox.checked = hasConsentFor(stored.consent, origin);
+  if (origin !== boxOrigin) {
+    consentBox.checked = hasConsentFor(stored.consent, origin);
+    boxOrigin = origin;
+  }
   syncBtn.disabled = !hasConsentFor(stored.consent, stored.serviceUrl);
 }
 
 input.value = stored.serviceUrl || '';
 syncForm();
 input.addEventListener('input', syncForm);
+consentBox.addEventListener('change', () => {
+  boxOrigin = normalizeServiceUrl(input.value);
+});
 
 async function clearAll() {
   await chrome.storage.local.remove(['serviceUrl', 'consent', 'lastSync']);
   stored = {};
+  boxOrigin = undefined;
   syncForm();
   say('optionsCleared');
 }
@@ -45,6 +55,7 @@ async function clearAll() {
 async function withdrawConsent() {
   await chrome.storage.local.remove('consent');
   stored = { ...stored, consent: undefined };
+  boxOrigin = undefined;
   syncForm();
   say('errorConsentRequired', 'warn');
 }
@@ -55,7 +66,11 @@ document.getElementById('form').addEventListener('submit', async (e) => {
   if (!raw) return clearAll();
   const origin = normalizeServiceUrl(raw);
   if (!origin) return say('errorHttpsRequired', 'warn');
-  if (!consentBox.checked) return withdrawConsent();
+  if (!consentBox.checked) {
+    // Unticking the saved URL withdraws its consent; an unticked new URL is refused and the saved one is kept.
+    if (origin === stored.serviceUrl && stored.consent) return withdrawConsent();
+    return say('errorConsentRequired', 'warn');
+  }
   // Must run directly in the click handler's user gesture.
   const granted = await chrome.permissions.request({ origins: [`${origin}/*`] }).catch(() => false);
   if (!granted) return say('errorPermissionDenied', 'warn');
