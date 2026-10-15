@@ -55,7 +55,7 @@ Edit `wrangler.local.jsonc`:
 |---|---|---|---|
 | `PUBLIC_URL` | var | `https://wasemoodle.example.com` | Public origin, no trailing slash. Used for the MCP resource URL (`/mcp`), OAuth redirects, signed file links and the bookmarklet. Must match the domain you serve from. |
 | `REGISTRATION` | var | `allowlist` | `open`: anyone with a valid Waseda Moodle token can sign up. Any other value: allowlist. |
-| `ADMIN_MOODLE_USERIDS` | var | `""` | Moodle numeric user ids of the operators who can open the usage statistics page in the console; same format as above. Empty means nobody. |
+| `ADMIN_MOODLE_USERIDS` | var | `""` | Moodle numeric user ids of the operators who can open the usage statistics page in the console; separated by commas, spaces or semicolons. Empty means nobody. |
 | `ALLOWED_MOODLE_USERIDS` | var | `""` | Moodle numeric user ids allowed to create an account in allowlist mode; separated by commas, spaces or semicolons. Existing users can always reconnect. |
 | `SYLLABUS_LOOKUP` | var | `on` | `off` disables fetching the public Waseda syllabus (the timetable then has no slots). |
 | `EXTENSION_URL` | var (optional) | unset | Install URL for the browser extension shown in the console. Unset hides the link. |

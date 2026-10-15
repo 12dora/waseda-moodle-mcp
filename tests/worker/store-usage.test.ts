@@ -45,10 +45,11 @@ describe('recordToolCall', () => {
 
   it('counts a user once per day, week and month however often they call', async () => {
     for (let i = 0; i < 4; i++) await call(1, 'Claude');
-    for (const period of [P.day, P.week, P.month]) {
-      expect(value(period, 'active')).toBe(1);
-      expect(value(period, 'client_active', 'Claude')).toBe(1);
-    }
+    for (const period of [P.day, P.week, P.month]) expect(value(period, 'active')).toBe(1);
+    expect(value(P.month, 'client_active', 'Claude')).toBe(1);
+    // the per-client split is only kept for the month
+    expect(value(P.day, 'client_active', 'Claude')).toBe(0);
+    expect(value(P.week, 'client_active', 'Claude')).toBe(0);
     expect(value(P.day, 'calls', 'get_due_items')).toBe(4);
   });
 
@@ -57,7 +58,7 @@ describe('recordToolCall', () => {
     resetUsageMemory(); // another isolate: no memo, no cached salt
     await call(1, 'Claude');
     expect(value(P.day, 'active')).toBe(1);
-    expect(value(P.week, 'client_active', 'Claude')).toBe(1);
+    expect(value(P.month, 'client_active', 'Claude')).toBe(1);
     expect(count('usage_salts')).toBe(3);
     expect(value(P.day, 'calls', 'get_due_items')).toBe(2);
   });
@@ -69,8 +70,37 @@ describe('recordToolCall', () => {
     await call(1, 'Cursor');
     expect(value(P.day, 'active')).toBe(2);
     expect(value(P.month, 'active')).toBe(2);
-    expect(value(P.day, 'client_active', 'Claude')).toBe(2);
-    expect(value(P.day, 'client_active', 'Cursor')).toBe(1);
+    expect(value(P.month, 'client_active', 'Claude')).toBe(2);
+    expect(value(P.month, 'client_active', 'Cursor')).toBe(1);
+  });
+
+  it('does not count again when the dedup key already exists, and counts when it is new', async () => {
+    await call(1, 'Claude');
+    t.sqlite.prepare("DELETE FROM usage_counts WHERE metric IN ('active', 'client_active')").run();
+    resetUsageMemory();
+    await call(1, 'Claude'); // keys are already stored: the counters must not move
+    expect(value(P.day, 'active')).toBe(0);
+    expect(value(P.month, 'client_active', 'Claude')).toBe(0);
+    await call(2, 'Claude'); // a new user is counted exactly once
+    expect(value(P.day, 'active')).toBe(1);
+    expect(value(P.month, 'client_active', 'Claude')).toBe(1);
+  });
+
+  it('records the call, the dedup keys and their counts atomically', async () => {
+    t.sqlite
+      .prepare(
+        `CREATE TRIGGER fail_active BEFORE INSERT ON usage_counts WHEN NEW.metric = 'active'
+         BEGIN SELECT RAISE(ABORT, 'boom'); END`,
+      )
+      .run();
+    await expect(call(1, 'Claude')).rejects.toThrow();
+    expect(count('usage_seen')).toBe(0);
+    expect(value(P.day, 'calls', 'get_due_items')).toBe(0);
+
+    t.sqlite.prepare('DROP TRIGGER fail_active').run();
+    await call(1, 'Claude'); // not memoised after the failure: recorded now
+    expect(value(P.day, 'active')).toBe(1);
+    expect(value(P.day, 'calls', 'get_due_items')).toBe(1);
   });
 
   it('starts a new day and keeps the week and month', async () => {
@@ -88,9 +118,9 @@ describe('recordToolCall', () => {
   it('stores no user id: keys are truncated hashes that differ per period and metric', async () => {
     await call(1001, 'Claude');
     const keys = t.sqlite.prepare('SELECT period, key FROM usage_seen').all() as { period: string; key: string }[];
-    expect(keys).toHaveLength(6);
+    expect(keys).toHaveLength(4); // active for day, week, month + the month's client split
     for (const k of keys) expect(k.key).toMatch(/^[0-9a-f]{32}$/);
-    expect(new Set(keys.map((k) => k.key)).size).toBe(6);
+    expect(new Set(keys.map((k) => k.key)).size).toBe(4);
   });
 });
 

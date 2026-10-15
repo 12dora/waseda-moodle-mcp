@@ -54,8 +54,15 @@ export function logMethods(db: D1Database): LogMethods {
   };
 }
 
-/** Daily retention sweep. Returns the number of rows removed/expired per table. */
+/** Daily retention sweep. Returns the number of rows removed/expired per table. The usage purge runs independently of the rest. */
 export async function purgeExpired(db: D1Database, now: number): Promise<Record<string, number>> {
+  const [core, usage] = await Promise.allSettled([purgeTables(db, now), purgeUsage(db, now)]);
+  if (core.status === 'rejected') throw core.reason;
+  if (usage.status === 'rejected') throw usage.reason;
+  return { ...core.value, ...usage.value };
+}
+
+async function purgeTables(db: D1Database, now: number): Promise<Record<string, number>> {
   const run = (sql: string, ...args: unknown[]) => changes(db.prepare(sql).bind(...args));
   return {
     audit: await run('DELETE FROM audit WHERE at < ?', now - AUDIT_RETENTION_MS),
@@ -79,6 +86,5 @@ export async function purgeExpired(db: D1Database, now: number): Promise<Record<
       'DELETE FROM inferred_schedules WHERE checked_at < ?',
       now - INFERRED_SCHEDULE_RETENTION_MS,
     ),
-    ...(await purgeUsage(db, now)),
   };
 }

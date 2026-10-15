@@ -34,7 +34,7 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 | Class times from Moodle | Timetable | Weekly class times derived from the attendance sessions of your courses in Moodle, when the syllabus gives none. Kept per user and refreshed weekly. |
 | Calendar subscription | Calendar apps (only if you turn it on) | A hash of your private calendar link (the link itself is not stored), the time of the last fetch, and the generated calendar (assignments & deadlines and classes) for up to 30 minutes. |
 | Rate-limit counters | Abuse protection | Keyed by IP address, user or token hash; short-lived. |
-| Usage statistics | To see how the service is used | Daily counts only (tool calls per tool, AI client type, number of active users). No per-user history; active users are de-duplicated with keys that are deleted when the day, week or month ends. Visible to the operator only. |
+| Usage statistics | To see how the service is used | Counts per day (tool calls and failures per tool, calls per AI client type) and the number of active users per day, week and month (plus per AI client type per month). The counts carry no user identifiers and are not linked to any account, so they remain after account deletion. Active users are de-duplicated with keys that are deleted at the first daily cleanup after the day, week or month ends. Visible to the operator only. |
 | Landing page visits | To see how many people visit the introduction pages | Cloudflare Web Analytics on the public introduction pages (no cookies, no cross-site tracking), aggregated by Cloudflare. |
 
 ## What is never collected

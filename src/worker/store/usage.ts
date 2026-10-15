@@ -7,7 +7,7 @@
 import { jstDay, USAGE_COUNTS_RETENTION_MS, type UsagePeriods, usagePeriods } from '../../core/usage';
 import { changes } from './rows';
 
-export interface ToolCall {
+interface ToolCall {
   userId: number;
   /** Fixed label from clientLabel(). */
   client: string;
@@ -46,18 +46,36 @@ async function importSalt(salt: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', enc.encode(salt), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
 }
 
-/** The period's salt: created on first use (INSERT OR IGNORE, so concurrent isolates agree on the stored one). */
-async function periodKey(db: D1Database, period: string): Promise<PeriodKey> {
-  const cached = saltCache.get(period);
-  if (cached) return cached;
-  const fresh = toHex(crypto.getRandomValues(new Uint8Array(32)));
-  await db.prepare('INSERT OR IGNORE INTO usage_salts (period, salt) VALUES (?, ?)').bind(period, fresh).run();
-  const row = await db.prepare('SELECT salt FROM usage_salts WHERE period = ?').bind(period).first<{ salt: string }>();
-  const salt = row?.salt ?? fresh;
-  const entry = { salt, key: await importSalt(salt) };
-  if (saltCache.size >= 16) saltCache.clear();
-  saltCache.set(period, entry);
-  return entry;
+/**
+ * Salts of the given periods, cached per isolate. Uncached ones are created and read back in ONE batch (INSERT OR
+ * IGNORE first, so concurrent isolates agree on the stored salt); a salt that is not stored is never used.
+ */
+async function periodKeys(db: D1Database, periods: string[]): Promise<Map<string, PeriodKey>> {
+  const out = new Map<string, PeriodKey>();
+  const missing = periods.filter((period) => {
+    const cached = saltCache.get(period);
+    if (cached) out.set(period, cached);
+    return !cached;
+  });
+  if (missing.length === 0) return out;
+  const creates = missing.map((period) =>
+    db
+      .prepare('INSERT OR IGNORE INTO usage_salts (period, salt) VALUES (?, ?)')
+      .bind(period, toHex(crypto.getRandomValues(new Uint8Array(32)))),
+  );
+  const marks = missing.map(() => '?').join(', ');
+  const read = db.prepare(`SELECT period, salt FROM usage_salts WHERE period IN (${marks})`).bind(...missing);
+  const res = await db.batch([...creates, read]);
+  const rows = (res[creates.length]?.results ?? []) as { period: string; salt: string }[];
+  if (saltCache.size + missing.length > 16) saltCache.clear();
+  for (const period of missing) {
+    const salt = rows.find((r) => r.period === period)?.salt;
+    if (!salt) throw new Error('usage salt missing');
+    const entry = { salt, key: await importSalt(salt) };
+    saltCache.set(period, entry);
+    out.set(period, entry);
+  }
+  return out;
 }
 
 async function seenKey(pk: PeriodKey, subject: string): Promise<string> {
@@ -87,34 +105,51 @@ interface Pending {
   subject: string;
 }
 
-/** The (period, metric) pairs this isolate has not yet recorded for the user. */
+/**
+ * The (period, metric) pairs this isolate has not yet recorded for the user. Active users are counted for the day,
+ * week and month; the per-client split only for the month (the only one the report reads).
+ */
 function pendingSeen(p: UsagePeriods, c: ToolCall): Pending[] {
   const out: Pending[] = [];
   for (const period of [p.day, p.week, p.month]) {
     out.push({ period, metric: 'active', dim: '', memo: `${period}|${c.userId}|`, subject: `${c.userId}|` });
-    out.push({
-      period,
-      metric: 'client_active',
-      dim: c.client,
-      memo: `${period}|${c.userId}|${c.client}`,
-      subject: `${c.userId}|${c.client}`,
-    });
   }
+  out.push({
+    period: p.month,
+    metric: 'client_active',
+    dim: c.client,
+    memo: `${p.month}|${c.userId}|${c.client}`,
+    subject: `${c.userId}|${c.client}`,
+  });
   return out.filter((x) => !seenMemo.has(x.memo));
 }
 
-/** Registers first sightings in usage_seen and counts the ones that were new to the period. */
-async function recordActive(db: D1Database, p: UsagePeriods, c: ToolCall): Promise<void> {
-  const todo = pendingSeen(p, c);
-  if (todo.length === 0) return;
-  const inserts: D1PreparedStatement[] = [];
+/**
+ * Per entry: remember the key, then count it only if that insert really added a row (`changes() = 1` refers to the
+ * statement right before, on the same connection). Inside one batch the key and its count succeed or fail together.
+ */
+async function seenStatements(db: D1Database, todo: Pending[]): Promise<D1PreparedStatement[]> {
+  if (todo.length === 0) return [];
+  const salts = await periodKeys(db, [...new Set(todo.map((x) => x.period))]);
+  const out: D1PreparedStatement[] = [];
   for (const x of todo) {
-    const key = await seenKey(await periodKey(db, x.period), x.subject);
-    inserts.push(db.prepare('INSERT OR IGNORE INTO usage_seen (period, key) VALUES (?, ?)').bind(x.period, key));
+    const pk = salts.get(x.period);
+    if (!pk) throw new Error('usage salt missing');
+    const key = await seenKey(pk, x.subject);
+    out.push(
+      db.prepare('INSERT OR IGNORE INTO usage_seen (period, key) VALUES (?, ?)').bind(x.period, key),
+      db
+        .prepare(
+          `INSERT INTO usage_counts (period, metric, dim, value) SELECT ?, ?, ?, 1 WHERE changes() = 1
+           ON CONFLICT(period, metric, dim) DO UPDATE SET value = value + 1`,
+        )
+        .bind(x.period, x.metric, x.dim),
+    );
   }
-  const res = await db.batch(inserts);
-  const counts = todo.filter((_, i) => res[i]?.meta?.changes === 1).map((x) => bump(db, x.period, x.metric, x.dim));
-  if (counts.length > 0) await db.batch(counts);
+  return out;
+}
+
+function remember(todo: Pending[]): void {
   if (seenMemo.size + todo.length > MEMO_CAP) seenMemo.clear();
   for (const x of todo) seenMemo.add(x.memo);
 }
@@ -123,8 +158,9 @@ export function usageMethods(db: D1Database): UsageMethods {
   return {
     async recordToolCall(c) {
       const p = usagePeriods(c.now);
-      await db.batch(callCounters(db, p.day, c));
-      await recordActive(db, p, c);
+      const todo = pendingSeen(p, c);
+      await db.batch([...callCounters(db, p.day, c), ...(await seenStatements(db, todo))]);
+      remember(todo); // only after the whole batch went through
     },
   };
 }

@@ -90,7 +90,7 @@ export const en: PrivacyDoc = {
               [
                 'Usage statistics',
                 'To see how the service is used',
-                'Daily counts only (tool calls per tool, AI client type, number of active users). No per-user history; active users are de-duplicated with keys that are deleted when the day, week or month ends. Visible to the operator only.',
+                'Counts per day (tool calls and failures per tool, calls per AI client type) and the number of active users per day, week and month (plus per AI client type per month). The counts carry no user identifiers and are not linked to any account, so they remain after account deletion. Active users are de-duplicated with keys that are deleted at the first daily cleanup after the day, week or month ends. Visible to the operator only.',
               ],
               [
                 'Landing page visits',
