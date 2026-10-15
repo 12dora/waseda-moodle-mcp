@@ -5,7 +5,7 @@
  * updates_since does not report section summaries / section names.
  */
 
-import type { MoodleApi, ServiceContext } from '../../context';
+import type { CourseSnapshotRow, MoodleApi, ServiceContext } from '../../context';
 import { BudgetExceeded, MoodleError, MoodleUnavailable } from '../../errors';
 import { isoJst, nowMs } from '../../time';
 import type { Course } from '../../types';
@@ -207,12 +207,23 @@ class Refresher {
   }
 }
 
+const snapshotReads = new WeakMap<ServiceContext, Promise<CourseSnapshotRow[]>>();
+
+/** One D1 read per request: the overview's stored snapshots and the cached due sweep share it. */
+function snapshotRowsOf(ctx: ServiceContext): Promise<CourseSnapshotRow[]> {
+  const found = snapshotReads.get(ctx);
+  if (found) return found;
+  const pending = ctx.store.getCourseSnapshots(ctx.user.id);
+  snapshotReads.set(ctx, pending);
+  return pending;
+}
+
 async function loadEntries(
   ctx: ServiceContext,
   courses: readonly Course[],
   limit: { now: number; maxAgeMs: number },
 ): Promise<Entry[]> {
-  const rows = new Map((await ctx.store.getCourseSnapshots(ctx.user.id)).map((r) => [r.courseId, r]));
+  const rows = new Map((await snapshotRowsOf(ctx)).map((r) => [r.courseId, r]));
   return courses.map((course) => {
     const row = rows.get(course.id);
     const snap = row ? parseSnapshot(row.json) : null;
@@ -228,6 +239,15 @@ async function loadEntries(
 }
 
 const isFresh = (e: Entry, now: number) => e.snap !== null && !e.aged && now - e.checkedAt <= FRESH_MS;
+
+/** Snapshots as stored (possibly stale or missing); never calls Moodle and does not remember the scope. */
+export async function loadStoredSnapshots(
+  ctx: ServiceContext,
+  courses: readonly Course[],
+): Promise<Pick<RefreshResult, 'snapshots' | 'stats'>> {
+  const now = nowMs();
+  return summarize(await loadEntries(ctx, courses, { now, maxAgeMs: INTERACTIVE_MAX_AGE_MS }), now);
+}
 
 function summarize(entries: readonly Entry[], now: number): Pick<RefreshResult, 'snapshots' | 'stats'> {
   const snapshots = new Map<number, CourseSnapshot>();

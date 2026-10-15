@@ -370,8 +370,15 @@ export async function lookupTerms(
  * left of the request's fetches. Ids never presented, or not fetched yet, have no key. This is how the timetable reuses the scope's
  * lookup without a second Moodle call for idnumbers.
  */
-export function lookupSeenCourses(ctx: ServiceContext, ids: number[]): Promise<Map<number, SyllabusInfo | null>> {
+export function lookupSeenCourses(
+  ctx: ServiceContext,
+  ids: number[],
+  opts: { syllabusLookup?: boolean } = {},
+): Promise<Map<number, SyllabusInfo | null>> {
   const state = requestState(ctx);
   const courses = ids.flatMap((id) => state.seen.get(id) ?? []);
-  return lookupTerms(ctx, courses, { syllabusLookup: state.enabled, sharedBudget: true });
+  return lookupTerms(ctx, courses, {
+    syllabusLookup: opts.syllabusLookup ?? state.enabled,
+    sharedBudget: true,
+  });
 }

@@ -12,6 +12,7 @@ import { filesRoutes } from '../files-routes';
 import { errorPayload } from '../http-errors';
 import { landingRoutes } from '../landing';
 import { accountRoutes } from './account';
+import { coursesViewRoutes } from './courses-view';
 import { dataRoutes } from './data';
 import { handoffRoutes } from './handoff';
 import { keyRoutes } from './keys';
@@ -52,6 +53,7 @@ export function createApi(): Hono<AppEnv> {
   app.route('/', handoffRoutes());
   app.route('/', keyRoutes());
   app.route('/', dataRoutes());
+  app.route('/', coursesViewRoutes());
   app.route('/', calendarRoutes());
   app.route('/', landingRoutes());
   app.route('/', oauthRoutes());

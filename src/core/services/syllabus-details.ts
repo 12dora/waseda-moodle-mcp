@@ -161,3 +161,77 @@ export async function getSyllabusDetails(ctx: ServiceContext, courseId: number):
   const url = found.kind === 'none' ? null : pageUrl(pKey, lang); // a failed page may still be opened by hand
   return { ...base, status: FAILURE_STATUS[found.kind], page: null, url };
 }
+
+/** found = a cached page; not-found = cached "no page" (or no page can exist); unknown = nothing usable cached. */
+export type CachedSyllabusStatus = 'found' | 'not-found' | 'unknown';
+
+interface CachedSyllabusPage {
+  url: string | null;
+  page: SyllabusPage | null;
+  status: CachedSyllabusStatus;
+}
+
+type CacheRow = { json: string; fetchedAt: number } | undefined;
+
+/** What one cached row says: a page (or the previous page of a failed refresh), a fresh "none", or nothing. */
+function cachedOutcome(row: CacheRow, at: number): { page: SyllabusPage } | 'none' | null {
+  if (!row) return null;
+  try {
+    const { outcome, prev } = interpret(JSON.parse(row.json) as Stored, at - row.fetchedAt);
+    if (outcome?.kind === 'page') return { page: outcome.page };
+    if (prev) return { page: prev };
+    return outcome?.kind === 'none' ? 'none' : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The requested language first, then (English requested) Japanese — like findPage, but from the cache only. */
+function cachedForTarget(
+  t: Target,
+  rows: ReadonlyMap<string, { json: string; fetchedAt: number }>,
+  at: number,
+): { page: SyllabusPage | null; status: CachedSyllabusStatus } {
+  const langs: SyllabusLang[] = t.lang === 'en' ? ['en', 'ja'] : ['ja'];
+  let allNone = true;
+  for (const lang of langs) {
+    const got = cachedOutcome(rows.get(cacheKey({ ...t, lang })), at);
+    if (got !== null && got !== 'none') return { page: got.page, status: 'found' };
+    if (got === null) allNone = false;
+  }
+  return { page: null, status: allNone ? 'not-found' : 'unknown' };
+}
+
+function cacheKeysFor(t: Target): string[] {
+  const ja = cacheKey({ ...t, lang: 'ja' });
+  return t.lang === 'en' ? [cacheKey(t), ja] : [ja];
+}
+
+/** Details pages already in D1; never fetches. Every requested id is present (`page: null` and a status on miss). */
+export async function readCachedSyllabusPages(
+  ctx: ServiceContext,
+  courseIds: readonly number[],
+): Promise<Map<number, CachedSyllabusPage>> {
+  const lang: SyllabusLang = /^en/i.test(ctx.user.lang) ? 'en' : 'ja';
+  const wanted: Array<{ id: number; t: Target }> = [];
+  for (const id of courseIds) {
+    const idnumber = seenIdnumber(ctx, id);
+    const pKey = idnumber ? syllabusPKey(idnumber) : null;
+    if (idnumber && pKey) wanted.push({ id, t: { idnumber, pKey, lang } });
+  }
+  let rows = new Map<string, { json: string; fetchedAt: number }>();
+  try {
+    rows = await ctx.store.getSyllabusCache(wanted.flatMap(({ t }) => cacheKeysFor(t)));
+  } catch {
+    /* unreadable cache is a miss */
+  }
+  const at = nowMs();
+  const out = new Map<number, CachedSyllabusPage>();
+  // no idnumber / pKey: no per-class page can exist (getSyllabusDetails says not-a-class)
+  for (const id of courseIds) out.set(id, { url: null, page: null, status: 'not-found' });
+  for (const { id, t } of wanted) {
+    const { page, status } = cachedForTarget(t, rows, at);
+    out.set(id, { url: page ? pageUrl(t.pKey, page.lang) : null, page, status });
+  }
+  return out;
+}

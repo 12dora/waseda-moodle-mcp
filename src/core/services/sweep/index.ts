@@ -116,25 +116,27 @@ export async function collectSweepItems(
   return { items: [...attached.activities, ...texts], calendar: attached.calendar, stats: refresh.stats };
 }
 
-/** New / changed modules of the scope courses (or one course) within the last `sinceDays` (default 7). */
+/**
+ * New / changed modules of the scope courses (or one course) within the last `sinceDays` (default 7).
+ */
 export async function getCourseUpdates(
   ctx: ServiceContext,
   opts: { sinceDays?: number; courseId?: number } = {},
 ): Promise<{ updates: CourseUpdate[]; stats: SweepStats }> {
   const targets = pickCourses(await resolveScope(ctx), opts.courseId);
   const sinceMs = nowMs() - clamp(opts.sinceDays, UPDATES_DEFAULT_DAYS, UPDATES_MAX_DAYS) * DAY_MS;
-  const { snapshots, stats } = await refreshSnapshots(ctx, targets, {
+  const loaded = await refreshSnapshots(ctx, targets, {
     maxCalls: MAX_CALLS,
     maxFull: MAX_FULL,
     maxLarge: MAX_LARGE,
     rememberScope: opts.courseId === undefined, // a one-course call must not replace the remembered scope
   });
   const updates = targets.flatMap((c) => {
-    const snap = snapshots.get(c.id);
+    const snap = loaded.snapshots.get(c.id);
     return snap ? courseUpdates(c, snap, sinceMs) : [];
   });
   updates.sort((a, b) => b.at.localeCompare(a.at));
-  return { updates, stats };
+  return { updates, stats: loaded.stats };
 }
 
 /** Search module / file / section names in the snapshots of the scope courses (or `courseId`). */

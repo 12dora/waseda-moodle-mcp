@@ -15,6 +15,9 @@ export const HANDOFF_PATH = '/api/connect/handoff';
 /** Cookie-less cross-origin endpoints: protected by their payload and a rate limit instead of the CSRF header. */
 export const CSRF_EXEMPT_PATHS: ReadonlySet<string> = new Set([EXTENSION_REFRESH_PATH, HANDOFF_PATH]);
 
+/** Moodle course ids are signed 32-bit; the same bound as GET /api/due. */
+export const MAX_COURSE_ID = 2_147_483_647;
+
 const MAX_BODY_BYTES = 64 * 1024;
 
 export const storeOf = (env: Env): D1Store => createD1Store(env.DB);

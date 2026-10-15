@@ -454,3 +454,5 @@ export interface ActionResult {
   message: string;
   url: string | null;
 }
+
+export type * from './course-overview-types';

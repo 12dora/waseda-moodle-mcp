@@ -6,7 +6,7 @@
 
 import type { ServiceContext } from '../../context';
 import { nowMs } from '../../time';
-import type { Course, TimetableUnknown } from '../../types';
+import type { Course, ScheduleOverride, TimetableUnknown } from '../../types';
 import { lookupSeenCourses, type SyllabusInfo } from '../syllabus';
 import {
   hasPartialSchedule,
@@ -64,11 +64,12 @@ function fallbackOutcome(ctx: ServiceContext, c: Unresolved, inference: Inferenc
   return { entry, unknown: { courseId: course.id, courseName: course.name, url: course.url, reason } };
 }
 
-async function inferFor(ctx: ServiceContext, list: Unresolved[]): Promise<Inference> {
+async function inferFor(ctx: ServiceContext, list: Unresolved[], opts: { live: boolean }): Promise<Inference> {
   if (list.length === 0) return { found: new Map(), checked: new Set() };
   return inferSchedules(
     ctx,
     list.map(({ course }) => ({ id: course.id, start: toSec(course.start), end: toSec(course.end) })),
+    opts,
   );
 }
 
@@ -76,24 +77,21 @@ async function inferFor(ctx: ServiceContext, list: Unresolved[]): Promise<Infere
  * One entry and/or one unknown per course, in the order given; courses the user set to `none` are left out. User times
  * first, then the syllabus; what it cannot place completely goes to ONE Moodle attendance lookup. Uses the cached
  * syllabus; uncached courses are fetched within the request's syllabus budget.
+ * `attendance: 'cached'` reads stored inferred schedules and the syllabus cache only (no Moodle, no public fetch).
  */
-export async function resolveCourses(ctx: ServiceContext, courses: Course[]): Promise<ResolvedCourses> {
-  const overrides = ctx.user.settings.scheduleOverrides ?? {};
+export async function resolveCourses(
+  ctx: ServiceContext,
+  courses: Course[],
+  opts: { attendance?: 'live' | 'cached' } = {},
+): Promise<ResolvedCourses> {
+  const cached = opts.attendance === 'cached';
   const infos = await lookupSeenCourses(
     ctx,
     courses.map((c) => c.id),
+    cached ? { syllabusLookup: false } : {},
   );
-  const outcomes = new Map<number, Outcome>();
-  const unresolved: Unresolved[] = [];
-  for (const course of courses) {
-    const info = infos.get(course.id) ?? null;
-    const pending = !infos.has(course.id);
-    const override = overrides[String(course.id)];
-    if (override !== undefined) outcomes.set(course.id, entryOnly(overrideEntry(course, override, info)));
-    else if (info && hasUsableSchedule(info)) outcomes.set(course.id, entryOnly(syllabusEntry(course, info)));
-    else unresolved.push({ course, info, pending });
-  }
-  const inference = await inferFor(ctx, unresolved);
+  const { outcomes, unresolved } = placeKnown(courses, infos, ctx.user.settings.scheduleOverrides ?? {});
+  const inference = await inferFor(ctx, unresolved, { live: !cached });
   for (const c of unresolved) outcomes.set(c.course.id, fallbackOutcome(ctx, c, inference));
   const out: ResolvedCourses = { entries: [], unknown: [] };
   for (const course of courses) {
@@ -102,4 +100,22 @@ export async function resolveCourses(ctx: ServiceContext, courses: Course[]): Pr
     if (outcome?.unknown) out.unknown.push(outcome.unknown);
   }
   return out;
+}
+
+/** User times first, then a usable syllabus schedule; everything else is left for the Moodle attendance lookup. */
+function placeKnown(
+  courses: Course[],
+  infos: Map<number, SyllabusInfo | null>,
+  overrides: Record<string, ScheduleOverride>,
+): { outcomes: Map<number, Outcome>; unresolved: Unresolved[] } {
+  const outcomes = new Map<number, Outcome>();
+  const unresolved: Unresolved[] = [];
+  for (const course of courses) {
+    const info = infos.get(course.id) ?? null;
+    const override = overrides[String(course.id)];
+    if (override !== undefined) outcomes.set(course.id, entryOnly(overrideEntry(course, override, info)));
+    else if (info && hasUsableSchedule(info)) outcomes.set(course.id, entryOnly(syllabusEntry(course, info)));
+    else unresolved.push({ course, info, pending: !infos.has(course.id) });
+  }
+  return { outcomes, unresolved };
 }

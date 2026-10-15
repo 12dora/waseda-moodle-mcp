@@ -17,7 +17,7 @@ import type {
   UserRow,
 } from '../../src/core/context';
 import { MoodleError } from '../../src/core/errors';
-import type { Scope, UserSettings } from '../../src/core/types';
+import type { InferredSchedule, Scope, UserSettings } from '../../src/core/types';
 import { DEFAULT_SETTINGS } from '../../src/core/types';
 
 // ------------------------------------------------------------------ fake Moodle
@@ -102,6 +102,7 @@ interface FakeStoreState {
   snapshotWrites: CourseSnapshotRow[];
   syllabusCache: Map<string, { json: string; fetchedAt: number }>;
   sweptAt: Map<number, number>;
+  inferredSchedules: Map<string, InferredSchedule>; // `${userId}:${courseId}`
 }
 
 interface FakeStore {
@@ -119,6 +120,7 @@ function makeFakeStore(): FakeStore {
     snapshotWrites: [],
     syllabusCache: new Map(),
     sweptAt: new Map(),
+    inferredSchedules: new Map(),
   };
 
   const impl: Partial<Store> = {
@@ -145,6 +147,18 @@ function makeFakeStore(): FakeStore {
     setScopeCourseIds: async (userId, ids) => {
       const cur = state.users.get(userId);
       if (cur) state.users.set(userId, { ...cur, scopeCourseIds: [...ids] });
+    },
+
+    getInferredSchedules: async (userId) => {
+      const out = new Map<number, InferredSchedule>();
+      for (const [k, v] of state.inferredSchedules) {
+        const [owner, courseId] = k.split(':').map(Number);
+        if (owner === userId && courseId !== undefined) out.set(courseId, v);
+      }
+      return out;
+    },
+    putInferredSchedules: async (userId, schedules) => {
+      for (const [courseId, s] of schedules) state.inferredSchedules.set(`${userId}:${courseId}`, s);
     },
 
     getCourseSnapshots: async (userId) => [...state.courseSnapshots.values()].filter((r) => r.userId === userId),

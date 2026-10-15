@@ -9,10 +9,9 @@ import { getTimetable } from '../../core/services/timetable';
 import { isoJst } from '../../core/time';
 import type { ActionStatus } from '../../core/types';
 import type { AppEnv } from '../auth';
-import { consoleContext, intParam, oneOf, session, storeOf } from './shared';
+import { consoleContext, intParam, MAX_COURSE_ID, oneOf, session, storeOf } from './shared';
 
 const ACTION_STATUSES: readonly ActionStatus[] = ['pending', 'executed', 'cancelled', 'expired', 'failed'];
-const MAX_COURSE_ID = 2_147_483_647;
 
 export function dataRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -29,7 +28,7 @@ export function dataRoutes(): Hono<AppEnv> {
     );
   });
 
-  // every enrolled course with its kind / mine / suggested flags; the SPA's "My courses" page edits the scope
+  // every enrolled course with its kind / mine / suggested flags; Settings → This term's courses edits the scope
   app.get('/api/courses', session, async (c) => {
     const ctx = await consoleContext(c, c.get('user'));
     const { mode, courses } = await resolveScope(ctx);
@@ -38,8 +37,13 @@ export function dataRoutes(): Hono<AppEnv> {
 
   app.get('/api/updates', session, async (c) => {
     const ctx = await consoleContext(c, c.get('user'));
+    const q = c.req.query();
+    const courseId = intParam(q.course_id, 'course_id', { min: 1, max: MAX_COURSE_ID });
     return c.json(
-      await getCourseUpdates(ctx, { sinceDays: intParam(c.req.query('days'), 'days', { min: 1, max: 30 }) ?? 7 }),
+      await getCourseUpdates(ctx, {
+        sinceDays: intParam(q.days, 'days', { min: 1, max: 30 }) ?? 7,
+        ...(courseId === undefined ? {} : { courseId }),
+      }),
     );
   });
 

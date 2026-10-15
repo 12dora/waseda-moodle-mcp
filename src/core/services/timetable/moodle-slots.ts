@@ -222,11 +222,16 @@ export interface Inference {
 /**
  * Weekly class times of the given courses from Moodle's attendance sessions, for courses the syllabus cannot place.
  * Reads the per-user cache (7 days; "none found" is cached too) and asks Moodle with ONE call for the missing or stale
- * courses only. When Moodle fails the cached answers (stale ones included) are used. A checked course without a
- * recurring session is in `checked` only; a course never answered (the call failed or did not run) is in neither.
- * `start` / `end` are the Moodle course dates in unix seconds.
+ * courses only (`live: false` skips that call and uses stored rows, stale included). When Moodle fails the cached
+ * answers (stale ones included) are used. A checked course without a recurring session is in `checked` only; a course
+ * never answered (the call failed or did not run) is in neither. `start` / `end` are the Moodle course dates in unix
+ * seconds.
  */
-export async function inferSchedules(ctx: ServiceContext, courses: CourseWindow[]): Promise<Inference> {
+export async function inferSchedules(
+  ctx: ServiceContext,
+  courses: CourseWindow[],
+  opts: { live?: boolean } = {},
+): Promise<Inference> {
   const now = nowMs();
   const unique = [...new Map(courses.map((c) => [c.id, c])).values()];
   const cached = await ctx.store.getInferredSchedules(ctx.user.id);
@@ -234,7 +239,8 @@ export async function inferSchedules(ctx: ServiceContext, courses: CourseWindow[
     const hit = cached.get(c.id);
     return !hit || now - hit.checkedAt >= CACHE_TTL_MS;
   });
-  const fresh: Answers = stale.length > 0 ? await lookUp(ctx, stale, now) : new Map();
+  const askMoodle = opts.live !== false && stale.length > 0;
+  const fresh: Answers = askMoodle ? await lookUp(ctx, stale, now) : new Map();
   const answers: Answers = new Map();
   for (const c of unique) {
     const schedule = fresh.get(c.id) ?? cached.get(c.id);

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MoodleError, MoodleUnavailable, NeedsReconnect } from '../../../src/core/errors';
-import { refreshSnapshots } from '../../../src/core/services/sweep/refresh';
+import { loadStoredSnapshots, refreshSnapshots } from '../../../src/core/services/sweep/refresh';
 import { buildSnapshot, parseSnapshot } from '../../../src/core/services/sweep/snapshot';
 import { BASE, course, DAY, MIN, makeFake, NOW, NOW_MS, NOW_SEC, rawSection, snapshotRow } from './helpers';
 
@@ -319,6 +319,16 @@ describe('refreshSnapshots: remembered scope', () => {
     const f = makeFake({}, [snapshotRow(100, json(), NOW_MS - MIN)]);
     await refreshSnapshots(f.ctx, [course(100)], OPTS);
     expect(f.scopeWrites).toEqual([[100]]);
+  });
+
+  it('reads snapshot rows once per request for a stored load and a cached refresh', async () => {
+    const f = makeFake({}, [snapshotRow(100, json(), NOW_MS - MIN)]);
+    const spy = vi.spyOn(f.ctx.store, 'getCourseSnapshots');
+    await Promise.all([
+      loadStoredSnapshots(f.ctx, [course(100)]),
+      refreshSnapshots(f.ctx, [course(100)], { maxCalls: 0, maxFull: 0, rememberScope: false }),
+    ]);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   it('leaves the scope alone when the caller opts out (the cron, one-course calls)', async () => {
