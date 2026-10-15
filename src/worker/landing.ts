@@ -2,6 +2,7 @@
  * Public landing pages and SEO files (contract §18). `GET /` is the console SPA for visitors carrying the session
  * cookie and the ja landing page for everyone else; `/en/` and `/zh/` are the translations. The pages are static
  * assets carrying the literal placeholder `__PUBLIC_URL__`, replaced with the configured public URL on the way out.
+ * When `CF_BEACON_TOKEN` is set they also get the Cloudflare Web Analytics beacon (landing pages only).
  */
 
 import { Hono } from 'hono';
@@ -36,6 +37,9 @@ const LANGUAGE_PAGES = [
 ];
 const SITEMAP_PAGES = [...LANGUAGE_PAGES.map((p) => p.path), '/privacy'];
 
+/** Cloudflare Web Analytics site tokens are 32 lowercase hex characters. */
+const BEACON_TOKEN = /^[0-9a-f]{32}$/;
+
 const notFound = (): Response => new Response('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
 
 /** Configured public URL, falling back to the request origin when PUBLIC_URL is unset. */
@@ -47,6 +51,13 @@ const XML_ENTITIES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '
 
 function xmlEscape(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => XML_ENTITIES[ch] ?? ch);
+}
+
+/** Cookieless Web Analytics beacon for the landing pages; empty when no valid token is configured. */
+function beaconScript(env: Env): string {
+  const token = (env.CF_BEACON_TOKEN ?? '').trim();
+  if (!BEACON_TOKEN.test(token)) return '';
+  return `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token":"${token}"}'></script>`;
 }
 
 /** Fetches a static asset through the binding; null on a miss or a failure. */
@@ -62,7 +73,12 @@ async function fetchAsset(request: Request, env: Env, path: string): Promise<Res
 async function landingPage(request: Request, env: Env, assetPath: string): Promise<Response> {
   const asset = await fetchAsset(request, env, assetPath);
   if (!asset) return notFound();
-  const html = (await asset.text()).replaceAll(PLACEHOLDER, baseUrl(request, env));
+  let html = (await asset.text()).replaceAll(PLACEHOLDER, baseUrl(request, env));
+  const beacon = beaconScript(env);
+  if (beacon) {
+    const end = html.lastIndexOf('</body>');
+    html = end === -1 ? html + beacon : html.slice(0, end) + beacon + html.slice(end);
+  }
   return new Response(html, {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',

@@ -53,6 +53,15 @@ export function audit(ctx: ServiceContext, action: string, args: unknown, error?
   }
 }
 
+/** Operator statistics: aggregate only, never allowed to affect the tool result. */
+function countCall(ctx: ServiceContext, tool: string, ok: boolean): void {
+  try {
+    ctx.usage?.toolCall(tool, ok);
+  } catch {
+    /* best effort */
+  }
+}
+
 /**
  * One tool invocation = one Moodle client: the first ctx.moodle() call is shared by every service call of the
  * invocation, so its call budget and memoised reads never leak into the next invocation (stdio is long-lived).
@@ -83,12 +92,14 @@ export function registerTool(server: McpServer, ctx: ServiceContext, def: ToolDe
       try {
         const out = await def.run(callScoped(ctx), args);
         audit(ctx, `tool:${def.name}`, args);
+        countCall(ctx, def.name, true);
         return {
           content: [{ type: 'text', text: out.text }, ...(out.extra ?? [])],
           structuredContent: out.data as Record<string, unknown>,
         };
       } catch (e) {
         audit(ctx, `tool:${def.name}`, args, e);
+        countCall(ctx, def.name, false);
         throw toToolError(ctx, e);
       }
     },

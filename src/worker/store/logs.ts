@@ -1,5 +1,6 @@
 import type { AuditRow, Store } from '../../core/context';
 import { changes, parseJson, toJson } from './rows';
+import { purgeUsage } from './usage';
 
 export const AUDIT_RETENTION_MS = 90 * 86_400_000;
 const RATE_LIMIT_RETENTION_MS = 86_400_000;
@@ -78,5 +79,6 @@ export async function purgeExpired(db: D1Database, now: number): Promise<Record<
       'DELETE FROM inferred_schedules WHERE checked_at < ?',
       now - INFERRED_SCHEDULE_RETENTION_MS,
     ),
+    ...(await purgeUsage(db, now)),
   };
 }

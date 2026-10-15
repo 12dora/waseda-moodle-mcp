@@ -72,7 +72,7 @@ export const mcpApiHandler = {
 
     let sctx: Awaited<ReturnType<typeof buildServiceContext>>;
     try {
-      sctx = await buildServiceContext(env, ctx, props);
+      sctx = await buildServiceContext(env, ctx, props, { recordUsage: true });
     } catch (e) {
       // account deleted after the token was issued
       if (e instanceof NotFound)

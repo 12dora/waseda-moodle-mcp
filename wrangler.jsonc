@@ -43,7 +43,9 @@
     "PUBLIC_URL": "https://wasemoodle.example.com",
     "REGISTRATION": "allowlist",
     "ALLOWED_MOODLE_USERIDS": "",
-    "SYLLABUS_LOOKUP": "on"
+    "ADMIN_MOODLE_USERIDS": "",
+    "SYLLABUS_LOOKUP": "on",
+    "CF_BEACON_TOKEN": ""
   },
   "triggers": { "crons": ["17 0-14,22-23 * * *"] }
 }

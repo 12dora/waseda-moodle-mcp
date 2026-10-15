@@ -31,6 +31,7 @@ interface Body {
   error: { code: string; message: string };
   user: { id: number; moodleUserId: number; settings: Row };
   credential: Row | null;
+  isAdmin: boolean;
   created: boolean;
   settings: Row;
   key: { id: string; prefix: string; createdAt: string; scopes: string[] };
@@ -276,6 +277,13 @@ describe('connect, session and account', () => {
     const meBody = (await me.json()) as Body;
     expect(meBody.user.moodleUserId).toBe(1001);
     expect(meBody.credential?.status).toBe('active');
+    expect(meBody.isAdmin).toBe(false);
+  });
+
+  it('flags operators with isAdmin on /api/me', async () => {
+    env = makeEnv({ ADMIN_MOODLE_USERIDS: '9, 1001' });
+    const { cookie } = await connect();
+    expect(((await (await call('/api/me', { cookie })).json()) as Body).isAdmin).toBe(true);
   });
 
   it('requires a session for /api/me', async () => {

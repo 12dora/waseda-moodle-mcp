@@ -249,6 +249,11 @@ export interface Signer {
 
 // ------------------------------------------------------------------ per-request service context
 
+/** Aggregate usage counters, Worker `/mcp` requests only (stdio and the console never set it). Fire-and-forget. */
+export interface UsageRecorder {
+  toolCall(tool: string, ok: boolean): void;
+}
+
 export interface ServiceContext {
   user: UserRow;
   store: Store;
@@ -261,6 +266,8 @@ export interface ServiceContext {
   /** Public syllabus term lookup (WMM / SYLLABUS_LOOKUP kill switch); undefined = on. */
   syllabusLookup?: boolean;
   source: string; // display label of the caller: OAuth client name, "API key: <name>", "Console", "Local"
+  /** Counts MCP tool calls in the operator statistics; undefined = not counted. */
+  usage?: UsageRecorder;
   /** Defer work past the response (Workers ctx.waitUntil; stdio runs it immediately). */
   defer(p: Promise<unknown>): void;
 }

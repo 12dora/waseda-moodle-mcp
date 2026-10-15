@@ -9,12 +9,14 @@ import { inferredMethods } from './store/inferred';
 import { logMethods, purgeExpired } from './store/logs';
 import { apiKeyMethods, sessionMethods } from './store/sessions';
 import { snapshotMethods } from './store/snapshots';
+import { type UsageMethods, usageMethods } from './store/usage';
+import { type UsageReportMethods, usageReportMethods } from './store/usage-report';
 import { userMethods } from './store/users';
 
 type SessionMethods = ReturnType<typeof sessionMethods>;
 
-/** The core Store plus the Worker-only extras (single-query session lookup, hand-off codes, pending OAuth requests, rate limits, retention sweep). */
-export interface D1Store extends Store, HandoffMethods, EphemeralMethods {
+/** The core Store plus the Worker-only extras (single-query session lookup, hand-off codes, pending OAuth requests, rate limits, usage counters, retention sweep). */
+export interface D1Store extends Store, HandoffMethods, EphemeralMethods, UsageMethods, UsageReportMethods {
   getSessionWithUser: SessionMethods['getSessionWithUser'];
   purgeExpired(now: number): Promise<Record<string, number>>;
 }
@@ -32,6 +34,8 @@ export function createD1Store(db: D1Database): D1Store {
     ...logMethods(db),
     ...handoffMethods(db),
     ...ephemeralMethods(db),
+    ...usageMethods(db),
+    ...usageReportMethods(db),
     purgeExpired: (now) => purgeExpired(db, now),
   };
 }

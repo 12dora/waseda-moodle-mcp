@@ -8,6 +8,7 @@ import {
   makeMoodleFactory,
 } from '../../src/worker/context';
 import type { Env } from '../../src/worker/env';
+import { resetUsageMemory } from '../../src/worker/store/usage';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
 import { createTestD1 } from '../helpers/d1-sqlite';
 import { MemoryKV } from '../helpers/memory-kv';
@@ -106,6 +107,25 @@ describe('buildServiceContext', () => {
   it('throws NotFound for a deleted account', async () => {
     await expect(buildServiceContext(env, execCtx(), { userId: 999, scopes: [], source: 'x' })).rejects.toBeInstanceOf(
       NotFound,
+    );
+  });
+
+  it('counts tool calls only when asked to (MCP requests), labelled by client', async () => {
+    resetUsageMemory();
+    const props = { userId, scopes: ['moodle:read' as const], source: 'API key: laptop' };
+    const plain = await buildServiceContext(env, execCtx(), props);
+    expect(plain.usage).toBeUndefined();
+
+    const ctx = await buildServiceContext(env, execCtx(), props, { recordUsage: true });
+    ctx.usage?.toolCall('list_courses', false);
+    await Promise.all(deferred);
+    const rows = await env.DB.prepare("SELECT metric, dim, value FROM usage_counts WHERE metric != 'active'").all();
+    expect(rows.results).toEqual(
+      expect.arrayContaining([
+        { metric: 'calls', dim: 'list_courses', value: 1 },
+        { metric: 'errors', dim: 'list_courses', value: 1 },
+        { metric: 'client_calls', dim: 'API key', value: 1 },
+      ]),
     );
   });
 

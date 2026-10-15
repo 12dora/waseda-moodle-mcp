@@ -20,7 +20,7 @@ import {
   startSession,
 } from '../auth';
 import { connectDeps, getRuntime } from '../context';
-import { publicUrlOf, registrationMode, VERSION } from '../env';
+import { adminMoodleUserIds, publicUrlOf, registrationMode, VERSION } from '../env';
 import { normalizeSettings } from '../store/rows';
 import type { D1Store } from '../store-d1';
 import { consumeHandoff, peekHandoff } from './handoff';
@@ -210,7 +210,11 @@ export function accountRoutes(): Hono<AppEnv> {
   app.get('/api/me', session, async (c) => {
     const user = c.get('user');
     const cred = await storeOf(c.env).getCredential(user.id);
-    return c.json({ user: toUserInfo(user), credential: cred ? toCredentialInfo(cred) : null });
+    return c.json({
+      user: toUserInfo(user),
+      credential: cred ? toCredentialInfo(cred) : null,
+      isAdmin: adminMoodleUserIds(c.env).has(user.moodleUserId),
+    });
   });
 
   app.delete('/api/me', session, async (c) => {

@@ -123,6 +123,34 @@ describe('/en/ and /zh/', () => {
   });
 });
 
+describe('Web Analytics beacon', () => {
+  const TOKEN = '0123456789abcdef0123456789abcdef';
+  const BEACON = `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token":"${TOKEN}"}'></script>`;
+  const BODY = '<html><body><p>hi</p></body></html>';
+  const pages = { ...PAGES, '/landing/': BODY, '/en/': BODY, '/zh/': BODY };
+
+  it.each(['/', '/en/', '/zh/'])('is injected right before </body> on %s when the token is valid', async (path) => {
+    const html = await (await call(path, {}, makeEnv({ CF_BEACON_TOKEN: TOKEN }, pages))).text();
+    expect(html).toBe(`<html><body><p>hi</p>${BEACON}</body></html>`);
+  });
+
+  it.each([undefined, '', 'not-a-token', TOKEN.toUpperCase(), `${TOKEN}0`, `${TOKEN}"}'<x>`])(
+    'is absent when the token is %j',
+    async (token) => {
+      const html = await (await call('/', {}, makeEnv({ CF_BEACON_TOKEN: token }, pages))).text();
+      expect(html).toBe(BODY);
+    },
+  );
+
+  it('is not added to the SPA shell, robots.txt or sitemap.xml', async () => {
+    const env = makeEnv({ CF_BEACON_TOKEN: TOKEN }, { ...pages, '/': '<body></body>' });
+    const spa = await call('/', { headers: { Cookie: `${SESSION_COOKIE}=abc` } }, env);
+    expect(await spa.text()).not.toContain('cloudflareinsights');
+    expect(await (await call('/robots.txt', {}, env)).text()).not.toContain('cloudflareinsights');
+    expect(await (await call('/sitemap.xml', {}, env)).text()).not.toContain('cloudflareinsights');
+  });
+});
+
 describe('/landing/*', () => {
   it.each(['/landing/', '/landing/index.html', '/landing/x'])('redirects %s to / with 301', async (path) => {
     const res = await call(path);

@@ -15,9 +15,13 @@ export interface Env {
   REGISTRATION: string;
   /** Comma separated Moodle user ids allowed to register when REGISTRATION is 'allowlist'. */
   ALLOWED_MOODLE_USERIDS: string;
+  /** Comma separated Moodle user ids of the operators who may see the usage statistics. */
+  ADMIN_MOODLE_USERIDS?: string;
   EXTENSION_URL?: string;
   /** 'off' disables the public-syllabus term lookup (default on). */
   SYLLABUS_LOOKUP?: string;
+  /** Cloudflare Web Analytics site token (32 hex chars). When valid, the landing pages carry the cookieless beacon. */
+  CF_BEACON_TOKEN?: string;
   /** Injected by workers-oauth-provider on every request that reaches our handlers. */
   OAUTH_PROVIDER: OAuthHelpers;
 }
@@ -46,6 +50,15 @@ export function registrationMode(env: Pick<Env, 'REGISTRATION'>): 'open' | 'allo
 export function allowedMoodleUserIds(env: Pick<Env, 'ALLOWED_MOODLE_USERIDS'>): Set<number> {
   const out = new Set<number>();
   for (const part of (env.ALLOWED_MOODLE_USERIDS ?? '').split(/[\s,;]+/)) {
+    if (/^\d+$/.test(part)) out.add(Number(part));
+  }
+  return out;
+}
+
+/** Operator Moodle user ids (usage statistics); parsed like the allowlist. */
+export function adminMoodleUserIds(env: Pick<Env, 'ADMIN_MOODLE_USERIDS'>): Set<number> {
+  const out = new Set<number>();
+  for (const part of (env.ADMIN_MOODLE_USERIDS ?? '').split(/[\s,;]+/)) {
     if (/^\d+$/.test(part)) out.add(Number(part));
   }
   return out;

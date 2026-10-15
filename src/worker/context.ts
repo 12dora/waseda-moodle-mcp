@@ -1,9 +1,10 @@
 /** Builds the per-request ServiceContext (and Moodle clients for the file routes) from Worker bindings. */
 
-import type { MoodleApi, ServiceContext, Signer, UserRow } from '../core/context';
+import type { MoodleApi, ServiceContext, Signer, UsageRecorder, UserRow } from '../core/context';
 import { createSigner, importMasterKey, type MasterKey } from '../core/crypto';
 import { NeedsReconnect, NotFound } from '../core/errors';
 import { MoodleClient } from '../core/moodle/client';
+import { clientLabel } from '../core/usage';
 import { type Env, type McpProps, publicUrlOf } from './env';
 import { createD1Store, type D1Store } from './store-d1';
 
@@ -106,6 +107,16 @@ interface BuildContextOptions {
   maxCalls?: number;
   /** false for background work (scheduled sweep): it must not count as the user being active. Default true. */
   touchUser?: boolean;
+  /** true for `/mcp` requests: tool calls feed the operator statistics (not the console, not the sweep). Default false. */
+  recordUsage?: boolean;
+}
+
+/** Tool calls of one MCP request, counted past the response (never throws into the tool). */
+function usageRecorder(store: D1Store, userId: number, source: string, defer: Defer): UsageRecorder {
+  const client = clientLabel(source);
+  return {
+    toolCall: (tool, ok) => defer(store.recordToolCall({ userId, client, tool, ok, now: Date.now() })),
+  };
 }
 
 /** `props` come from the OAuth provider (`ctx.props`) or from the console session (source 'Console'). */
@@ -140,6 +151,7 @@ export async function buildServiceContext(
     source: props.source,
     syllabusLookup: env.SYLLABUS_LOOKUP !== 'off',
     defer,
+    usage: opts.recordUsage ? usageRecorder(rt.store, user.id, props.source, defer) : undefined,
   };
 }
 

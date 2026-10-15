@@ -55,9 +55,11 @@ Edit `wrangler.local.jsonc`:
 |---|---|---|---|
 | `PUBLIC_URL` | var | `https://wasemoodle.example.com` | Public origin, no trailing slash. Used for the MCP resource URL (`/mcp`), OAuth redirects, signed file links and the bookmarklet. Must match the domain you serve from. |
 | `REGISTRATION` | var | `allowlist` | `open`: anyone with a valid Waseda Moodle token can sign up. Any other value: allowlist. |
+| `ADMIN_MOODLE_USERIDS` | var | `""` | Moodle numeric user ids of the operators who can open the usage statistics page in the console; same format as above. Empty means nobody. |
 | `ALLOWED_MOODLE_USERIDS` | var | `""` | Moodle numeric user ids allowed to create an account in allowlist mode; separated by commas, spaces or semicolons. Existing users can always reconnect. |
 | `SYLLABUS_LOOKUP` | var | `on` | `off` disables fetching the public Waseda syllabus (the timetable then has no slots). |
 | `EXTENSION_URL` | var (optional) | unset | Install URL for the browser extension shown in the console. Unset hides the link. |
+| `CF_BEACON_TOKEN` | var (optional) | `""` | Cloudflare Web Analytics site token (32 hex characters). When set, the three public introduction pages (not the console) load the cookieless Web Analytics beacon; view the numbers in the Cloudflare dashboard. Empty or invalid: no beacon. |
 | `VITE_CONTACT_URL` | console build env (optional) | unset | `https://` or `mailto:` link shown as the contact on the privacy page. Read when the console is built (`web/.env.local` or the build environment), not by the Worker. Unset shows "Contact the operator of this instance." |
 | `MASTER_KEY` | secret | required | 32 random bytes, base64. Encrypts Moodle tokens and short-lived handoff/OAuth blobs, and keys the HMAC for file links. Changing it makes stored tokens unreadable (users must reconnect). |
 
