@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   academicYear,
   currentTerms,
+  FETCH_CONCURRENCY,
   inCurrentTerm,
   lookupSeenCourses,
   lookupTerms,
+  MAX_FETCHES_PER_CALL,
   parseSyllabusTerm,
   type SyllabusInfo,
   syllabusPKey,
@@ -264,9 +266,9 @@ describe('lookupTerms', () => {
     expect(JSON.parse(t.state.syllabusCache.get(C1.idnumber)?.json ?? '')).toMatchObject({ term: '秋クォーター' });
   });
 
-  it('one 3 s deadline covers all lookups of a call; courses not reached are not cached', async () => {
+  it('one 5 s deadline covers all lookups of a call; courses not reached are not cached', async () => {
     const fetchFn = vi.fn(async () => {
-      vi.setSystemTime(new Date(Date.now() + 3500)); // the first request hangs past the deadline
+      vi.setSystemTime(new Date(Date.now() + 5500)); // the first request hangs past the deadline
       throw new Error('timeout');
     });
     vi.stubGlobal('fetch', fetchFn);
@@ -285,7 +287,7 @@ describe('lookupTerms', () => {
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('makes at most 3 fetches per call, one after the other', async () => {
+  it(`makes at most ${MAX_FETCHES_PER_CALL} fetches per call, ${FETCH_CONCURRENCY} at a time`, async () => {
     let inFlight = 0;
     let maxInFlight = 0;
     const fetchFn = vi.fn(async () => {
@@ -297,14 +299,17 @@ describe('lookupTerms', () => {
     });
     vi.stubGlobal('fetch', fetchFn);
     const t = makeFakeContext();
-    const courses = [1, 2, 3, 4, 5].map((n) => course(n, `202657001000620${n}`));
+    const n = MAX_FETCHES_PER_CALL + 2;
+    const courses = Array.from({ length: n }, (_, i) =>
+      course(i + 1, `20265700100${String(i + 1).padStart(3, '0')}02`),
+    );
     const res = await lookupTerms(t.ctx, courses);
-    expect(fetchFn).toHaveBeenCalledTimes(3);
-    expect(maxInFlight).toBe(1);
-    expect([...res.values()].map((i) => i?.term ?? null)).toEqual(['秋学期', '秋学期', '秋学期']); // 4 and 5: not known yet
+    expect(fetchFn).toHaveBeenCalledTimes(MAX_FETCHES_PER_CALL);
+    expect(maxInFlight).toBe(FETCH_CONCURRENCY);
+    expect(res.size).toBe(MAX_FETCHES_PER_CALL); // the last 2: not known yet
 
     await lookupTerms(t.ctx, courses); // the next call catches up
-    expect(fetchFn).toHaveBeenCalledTimes(5);
+    expect(fetchFn).toHaveBeenCalledTimes(n);
   });
 
   it('refetches rows older than a year or cached for another year', async () => {
@@ -659,30 +664,32 @@ describe('syllabus cache: failures and fetch order', () => {
     const fetchFn = stubFetch({});
     const t = makeFakeContext({ user: { settings: { myCourseIds: [5] } } });
     await lookupTerms(t.ctx, list);
-    expect(fetchedKeys(fetchFn)).toEqual([5, 3, 4].map((n) => syllabusPKey(idnumbers[n - 1] ?? '')));
+    expect(fetchedKeys(fetchFn).slice(0, 3)).toEqual([5, 3, 4].map((n) => syllabusPKey(idnumbers[n - 1] ?? '')));
   });
 
   it('without a confirmed selection the current academic year goes first', async () => {
     const fetchFn = stubFetch({});
     await lookupTerms(makeFakeContext().ctx, list);
-    expect(fetchedKeys(fetchFn)).toEqual([3, 4, 1].map((n) => syllabusPKey(idnumbers[n - 1] ?? '')));
+    expect(fetchedKeys(fetchFn).slice(0, 3)).toEqual([3, 4, 1].map((n) => syllabusPKey(idnumbers[n - 1] ?? '')));
   });
 });
 
 describe('lookupSeenCourses', () => {
-  const courses = [1, 2, 3, 4, 5].map((n) => course(n, `202657001000620${n}`));
+  const n = MAX_FETCHES_PER_CALL + 2;
+  const courses = Array.from({ length: n }, (_, i) => course(i + 1, `20265700100${String(i + 1).padStart(3, '0')}02`));
+  const [last1 = 0, last2 = 0] = courses.slice(-2).map((c) => c.id); // the 2 over the budget
 
   it('serves the courses an earlier lookup of the request presented, within the request fetch budget', async () => {
     const fetchFn = vi.fn(async () => new Response(page('秋学期&nbsp;&nbsp;月１時限')));
     vi.stubGlobal('fetch', fetchFn);
     const t = makeFakeContext();
-    await lookupTerms(t.ctx, courses); // the course scope: 3 of 5 fetched
-    expect(fetchFn).toHaveBeenCalledTimes(3);
+    await lookupTerms(t.ctx, courses); // the course scope: all but 2 fetched
+    expect(fetchFn).toHaveBeenCalledTimes(MAX_FETCHES_PER_CALL);
 
-    const res = await lookupSeenCourses(t.ctx, [1, 4, 5, 99]);
-    expect(fetchFn).toHaveBeenCalledTimes(3); // budget of the request is used up
+    const res = await lookupSeenCourses(t.ctx, [1, last1, last2, 99]);
+    expect(fetchFn).toHaveBeenCalledTimes(MAX_FETCHES_PER_CALL); // budget of the request is used up
     expect(res.get(1)?.slots).toEqual([slot(1, 1, 1)]);
-    expect(res.has(4)).toBe(false); // over the request budget: not known yet
+    expect(res.has(last1)).toBe(false); // over the request budget: not known yet
     expect(res.has(99)).toBe(false); // never presented: nothing to look up
   });
 
@@ -691,12 +698,12 @@ describe('lookupSeenCourses', () => {
     vi.stubGlobal('fetch', fetchFn);
     const first = makeFakeContext();
     await lookupTerms(first.ctx, courses);
-    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(fetchFn).toHaveBeenCalledTimes(MAX_FETCHES_PER_CALL);
     const second = makeFakeContext();
     second.state.syllabusCache = first.state.syllabusCache;
-    expect((await lookupSeenCourses(second.ctx, [4])).size).toBe(0);
+    expect((await lookupSeenCourses(second.ctx, [last1])).size).toBe(0);
     await lookupTerms(second.ctx, courses);
-    expect(fetchFn).toHaveBeenCalledTimes(5);
+    expect(fetchFn).toHaveBeenCalledTimes(n);
   });
 
   it('does not fetch when the presenting lookup was cache-only', async () => {

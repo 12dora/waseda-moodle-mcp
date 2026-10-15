@@ -389,21 +389,17 @@ describe('getTimetable', () => {
     expect((await getTimetable(t.ctx, { date: '2027-03-29', days: 3 })).approximate).toBe(false);
   });
 
-  it('14 days make at most the normal 3 syllabus fetches, shared with the course scope', async () => {
+  it("a new user's courses are all fetched on the first call, shared with the course scope", async () => {
     const { t } = setup();
     const page = (cell: string) =>
       `<html><body><table><tr><th scope="row">学期曜日時限</th><td>${cell}</td></tr></table></body></html>`;
     const fetchFn = vi.fn(async () => new Response(page('秋学期&nbsp;&nbsp;月１時限')));
     vi.stubGlobal('fetch', fetchFn);
     const res = await getTimetable(t.ctx, { date: '2026-10-12', days: 14 });
-    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(fetchFn).toHaveBeenCalledTimes(5); // once per course: the scope's lookup is reused, not repeated
     expect(res.days).toHaveLength(14);
     expect(res.days.filter((d) => d.classes.length > 0).map((d) => d.date)).toEqual(['2026-10-12', '2026-10-19']);
-    // not fetched yet: shown as time unknown, next call catches up
-    expect(res.unknown.map((c) => [c.courseId, c.reason])).toEqual([
-      [4, 'pending'],
-      [5, 'pending'],
-    ]);
+    expect(res.unknown).toEqual([]);
     expect(t.api.count(TIMELINE)).toBe(1);
   });
 

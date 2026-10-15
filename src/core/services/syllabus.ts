@@ -2,8 +2,8 @@
  * Term lookup from the public Waseda syllabus (www.wsl.waseda.jp): idnumber -> pKey -> detail page -> 学期曜日時限.
  * Moodle cannot tell 秋クォーター from 冬クォーター (all class courses span 9/21-3/31), the syllabus can. The same page
  * carries the weekly meeting slots (day, periods, room, campus) the timetable is built from (syllabus-schedule.ts).
- * Policy: on-demand only (enrolled class courses), sequential, <= 3 fetches and one 3 s deadline per call, results (also
- * "none") cached globally for the academic year, failures cached as "unknown" for an hour (the previous answer, if
+ * Policy: on-demand only (enrolled class courses), <= 12 fetches (3 at a time) and one 5 s deadline per call, so a new
+ * user's courses are known on the first call; results (also "none") cached globally for the academic year, failures cached as "unknown" for an hour (the previous answer, if
  * any, is kept next to the marker and keeps being served). robots.txt disallows crawlers, so there is no
  * search-form scraping.
  */
@@ -18,8 +18,10 @@ export type { SyllabusSlot };
 const DETAIL_URL = 'https://www.wsl.waseda.jp/syllabus/JAA104.php';
 const USER_AGENT = 'waseda-moodle-mcp/0.1 (+syllabus term lookup)';
 /** One deadline for every fetch of a lookup call, so a hanging site costs a request at most this much. */
-const LOOKUP_DEADLINE_MS = 3000;
-const MAX_FETCHES_PER_CALL = 3;
+const LOOKUP_DEADLINE_MS = 5000;
+/** A page takes ~0.6 s and ~0.05 ms CPU to parse; 12 cover a typical term, well inside the 50 subrequests of a call. */
+export const MAX_FETCHES_PER_CALL = 12;
+export const FETCH_CONCURRENCY = 3;
 const DAY_MS = 86_400_000;
 const CACHE_TTL_MS = 365 * DAY_MS;
 /** Server errors, timeouts and システムエラー pages: remembered as "unknown" so a blocked / hanging site is not retried per request. */
@@ -315,7 +317,7 @@ function fetchOrder(ctx: ServiceContext, courses: LookupCourse[], at: number): L
 /**
  * Syllabus info per course id (`null` = unknown). Never throws: the scope must not depend on a third-party site.
  * `syllabusLookup: false` (kill switch, and the scheduled sweep) serves cached rows only and fetches nothing.
- * At most 3 fetches and 3 s in total per call; `sharedBudget` makes the 3 cover every call of the same request.
+ * At most 12 fetches (3 at a time) and 5 s in total per call; `sharedBudget` makes them cover the whole request.
  */
 export async function lookupTerms(
   ctx: ServiceContext,
@@ -344,19 +346,23 @@ export async function lookupTerms(
   const allowed = opts.sharedBudget ? Math.max(0, MAX_FETCHES_PER_CALL - state.spent) : MAX_FETCHES_PER_CALL;
   const budget: FetchBudget = { left: allowed, deadline: at + LOOKUP_DEADLINE_MS };
   const stale = eligible.filter((c) => !cache.get(c.idnumber)?.fresh);
-  for (const course of fetchOrder(ctx, stale, at)) {
-    const found = await fetchSyllabus(course, budget);
-    if (found.kind === 'skipped') break;
-    if (found.kind === 'known') result.set(course.id, found.info); // unknown keeps whatever an older row said
-    await persist(ctx, course.idnumber, rowJson(found, cache.get(course.idnumber)?.info ?? null), at);
-  }
+  const queue = fetchOrder(ctx, stale, at);
+  const worker = async () => {
+    for (let course = queue.shift(); course; course = queue.shift()) {
+      const found = await fetchSyllabus(course, budget);
+      if (found.kind === 'skipped') return;
+      if (found.kind === 'known') result.set(course.id, found.info); // unknown keeps whatever an older row said
+      await persist(ctx, course.idnumber, rowJson(found, cache.get(course.idnumber)?.info ?? null), at);
+    }
+  };
+  await Promise.all(Array.from({ length: FETCH_CONCURRENCY }, worker)); // highest-priority courses go first
   state.spent += allowed - budget.left;
   return result;
 }
 
 /**
  * Info for courses an earlier lookupTerms call of this request (the course scope) already presented, within what is
- * left of the request's 3 fetches. Ids never presented, or not fetched yet, have no key. This is how the timetable reuses the scope's
+ * left of the request's fetches. Ids never presented, or not fetched yet, have no key. This is how the timetable reuses the scope's
  * lookup without a second Moodle call for idnumbers.
  */
 export function lookupSeenCourses(ctx: ServiceContext, ids: number[]): Promise<Map<number, SyllabusInfo | null>> {
