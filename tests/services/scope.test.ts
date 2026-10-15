@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InvalidInput, MoodleError } from '../../src/core/errors';
+import { BudgetExceeded, InvalidInput, MoodleError, MoodleUnavailable } from '../../src/core/errors';
 import { classifyCourse, mapCourse, resolveScope, setMyCourses } from '../../src/core/services/scope';
 import { lookupTerms, type SyllabusInfo } from '../../src/core/services/syllabus';
 import { makeFakeContext } from '../helpers/fake-context';
@@ -152,6 +152,49 @@ describe('resolveScope (automatic suggestion)', () => {
     expect([...(await resolveScope(ctx)).mine]).toEqual([1]);
   });
 
+  it.each([
+    ['MoodleUnavailable', new MoodleUnavailable()],
+    ['BudgetExceeded', new BudgetExceeded()],
+  ])('treats %s from the optional events call as no signal', async (_name, error) => {
+    const { ctx } = makeFakeContext({ responses: responses(error) });
+    expect([...(await resolveScope(ctx)).mine]).toEqual([1]);
+  });
+
+  describe('events paging', () => {
+    const page = (ids: number[], lastid?: number) => ({
+      events: ids.map((id, i) => ({ id: i + 1, course: { id } })),
+      lastid,
+    });
+    const filler = (n: number, first: number) => Array.from({ length: n }, (_, i) => first + 100 + i);
+    const secondPage = (params: Record<string, unknown>) => params.aftereventid !== undefined;
+
+    it('asks for a second page after a full first one, and not for a third', async () => {
+      const full = (first: number) => page([first, ...filler(49, first)], 500);
+      const { ctx, api } = makeFakeContext({
+        responses: responses((params: Record<string, unknown>) => full(secondPage(params) ? 4 : 2)),
+      });
+      expect([...(await resolveScope(ctx)).mine].sort()).toEqual([1, 2, 4]);
+      expect(api.count(EVENTS)).toBe(2);
+      expect(api.calls.filter((c) => c.fn === EVENTS).map((c) => c.params.aftereventid)).toEqual([undefined, 500]);
+    });
+
+    it('does not ask again after a short page', async () => {
+      const { ctx, api } = makeFakeContext({ responses: responses(page([4], 9)) });
+      expect([...(await resolveScope(ctx)).mine].sort()).toEqual([1, 4]);
+      expect(api.count(EVENTS)).toBe(1);
+    });
+
+    it('keeps the first page when the second one fails', async () => {
+      const second = new MoodleUnavailable();
+      const { ctx } = makeFakeContext({
+        responses: responses((params: Record<string, unknown>) =>
+          secondPage(params) ? second : page([4, ...filler(49, 4)], 500),
+        ),
+      });
+      expect([...(await resolveScope(ctx)).mine].sort()).toEqual([1, 4]);
+    });
+  });
+
   it('still works when lastaccess is unavailable', async () => {
     const { ctx } = makeFakeContext({
       responses: { [TIMELINE]: TIMELINE_COURSES, [ENROL]: new MoodleError('denied', 'accessexception') },
@@ -275,6 +318,16 @@ describe('resolveScope (syllabus terms)', () => {
     expect([...(await resolveScope(soon.ctx)).mine]).toEqual([1]);
   });
 
+  it('a term stays current for 14 days after it ends (final reports are swept after the last class)', async () => {
+    vi.mocked(lookupTerms).mockResolvedValue(new Map([[1, info('秋クォーター')]]));
+    vi.setSystemTime(new Date('2026-11-25T03:00:00Z')); // 秋Q ended 11/21, 冬Q has begun
+    const grace = makeFakeContext({ responses: { ...responses(), [ENROL]: [] } });
+    expect([...(await resolveScope(grace.ctx)).mine]).toEqual([1]);
+    vi.setSystemTime(new Date('2026-12-07T03:00:00Z')); // more than 14 days after
+    const over = makeFakeContext({ responses: { ...responses(), [ENROL]: [] } });
+    expect([...(await resolveScope(over.ctx)).mine]).toEqual([]);
+  });
+
   it('forwards the syllabus kill switch', async () => {
     const { ctx } = makeFakeContext({ responses: responses() });
     await resolveScope(ctx, { syllabusLookup: false });
@@ -320,7 +373,12 @@ describe('setMyCourses', () => {
 
   it('keeps the other settings', async () => {
     const t = makeFakeContext({ responses: responses(), user: { settings: { writeMode: 'console', uiLang: 'ja' } } });
-    expect(await setMyCourses(t.ctx, [1])).toEqual({ writeMode: 'console', uiLang: 'ja', myCourseIds: [1] });
+    expect(await setMyCourses(t.ctx, [1])).toEqual({
+      writeMode: 'console',
+      uiLang: 'ja',
+      myCourseIds: [1],
+      scheduleOverrides: {},
+    });
   });
 
   it('rejects ids the user is not enrolled in and malformed ids, storing nothing', async () => {

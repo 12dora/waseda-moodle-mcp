@@ -15,6 +15,7 @@ const DAY_MS = 86_400_000;
 const RECENT_ACCESS_MS = 21 * DAY_MS;
 const EVENTS_HORIZON_SEC = 30 * 86_400;
 const EVENTS_PAGE_SIZE = 50; // Moodle accepts 1..50
+const EVENTS_MAX_PAGES = 2; // up to 100 events: more than that in 30 days is a signal for everything anyway
 
 export interface CourseScope {
   mode: 'mine' | 'auto';
@@ -38,6 +39,11 @@ interface RawCourse {
 interface RawEnrolled {
   id?: number;
   lastaccess?: number;
+}
+
+interface RawEventsPage {
+  events?: Array<{ course?: { id?: number } | null }>;
+  lastid?: number; // id of the last event of the page: `aftereventid` of the next one
 }
 
 /** Course `idnumber`s containing "ZZ" are non-class 提供コンテンツ courses (library, career, seminars...). */
@@ -93,21 +99,32 @@ async function fetchLastAccess(api: MoodleApi): Promise<Map<number, number>> {
   }
 }
 
-/** Courses with an action event in the next 30 days. Best effort: null when Moodle refuses the call. */
-async function fetchEventCourses(api: MoodleApi): Promise<ReadonlySet<number> | null> {
+/**
+ * Courses with an action event in the next 30 days (the first 2 x 50 events). Optional signal: any failure (Moodle
+ * refusing, unavailable, the request's call budget) just ends the paging, so the scope never fails because of it.
+ */
+async function fetchEventCourses(api: MoodleApi): Promise<ReadonlySet<number>> {
   const from = nowSec();
+  const found = new Set<number>();
+  let after: number | undefined;
   try {
-    const res = await api.call<{ events?: Array<{ course?: { id?: number } | null }> }>(EVENTS_FN, {
-      timesortfrom: from,
-      timesortto: from + EVENTS_HORIZON_SEC,
-      limitnum: EVENTS_PAGE_SIZE,
-      limittononsuspendedevents: 1,
-    });
-    return new Set((res?.events ?? []).flatMap((e) => e.course?.id ?? []));
-  } catch (e) {
-    if (e instanceof MoodleError) return null;
-    throw e;
+    for (let page = 0; page < EVENTS_MAX_PAGES; page++) {
+      const res = await api.call<RawEventsPage>(EVENTS_FN, {
+        timesortfrom: from,
+        timesortto: from + EVENTS_HORIZON_SEC,
+        limitnum: EVENTS_PAGE_SIZE,
+        limittononsuspendedevents: 1,
+        ...(after === undefined ? {} : { aftereventid: after }),
+      });
+      const events = res?.events ?? [];
+      for (const e of events) if (e.course?.id) found.add(e.course.id);
+      if (events.length < EVENTS_PAGE_SIZE || !res?.lastid) break;
+      after = res.lastid;
+    }
+  } catch {
+    /* no (more) signal */
   }
+  return found;
 }
 
 /** A course plus the academic year in its idnumber (null when it has none). */
@@ -151,7 +168,7 @@ interface ScopeState {
   scope: Promise<CourseScope> | null;
   terms: Promise<Map<number, string | null>> | null;
   /** ONE 30-day action-events call per request, shared by every tool that resolves the scope. */
-  events: Promise<ReadonlySet<number> | null> | null;
+  events: Promise<ReadonlySet<number>> | null;
 }
 
 const states = new WeakMap<ServiceContext, ScopeState>();

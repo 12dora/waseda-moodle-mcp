@@ -3,8 +3,9 @@
  * Moodle cannot tell 秋クォーター from 冬クォーター (all class courses span 9/21-3/31), the syllabus can. The same page
  * carries the weekly meeting slots (day, periods, room, campus) the timetable is built from (syllabus-schedule.ts).
  * Policy: on-demand only (enrolled class courses), sequential, <= 3 fetches and one 3 s deadline per call, results (also
- * "none") cached globally for the academic year, failures cached as "unknown" for an hour. robots.txt disallows
- * crawlers, so there is no search-form scraping.
+ * "none") cached globally for the academic year, failures cached as "unknown" for an hour (the previous answer, if
+ * any, is kept next to the marker and keeps being served). robots.txt disallows crawlers, so there is no
+ * search-form scraping.
  */
 
 import type { ServiceContext } from '../context';
@@ -24,25 +25,33 @@ const CACHE_TTL_MS = 365 * DAY_MS;
 /** Server errors, timeouts and システムエラー pages: remembered as "unknown" so a blocked / hanging site is not retried per request. */
 const UNKNOWN_TTL_MS = 3_600_000;
 const UNKNOWN_JSON = '{"unknown":true}';
-/** A term counts as current this long before it starts (pre-course material and deadlines appear earlier). */
+/** A term counts as current this long before it starts (pre-course material and deadlines appear earlier)... */
 const TERM_LOOKAHEAD_MS = 14 * DAY_MS;
+/** ...and this long after it ends (final reports are due and swept after the last class). */
+const TERM_GRACE_MS = 14 * DAY_MS;
 const EMPTY_MARKER = '参照可能なシラバス情報はありません';
+/** `春学期／秋学期` (a course given in both) is stored as one string; every term matcher splits on this. */
+const TERM_JOIN = '／';
+const TERM_NAME = '春学期|秋学期|春クォーター|夏クォーター|秋クォーター|冬クォーター|通年|集中';
 /** `集中講義（秋学期）` counts as 集中: whether it is an autumn block does not change that it has no weekly slot. */
-const TERM_RE =
-  /^(春学期|秋学期|春クォーター|夏クォーター|秋クォーター|冬クォーター|通年|集中)(?:講義(?:[（(][^）)]*[）)])?)?/;
+const TERM_ITEM = `(?:${TERM_NAME})(?:講義(?:[（(][^）)]*[）)])?)?`;
+const TERM_LIST_RE = new RegExp(`^${TERM_ITEM}(?:${TERM_JOIN}${TERM_ITEM})*`);
+const TERM_NAME_RE = new RegExp(`^(?:${TERM_NAME})`);
 
 export interface SyllabusInfo {
   pKey: string;
   year: number; // academic year of the idnumber the lookup was made for
-  term: string | null; // 春クォーター, 秋学期, 通年, ...; null when the cell has no recognised term
+  term: string | null; // 春クォーター, 秋学期, 通年, ... or `春学期／秋学期` for several; null when none is recognised
   dayPeriod: string | null; // e.g. "月１-２"
   instructors: string[];
   /**
-   * Meeting slots and the on-demand flag. Absent on rows cached before the schedule parser existed (cache schema v1):
-   * those are re-parsed from `dayPeriod` on read and fetched again lazily.
+   * Meeting slots, the on-demand flag and whether some part of the cell was not understood. Rows cached before the
+   * schedule parser existed (schema v1, no `slots`) are re-parsed from `dayPeriod` on read; rows without
+   * `scheduleUnparsed` (v2) are served as they are. Both are fetched again lazily, current academic year first.
    */
   slots?: SyllabusSlot[];
   onDemand?: boolean;
+  scheduleUnparsed?: boolean;
 }
 
 export type SyllabusParse =
@@ -84,10 +93,12 @@ function cellText(html: string, label: string): string | null {
     .trim();
 }
 
+const termNames = (listText: string) => listText.split(TERM_JOIN).flatMap((item) => TERM_NAME_RE.exec(item)?.[0] ?? []);
+
 function splitTermCell(text: string): { term: string | null; dayPeriod: string | null } {
-  const m = TERM_RE.exec(text);
+  const m = TERM_LIST_RE.exec(text);
   const rest = m ? text.slice(m[0].length).trim() : text;
-  return { term: m?.[1] ?? null, dayPeriod: rest || null };
+  return { term: m ? termNames(m[0]).join(TERM_JOIN) : null, dayPeriod: rest || null };
 }
 
 /** `学期曜日時限` (ja) -> term + day/period + meeting slots (with `使用教室` / `キャンパス`); `担当教員` -> instructors. */
@@ -124,8 +135,10 @@ export function currentTerms(at: number): ReadonlySet<string> {
   return new Set([quarter, semester, '通年']);
 }
 
+/** Whether any of the terms of `term` (one name or a `／`-joined list) is in session. */
 export function inCurrentTerm(term: string | null, at: number): boolean {
-  return term !== null && currentTerms(at).has(term);
+  const current = currentTerms(at);
+  return term?.split(TERM_JOIN).some((t) => current.has(t)) === true;
 }
 
 /** Academic year containing `at` (JST): January-March still belong to the year that began the previous April. */
@@ -137,7 +150,7 @@ export function academicYear(at: number): number {
 /**
  * 'unknown' for no term and for 集中 (intensive blocks): the lastaccess / calendar signals decide those.
  * `year` = the course's academic year (idnumber); a term only fits when that is the current one (null = not known).
- * A term is current from 14 days before it starts.
+ * A term is current from 14 days before it starts until 14 days after it ends.
  */
 export function termFit(
   term: string | null,
@@ -146,7 +159,7 @@ export function termFit(
 ): 'current' | 'not-current' | 'unknown' {
   if (term === null || term === '集中') return 'unknown';
   const fits = (t: number) => inCurrentTerm(term, t) && (year === null || year === academicYear(t));
-  return fits(at) || fits(at + TERM_LOOKAHEAD_MS) ? 'current' : 'not-current';
+  return [0, TERM_LOOKAHEAD_MS, -TERM_GRACE_MS].some((shift) => fits(at + shift)) ? 'current' : 'not-current';
 }
 
 // ------------------------------------------------------------------ fetching
@@ -192,8 +205,9 @@ async function fetchSyllabus(course: LookupCourse, budget: FetchBudget): Promise
   const pKey = buildPKey({ ...parts, school: parts.courseKey.slice(0, 2) });
   const page = await fetchDetail(pKey, budget);
   if (page.status === 'ok') {
-    const { term, dayPeriod, instructors, slots, onDemand } = page;
-    return { kind: 'known', info: { pKey, year: parts.year, term, dayPeriod, instructors, slots, onDemand } };
+    const { term, dayPeriod, instructors, slots, onDemand, scheduleUnparsed } = page;
+    const info = { pKey, year: parts.year, term, dayPeriod, instructors, slots, onDemand, scheduleUnparsed };
+    return { kind: 'known', info };
   }
   if (page.status === 'empty') return { kind: 'known', info: null };
   return { kind: page.status === 'skipped' ? 'skipped' : 'unknown' };
@@ -203,20 +217,35 @@ async function fetchSyllabus(course: LookupCourse, budget: FetchBudget): Promise
 
 type Cached = { info: SyllabusInfo | null; fresh: boolean };
 
-function isUnknownMarker(parsed: unknown): boolean {
+/** What the cache table holds: a result (`null` = no syllabus), or a failure marker with the answer it replaced. */
+type UnknownMarker = { unknown: true; prev?: SyllabusInfo };
+
+function isUnknownMarker(parsed: unknown): parsed is UnknownMarker {
   return typeof parsed === 'object' && parsed !== null && 'unknown' in parsed;
+}
+
+/**
+ * The stored info as served, and whether it is up to date. v1 rows have no slots: they are re-parsed from `dayPeriod`.
+ * v1 / v2 rows (no `scheduleUnparsed`) are refetched only for the current academic year: for other years the term is
+ * all anyone needs, and refetching them would use up the call's fetches before the user's own courses get theirs.
+ */
+function revive(stored: SyllabusInfo | null, idnumber: string, at: number): Cached {
+  if (stored === null) return { info: null, fresh: true };
+  const info = stored.slots === undefined ? { ...stored, ...parseSchedule({ dayPeriod: stored.dayPeriod }) } : stored;
+  const yearOk = info.year === Number(idnumber.slice(0, 4));
+  const outdated = stored.scheduleUnparsed === undefined && info.year === academicYear(at);
+  return { info, fresh: yearOk && !outdated };
 }
 
 function readCached(idnumber: string, row: { json: string; fetchedAt: number }, at: number): Cached | null {
   try {
-    const parsed = JSON.parse(row.json) as SyllabusInfo | { unknown: true } | null;
+    const parsed = JSON.parse(row.json) as SyllabusInfo | UnknownMarker | null;
     const age = at - row.fetchedAt;
-    if (isUnknownMarker(parsed)) return { info: null, fresh: age < UNKNOWN_TTL_MS };
-    const stored = parsed as SyllabusInfo | null;
-    const legacy = stored !== null && stored.slots === undefined;
-    const info = legacy ? { ...stored, ...parseSchedule({ dayPeriod: stored.dayPeriod }) } : stored;
-    const yearOk = info === null || info.year === Number(idnumber.slice(0, 4));
-    return { info, fresh: yearOk && !legacy && age < CACHE_TTL_MS };
+    if (isUnknownMarker(parsed)) {
+      return { info: revive(parsed.prev ?? null, idnumber, at).info, fresh: age < UNKNOWN_TTL_MS };
+    }
+    const { info, fresh } = revive(parsed, idnumber, at);
+    return { info, fresh: fresh && age < CACHE_TTL_MS };
   } catch {
     return null;
   }
@@ -253,12 +282,32 @@ function requestState(ctx: ServiceContext): RequestState {
   return state;
 }
 
-async function persist(ctx: ServiceContext, idnumber: string, found: LookupResult, at: number): Promise<void> {
+/** A failed fetch keeps the previous answer next to the marker: the hour of back-off must not wipe a usable row. */
+function rowJson(found: LookupResult, prev: SyllabusInfo | null): string {
+  if (found.kind === 'known') return JSON.stringify(found.info);
+  return prev ? JSON.stringify({ unknown: true, prev }) : UNKNOWN_JSON;
+}
+
+async function persist(ctx: ServiceContext, idnumber: string, json: string, at: number): Promise<void> {
   try {
-    await ctx.store.putSyllabusCache(idnumber, found.kind === 'known' ? JSON.stringify(found.info) : UNKNOWN_JSON, at);
+    await ctx.store.putSyllabusCache(idnumber, json, at);
   } catch {
     /* best effort */
   }
+}
+
+/**
+ * Courses to fetch, in the order that serves the user best: the confirmed selection first, then courses of the current
+ * academic year, then the rest (Moodle order within each group).
+ */
+function fetchOrder(ctx: ServiceContext, courses: LookupCourse[], at: number): LookupCourse[] {
+  const mine = new Set(ctx.user.settings.myCourseIds ?? []);
+  const year = academicYear(at);
+  const rank = (c: LookupCourse): number => {
+    if (mine.has(c.id)) return 0;
+    return splitIdnumber(c.idnumber)?.year === year ? 1 : 2;
+  };
+  return [...courses].sort((a, b) => rank(a) - rank(b));
 }
 
 /**
@@ -286,11 +335,12 @@ export async function lookupTerms(
 
   const allowed = opts.sharedBudget ? Math.max(0, MAX_FETCHES_PER_CALL - state.spent) : MAX_FETCHES_PER_CALL;
   const budget: FetchBudget = { left: allowed, deadline: at + LOOKUP_DEADLINE_MS };
-  for (const course of eligible.filter((c) => !cache.get(c.idnumber)?.fresh)) {
+  const stale = eligible.filter((c) => !cache.get(c.idnumber)?.fresh);
+  for (const course of fetchOrder(ctx, stale, at)) {
     const found = await fetchSyllabus(course, budget);
     if (found.kind === 'skipped') break;
     if (found.kind === 'known') result.set(course.id, found.info); // unknown keeps whatever an older row said
-    await persist(ctx, course.idnumber, found, at);
+    await persist(ctx, course.idnumber, rowJson(found, cache.get(course.idnumber)?.info ?? null), at);
   }
   state.spent += allowed - budget.left;
   return result;
