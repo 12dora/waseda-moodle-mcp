@@ -314,6 +314,23 @@ describe('MemoryStore persistence', () => {
     expect(next.id).toBe(u.id + 1);
   });
 
+  it('keeps the syllabus cache and recent inferred times across restarts, dropping inferred rows after 30 days', async () => {
+    const path = join(dir, 'caches.json');
+    const a = new MemoryStore({ persistPath: path });
+    await a.putSyllabusCache('2026920015500116', '{"term":"秋学期"}', 1);
+    await a.putInferredSchedules(
+      1,
+      new Map([
+        [7, schedule(Date.now())],
+        [8, schedule(Date.now() - 31 * 86_400_000)],
+      ]),
+    );
+    await a.flush();
+    const b = new MemoryStore({ persistPath: path });
+    expect((await b.getSyllabusCache(['2026920015500116'])).get('2026920015500116')?.json).toBe('{"term":"秋学期"}');
+    expect([...(await b.getInferredSchedules(1)).keys()]).toEqual([7]);
+  });
+
   it('keeps schedule overrides in the state file and reads a file without them as {}', async () => {
     const path = join(dir, 'overrides.json');
     const a = new MemoryStore({ persistPath: path });

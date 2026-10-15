@@ -30,16 +30,21 @@ import {
 const MAX_AUDIT_ROWS = 1000;
 /** Finished actions (executed, cancelled, expired, failed) are dropped from the state file after this long. */
 const FINISHED_ACTION_TTL_MS = 30 * 24 * 3600 * 1000;
+/** Inferred class times are dropped after this long without a check (the D1 store purges them the same way). */
+const INFERRED_TTL_MS = 30 * 24 * 3600 * 1000;
 
 interface PersistedState {
   version: 1;
   nextUserId: number;
   users: UserRow[];
   actions: ActionRow[];
+  /** Kept across restarts so a new session does not start cold: public syllabus rows and the user's inferred times. */
+  syllabus?: Record<string, { json: string; fetchedAt: number }>;
+  inferred?: Record<string, InferredSchedule>;
 }
 
 interface MemoryStoreOptions {
-  /** JSON file for users (settings) and actions; created with mode 0600. Omit for a purely in-memory store. */
+  /** JSON file for users (settings), actions and lookup caches; mode 0600. Omit for a purely in-memory store. */
   persistPath?: string;
   /** Called when reading or writing the persistence file fails (default: ignore). */
   onPersistError?: (error: unknown) => void;
@@ -61,7 +66,7 @@ export class MemoryStore implements Store {
   private readonly uploads = new Map<string, UploadDraftRow>();
   private readonly courseSnapshots = new Map<string, CourseSnapshotRow>();
   private readonly syllabusCache = new Map<string, { json: string; fetchedAt: number }>();
-  private readonly inferredSchedules = new Map<string, InferredSchedule>(); // `${userId}:${courseId}`, not persisted
+  private readonly inferredSchedules = new Map<string, InferredSchedule>(); // `${userId}:${courseId}`
   private readonly sweptAt = new Map<number, number>(); // not persisted: a restart sweeps everyone again
   private auditRows: AuditRow[] = [];
   private nextUserId = 1;
@@ -100,6 +105,11 @@ export class MemoryStore implements Store {
         this.users.set(u.id, { ...u, settings });
       }
       for (const a of data.actions ?? []) this.actions.set(a.id, a);
+      for (const [k, v] of Object.entries(data.syllabus ?? {})) this.syllabusCache.set(k, v);
+      const inferredCutoff = Date.now() - INFERRED_TTL_MS; // like the D1 purge
+      for (const [k, v] of Object.entries(data.inferred ?? {})) {
+        if (v.checkedAt >= inferredCutoff) this.inferredSchedules.set(k, v);
+      }
       const maxId = Math.max(0, ...this.users.keys());
       this.nextUserId = Math.max(data.nextUserId ?? 1, maxId + 1);
     } catch (e) {
@@ -125,6 +135,8 @@ export class MemoryStore implements Store {
       nextUserId: this.nextUserId,
       users: [...this.users.values()],
       actions: [...this.actions.values()],
+      syllabus: Object.fromEntries(this.syllabusCache),
+      inferred: Object.fromEntries(this.inferredSchedules),
     };
     const json = JSON.stringify(state, null, 2);
     this.writeChain = this.writeChain
@@ -384,6 +396,7 @@ export class MemoryStore implements Store {
 
   async putSyllabusCache(idnumber: string, json: string, fetchedAt: number): Promise<void> {
     this.syllabusCache.set(idnumber, { json, fetchedAt });
+    this.persist();
   }
 
   /** Same order as the D1 store: never swept first, then the least recently swept. */
@@ -415,6 +428,7 @@ export class MemoryStore implements Store {
 
   async putInferredSchedules(userId: number, schedules: ReadonlyMap<number, InferredSchedule>): Promise<void> {
     for (const [courseId, s] of schedules) this.inferredSchedules.set(`${userId}:${courseId}`, clone(s));
+    this.persist();
   }
 
   // ------------------------------------------------------------------ audit
