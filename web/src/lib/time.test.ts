@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dueGroup, formatDate, formatDateTime, formatDay } from './time';
+import { dueGroup, formatDate, formatDateTime, formatDay, weekdayName } from './time';
 
 const now = Date.parse('2026-10-14T12:00:00+09:00'); // Wed
 const deadline = { now, deadline: true };
@@ -79,5 +79,13 @@ describe('formatDay', () => {
     expect(formatDay('2026-10-12', 'ja')).toBe('10/12(月)');
     expect(formatDay('2026-10-12', 'en')).toBe('Mon 10/12');
     expect(formatDay('2026-10-12', 'zh-CN')).toBe('10/12 周一');
+  });
+});
+
+describe('weekdayName', () => {
+  it('maps ISO weekdays (Mon = 1, Sun = 7)', () => {
+    expect(weekdayName(1, 'ja')).toBe('月');
+    expect(weekdayName(7, 'en')).toBe('Sun');
+    expect(weekdayName(5, 'zh-CN')).toBe('周五');
   });
 });

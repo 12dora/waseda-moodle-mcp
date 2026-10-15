@@ -10,7 +10,8 @@ const CODE_MESSAGES: Readonly<Record<string, MessageKey>> = {
   rate_limited: 'error.rate_limited',
   moodle_unavailable: 'error.moodle_unavailable',
   budget_exceeded: 'error.budget_exceeded',
-  service_paused: 'error.service_paused',
+  service_paused: 'paused.desc',
+  edge_challenge: 'paused.unavailable',
 };
 
 /** User-facing text for any thrown value: known codes are localized, otherwise the (safe) server message. */

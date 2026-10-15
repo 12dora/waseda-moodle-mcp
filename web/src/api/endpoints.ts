@@ -15,7 +15,7 @@ import type {
   OAuthRequestInfo,
   Scope,
   SettingsPatch,
-  TimetableResponse,
+  Timetable,
   UpdatesResponse,
   UserSettings,
 } from './types';
@@ -36,7 +36,7 @@ export const patchSettings = (patch: SettingsPatch) => api.patch<{ settings: Use
 export const getDue = (days = 14) => api.get<DueList>('/api/due', { query: { days } });
 export const getCourses = () => api.get<CoursesResponse>('/api/courses');
 export const getTimetable = (date: string, days: number) =>
-  api.get<TimetableResponse>('/api/timetable', { query: { date, days } });
+  api.get<Timetable>('/api/timetable', { query: { date, days } });
 export const getUpdates = (days = 7) => api.get<UpdatesResponse>('/api/updates', { query: { days } });
 
 export const listKeys = () => api.get<ApiKey[]>('/api/keys');

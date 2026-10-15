@@ -39,7 +39,7 @@ function OtherCourses({ items }: { items: DueItem[] }) {
   return (
     <Card>
       <details className="disclosure">
-        <summary>{t('courses.other', { count: items.length })}</summary>
+        <summary>{t('due.otherGroup', { count: items.length })}</summary>
         <p className="muted small">
           {t('due.otherHint')} <Link to="/courses">{t('due.manage')}</Link>
         </p>

@@ -19,17 +19,22 @@ export class ApiError extends Error {
 
 type UnauthorizedHandler = (returnTo: string) => void;
 let onUnauthorized: UnauthorizedHandler | null = null;
-let onPaused: (() => void) | null = null;
+/** 'paused' = usage-guard block (contract §13); 'challenge' = a Cloudflare challenge page instead of the API. */
+export type EdgeBlock = 'paused' | 'challenge';
+let onPaused: ((kind: EdgeBlock) => void) | null = null;
 
-/** Registered by the app shell: called when the usage guard blocks /api/* at the edge (contract §13). */
-export function setPausedHandler(fn: (() => void) | null): void {
+/** Registered by the app shell: called when /api/* is blocked at the edge. */
+export function setPausedHandler(fn: ((kind: EdgeBlock) => void) | null): void {
   onPaused = fn;
 }
 
 /** Cloudflare edge block: 403 with `cf-mitigated`, or an HTML block page instead of JSON. */
-function isEdgeBlock(res: Response): boolean {
-  if (res.status !== 403) return false;
-  return res.headers.has('cf-mitigated') || (res.headers.get('content-type') ?? '').includes('text/html');
+function edgeBlock(res: Response): EdgeBlock | null {
+  if (res.status !== 403) return null;
+  const mitigated = res.headers.get('cf-mitigated');
+  if (mitigated === 'challenge') return 'challenge';
+  if (mitigated !== null || (res.headers.get('content-type') ?? '').includes('text/html')) return 'paused';
+  return null;
 }
 
 /** Registered by the router so redirects stay inside the SPA. */
@@ -102,9 +107,10 @@ async function send(path: string, init: RequestInit): Promise<Response> {
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const res = await send(buildPath(path, opts.query), buildInit(opts.method ?? 'GET', opts.body));
-  if (isEdgeBlock(res)) {
-    onPaused?.();
-    throw new ApiError(403, 'service_paused', 'Service paused');
+  const blocked = edgeBlock(res);
+  if (blocked) {
+    onPaused?.(blocked);
+    throw new ApiError(403, blocked === 'challenge' ? 'edge_challenge' : 'service_paused', 'Service unavailable');
   }
   const payload = parseJson(await res.text());
   if (res.ok) return payload as T;

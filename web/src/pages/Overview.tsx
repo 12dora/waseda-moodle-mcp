@@ -4,6 +4,7 @@ import { getDue, getTimetable, getUpdates, listActions } from '../api/endpoints'
 import type { Me } from '../api/types';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { ClassLink } from '../components/ClassLink';
 import { CopyField } from '../components/CopyField';
 import { DueRow } from '../components/DueRow';
 import { EmptyState } from '../components/EmptyState';
@@ -11,8 +12,8 @@ import { ErrorBox } from '../components/ErrorBox';
 import { PageHeader } from '../components/Layout';
 import { ScopeBanner } from '../components/ScopeBanner';
 import { Spinner } from '../components/Spinner';
-import { ClassLink } from '../components/TimetableGrid';
 import { type MessageKey, useI18n, useT } from '../i18n';
+import { notesText } from '../lib/dayNotes';
 import { formatDateTime } from '../lib/time';
 import { todayJst } from '../lib/timetable';
 import { useAsync } from '../lib/useAsync';
@@ -90,19 +91,20 @@ function UpcomingCard() {
 }
 
 function TodayCard() {
-  const t = useT();
+  const { t, lang } = useI18n();
   const today = useAsync(() => getTimetable(todayJst(), 1));
   const day = today.data?.days[0];
+  const note = day ? notesText(day.notes, { t, lang }) : '';
   return (
     <Card title={t('overview.today.title')} actions={<Link to="/timetable">{t('nav.timetable')}</Link>}>
       {today.loading && <Spinner label={t('common.loading')} />}
       {today.error != null && <ErrorBox error={today.error} onRetry={today.reload} />}
-      {day?.note && <p className="tt-note">{day.note}</p>}
+      {note && <p className="tt-note">{note}</p>}
       {today.data && !day?.classes.length && <EmptyState>{t('overview.today.empty')}</EmptyState>}
       {day && day.classes.length > 0 && (
         <div className="stack tt-today">
           {day.classes.map((c) => (
-            <ClassLink key={`${c.courseId}-${c.start}`} c={c} />
+            <ClassLink key={`${c.courseId}-${c.start}`} c={c} date={day.date} />
           ))}
         </div>
       )}

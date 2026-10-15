@@ -92,3 +92,8 @@ export function formatDay(date: string, lang: Lang): string {
   if (lang === 'zh-CN') return `${p.mo}/${p.d} ${wd}`;
   return `${wd} ${p.mo}/${p.d}`;
 }
+
+/** Short weekday name for 1 = Monday … 7 = Sunday: '月' / 'Mon' / '周一'. */
+export function weekdayName(weekday: number, lang: Lang): string {
+  return WEEKDAYS[lang][weekday % 7] ?? '';
+}

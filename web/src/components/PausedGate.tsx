@@ -1,22 +1,28 @@
 import { type ReactNode, useEffect, useState } from 'react';
-import { setPausedHandler } from '../api/client';
+import { type EdgeBlock, setPausedHandler } from '../api/client';
 import { useT } from '../i18n';
+import { Button } from './Button';
 
-/** Replaces the whole console with a notice once any API call hits the usage-guard edge block. */
+/**
+ * Replaces the whole console with a notice once any API call is blocked at the edge: the usage guard
+ * (paused until the window resets) or a Cloudflare challenge (generic, usually short-lived).
+ */
 export function PausedGate({ children }: { children: ReactNode }) {
   const t = useT();
-  const [paused, setPaused] = useState(false);
+  const [blocked, setBlocked] = useState<EdgeBlock | null>(null);
 
   useEffect(() => {
-    setPausedHandler(() => setPaused(true));
+    setPausedHandler((kind) => setBlocked(kind));
     return () => setPausedHandler(null);
   }, []);
 
-  useEffect(() => {
-    if (paused) document.title = `${t('paused.title')} · Waseda Moodle MCP`;
-  }, [paused, t]);
+  const title = blocked === 'challenge' ? t('paused.unavailable') : t('paused.title');
 
-  if (!paused) return children;
+  useEffect(() => {
+    if (blocked) document.title = `${title} · Waseda Moodle MCP`;
+  }, [blocked, title]);
+
+  if (!blocked) return children;
   return (
     <main className="center-page paused" role="alert">
       <span className="brand">
@@ -25,8 +31,11 @@ export function PausedGate({ children }: { children: ReactNode }) {
         </span>
         {t('app.name')}
       </span>
-      <h1 className="page-title">{t('paused.title')}</h1>
-      <p className="muted">{t('paused.desc')}</p>
+      <h1 className="page-title">{title}</h1>
+      <p className="muted">{blocked === 'challenge' ? t('paused.retrySoon') : t('paused.desc')}</p>
+      <div>
+        <Button onClick={() => location.reload()}>{t('common.reload')}</Button>
+      </div>
     </main>
   );
 }

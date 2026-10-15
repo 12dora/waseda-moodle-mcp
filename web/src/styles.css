@@ -642,6 +642,9 @@ fieldset {
   background: var(--surface);
   font-size: 14px;
 }
+.segmented label + label span {
+  margin-left: -1px;
+}
 .segmented label:first-of-type span {
   border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 }
@@ -1300,4 +1303,110 @@ fieldset {
 
 .tt-today {
   gap: 8px;
+}
+
+.tt-item {
+  position: relative;
+  display: grid;
+  min-width: 0;
+}
+.tt-item:has(.tt-edit) .tt-class {
+  padding-right: 28px;
+}
+.tt-edit {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0;
+}
+.tt-item:hover .tt-edit,
+.tt-edit:focus-visible {
+  opacity: 1;
+}
+.tt-edit:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.tt-edit:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}
+@media (hover: none) {
+  .tt-edit {
+    opacity: 1;
+  }
+}
+.tt-mark {
+  justify-self: start;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.tt-notice {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--warn);
+}
+.tt-ref {
+  align-items: center;
+}
+
+/* Schedule editor ---------------------------------------------------------- */
+.dialog:has(.slot-rows) {
+  width: min(600px, calc(100vw - 32px));
+}
+.dialog-footer-start {
+  margin-right: auto;
+}
+.slot-rows {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+.slot-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+.slot-row .select {
+  width: 100%;
+}
+.slot-row .slot-room {
+  grid-column: 1 / 5;
+}
+.slot-error {
+  grid-column: 1 / -1;
+}
+.slot-remove {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+.slot-remove:hover {
+  background: var(--surface-2);
+  color: var(--danger);
+}
+.slot-remove:focus-visible {
+  outline: 2px solid var(--focus);
 }

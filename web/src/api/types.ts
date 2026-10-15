@@ -5,9 +5,18 @@ export type {
   ActionResult,
   ActionStatus,
   Course,
+  DayNote,
   DueItem,
   DueList,
+  PeriodTime,
+  ScheduleOverride,
   Scope,
+  Timetable,
+  TimetableClass,
+  TimetableCourseRef,
+  TimetableDay,
+  TimetableUnknown,
+  TimetableUnscheduled,
   UiLang,
   UserSettings,
   WriteMode,
@@ -18,6 +27,7 @@ import type {
   CourseUpdate,
   CredentialInfo,
   IsoJst,
+  ScheduleOverride,
   Scope,
   UserInfo,
   UserSettings,
@@ -93,34 +103,7 @@ export interface UpdatesResponse {
   stats: { checked: number; stale: number; checkedAt: IsoJst | null };
 }
 
-export interface TimetableClass {
-  courseId: number;
-  courseName: string;
-  start: string; // 'HH:MM'
-  end: string;
-  periods: string;
-  classroom: string | null;
-  campus: string | null;
-  url: string;
-}
-
-export interface TimetableDay {
-  date: string; // 'YYYY-MM-DD'
-  weekday: number | string;
-  note: string | null; // e.g. 振替: 月曜授業 / 休講日
-  classes: TimetableClass[];
-}
-
-export interface TimetableCourseRef {
-  courseId: number;
-  courseName: string;
-  url: string;
-}
-
-export interface TimetableResponse {
-  days: TimetableDay[];
-  onDemand: TimetableCourseRef[];
-  unknown: TimetableCourseRef[];
-}
-
-export type SettingsPatch = Partial<UserSettings>;
+/** PATCH /api/settings body: `scheduleOverrides` merges per course, `null` removes that course's entry (§15.4). */
+export type SettingsPatch = Partial<Omit<UserSettings, 'scheduleOverrides'>> & {
+  scheduleOverrides?: Record<string, ScheduleOverride | null>;
+};
