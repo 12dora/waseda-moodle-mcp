@@ -92,29 +92,32 @@ export class MemoryStore implements Store {
       return;
     }
     try {
-      const data = JSON.parse(raw) as Partial<PersistedState>;
-      for (const u of data.users ?? []) {
-        const merged = { ...DEFAULT_SETTINGS, ...u.settings };
-        const settings: UserSettings = {
-          // drops retired fields; an old file reads no overrides as {} and a missing night / alsoOnDemand as false
-          writeMode: merged.writeMode,
-          myCourseIds: merged.myCourseIds ?? null,
-          uiLang: merged.uiLang,
-          scheduleOverrides: normalizeScheduleOverrides(merged.scheduleOverrides),
-        };
-        this.users.set(u.id, { ...u, settings });
-      }
-      for (const a of data.actions ?? []) this.actions.set(a.id, a);
-      for (const [k, v] of Object.entries(data.syllabus ?? {})) this.syllabusCache.set(k, v);
-      const inferredCutoff = Date.now() - INFERRED_TTL_MS; // like the D1 purge
-      for (const [k, v] of Object.entries(data.inferred ?? {})) {
-        if (v.checkedAt >= inferredCutoff) this.inferredSchedules.set(k, v);
-      }
-      const maxId = Math.max(0, ...this.users.keys());
-      this.nextUserId = Math.max(data.nextUserId ?? 1, maxId + 1);
+      this.restore(JSON.parse(raw) as Partial<PersistedState>);
     } catch (e) {
       this.onPersistError(e);
     }
+  }
+
+  private restore(data: Partial<PersistedState>): void {
+    for (const u of data.users ?? []) {
+      const merged = { ...DEFAULT_SETTINGS, ...u.settings };
+      const settings: UserSettings = {
+        // drops retired fields; an old file reads no overrides as {} and a missing night / alsoOnDemand as false
+        writeMode: merged.writeMode,
+        myCourseIds: merged.myCourseIds ?? null,
+        uiLang: merged.uiLang,
+        scheduleOverrides: normalizeScheduleOverrides(merged.scheduleOverrides),
+      };
+      this.users.set(u.id, { ...u, settings });
+    }
+    for (const a of data.actions ?? []) this.actions.set(a.id, a);
+    for (const [k, v] of Object.entries(data.syllabus ?? {})) this.syllabusCache.set(k, v);
+    const inferredCutoff = Date.now() - INFERRED_TTL_MS; // like the D1 purge
+    for (const [k, v] of Object.entries(data.inferred ?? {})) {
+      if (v.checkedAt >= inferredCutoff) this.inferredSchedules.set(k, v);
+    }
+    const maxId = Math.max(0, ...this.users.keys());
+    this.nextUserId = Math.max(data.nextUserId ?? 1, maxId + 1);
   }
 
   private pruneActions(): void {
