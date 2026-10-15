@@ -20,6 +20,7 @@ import type {
   SyllabusSummary,
   Timetable,
   UpdatesResponse,
+  UsageStats,
   UserSettings,
 } from './types';
 
@@ -73,3 +74,5 @@ export const approveOAuth = (reqId: string, scopes: Scope[]) =>
   api.post<{ redirectTo: string }>(`/api/oauth/requests/${id(reqId)}/approve`, { scopes }, { redirectOn401: false });
 export const denyOAuth = (reqId: string) =>
   api.post<{ redirectTo: string }>(`/api/oauth/requests/${id(reqId)}/deny`, {}, { redirectOn401: false });
+
+export const getUsageStats = (days: 7 | 30 | 90) => api.get<UsageStats>('/api/admin/stats', { query: { days } });

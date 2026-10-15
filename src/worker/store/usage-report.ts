@@ -5,7 +5,7 @@ import { jstDay, usagePeriods } from '../../core/usage';
 const DAY_MS = 86_400_000;
 const JST_OFFSET_MS = 9 * 3_600_000;
 
-export interface UsageStats {
+interface UsageStats {
   generatedAt: number;
   days: number;
   users: { total: number; newInRange: number; activeToday: number; activeWeek: number; activeMonth: number };

@@ -500,51 +500,6 @@ a:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.public .page-title,
-.public .privacy h1,
-.public .privacy h2,
-.public .card-title {
-  font-family: var(--serif);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-.public .page-title {
-  font-size: clamp(1.35rem, 3.6vw, 1.85rem);
-  line-height: 1.35;
-}
-.public .page-title::before {
-  content: "";
-  display: block;
-  width: 32px;
-  height: 3px;
-  background: var(--enji);
-  margin-bottom: 16px;
-}
-.public .card-title {
-  font-size: 1.05rem;
-}
-.public .btn {
-  border-radius: 4px;
-  font-weight: 600;
-}
-.public .btn-primary {
-  background: var(--enji);
-  border-color: var(--enji);
-  color: #fff;
-}
-.public .btn-primary:hover:not(:disabled) {
-  background: #73151e;
-  border-color: #73151e;
-}
-.public .btn-secondary {
-  background: transparent;
-  color: var(--accent);
-  border-color: var(--border);
-}
-.public .btn-secondary:hover:not(:disabled) {
-  background: transparent;
-  border-color: var(--accent);
-}
 @media (max-width: 479px) {
   .public-nav {
     gap: 10px;
@@ -1740,4 +1695,198 @@ fieldset {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Usage stats ---------------------------------------------------------------- */
+.segmented.stat-range label span {
+  min-height: 34px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.kpi {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.kpi-value {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.15;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+@media (max-width: 420px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .kpi {
+    padding: 12px;
+  }
+  .kpi-value {
+    font-size: 22px;
+  }
+}
+
+.chart {
+  position: relative;
+  min-width: 0;
+  height: 180px;
+}
+.chart svg {
+  display: block;
+  overflow: visible;
+}
+.chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.chart-base {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.chart-label {
+  fill: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-hit {
+  fill: transparent;
+}
+.chart-bar {
+  fill: var(--accent);
+}
+.chart-bar.is-active {
+  fill: var(--accent-hover);
+}
+.chart-tip {
+  position: absolute;
+  z-index: 1;
+  transform: translate(-50%, -100%);
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.chart-tip-start {
+  transform: translate(-12px, -100%);
+}
+.chart-tip-end {
+  transform: translate(calc(-100% + 12px), -100%);
+}
+
+.stat-table th.num,
+.stat-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stat-table .num-day {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stat-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+}
+.stat-num {
+  min-width: 4ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.stat-meter-track {
+  flex: 1;
+  min-width: 48px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.stat-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.stat-table td.mono {
+  white-space: nowrap;
+}
+@media (max-width: 479px) {
+  .stat-meter {
+    min-width: 0;
+  }
+  .stat-meter-track {
+    display: none;
+  }
+}
+
+/* Public pages: shared components restyled like the landing pages (after their base rules) ---------- */
+.public .page-title,
+.public .privacy h1,
+.public .privacy h2,
+.public .card-title {
+  font-family: var(--serif);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.public .page-title {
+  font-size: clamp(1.35rem, 3.6vw, 1.85rem);
+  line-height: 1.35;
+}
+.public .page-title::before {
+  content: "";
+  display: block;
+  width: 32px;
+  height: 3px;
+  background: var(--enji);
+  margin-bottom: 16px;
+}
+.public .card-title {
+  font-size: 1.05rem;
+}
+.public .btn {
+  border-radius: 4px;
+  font-weight: 600;
+}
+.public .btn-primary {
+  background: var(--enji);
+  border-color: var(--enji);
+  color: #fff;
+}
+.public .btn-primary:hover:not(:disabled) {
+  background: #73151e;
+  border-color: #73151e;
+}
+.public .btn-secondary {
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--border);
+}
+.public .btn-secondary:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--accent);
 }

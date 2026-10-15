@@ -50,7 +50,7 @@ interface ClientRule {
 }
 
 /** Ordered, first match wins: the single source of the client vocabulary (labels never carry user-provided text). */
-export const CLIENT_RULES: readonly ClientRule[] = [
+const CLIENT_RULES: readonly ClientRule[] = [
   { label: CLIENT_API_KEY, needles: ['api key:'], prefix: true },
   { label: 'Claude Code', needles: ['claude code'] },
   { label: 'Claude', needles: ['claude'] },

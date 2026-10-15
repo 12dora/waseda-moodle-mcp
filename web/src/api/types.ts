@@ -54,6 +54,8 @@ export interface Me {
   user: UserInfo;
   /** null when the stored Moodle credential is gone (reconnect required). */
   credential: CredentialInfo | null;
+  /** Operator of this instance (sees the usage page). Older servers omit it. */
+  isAdmin?: boolean;
 }
 
 export interface ConnectResult extends Me {
@@ -120,4 +122,20 @@ export interface CalendarStatus {
   enabled: boolean;
   createdAt: IsoJst | null;
   lastFetchAt: IsoJst | null;
+}
+
+/** `GET /api/admin/stats` — aggregate counts only (operator). Days are JST, oldest → newest. */
+export interface UsageStats {
+  generatedAt: number;
+  days: number;
+  users: {
+    total: number;
+    newInRange: number;
+    activeToday: number;
+    activeWeek: number;
+    activeMonth: number;
+  };
+  daily: { day: string; active: number; calls: number; errors: number; newUsers: number }[];
+  tools: { name: string; calls: number; errors: number }[];
+  clients: { name: string; calls: number; activeMonth: number }[];
 }

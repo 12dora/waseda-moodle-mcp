@@ -24,13 +24,12 @@ function writeStored(v: UiLang): void {
   }
 }
 
-/** Landing-page hand-off (`?lang=`): adopts and persists the language, then drops the param from the address bar. */
+/** Landing-page hand-off (`?lang=`): adopts and persists the language, then drops the param (valid or not) from the address bar. */
 function takeLangParam(): UiLang | null {
-  if (typeof location === 'undefined') return null;
+  if (typeof location === 'undefined' || !new URLSearchParams(location.search).has('lang')) return null;
   const lang = parseLangParam(location.search);
-  if (!lang) return null;
-  writeStored(lang);
   history.replaceState(history.state, '', stripLangParam(location.href));
+  if (lang) writeStored(lang);
   return lang;
 }
 

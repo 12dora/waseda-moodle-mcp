@@ -62,7 +62,7 @@ export function PublicShell({ title, children }: { title: string; children: Reac
         <div className="public-wrap public-foot-inner">
           <p>© 2026 Waseda Moodle MCP · {t('public.unofficial')}</p>
           <p>
-            <a href="/privacy">{t('public.privacy')}</a> ·{' '}
+            <a href={`/privacy?lang=${lang}`}>{t('public.privacy')}</a> ·{' '}
             <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
               {t('app.source')}
             </a>

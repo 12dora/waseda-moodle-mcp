@@ -9,12 +9,13 @@ import { useSession } from '../session';
 import { Button } from './Button';
 import { useToast } from './Toast';
 
-const NAV: ReadonlyArray<{ to: string; key: MessageKey; end?: boolean }> = [
+const NAV: ReadonlyArray<{ to: string; key: MessageKey; end?: boolean; admin?: boolean }> = [
   { to: '/', key: 'nav.overview', end: true },
   { to: '/due', key: 'nav.due' },
   { to: '/courses', key: 'nav.courses' },
   { to: '/timetable', key: 'nav.timetable' },
   { to: '/actions', key: 'nav.actions' },
+  { to: '/stats', key: 'nav.stats', admin: true },
   { to: '/settings', key: 'nav.settings' },
 ];
 
@@ -158,7 +159,7 @@ export function Layout() {
         </div>
         <nav aria-label={t('nav.label')}>
           <ul className="nav-list">
-            {NAV.map((n) => (
+            {NAV.filter((n) => !n.admin || me.isAdmin === true).map((n) => (
               <li key={n.to}>
                 <NavLink
                   to={n.to}

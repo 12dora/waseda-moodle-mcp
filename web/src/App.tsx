@@ -17,6 +17,7 @@ import { DuePage } from './pages/Due';
 import { OAuthConsentPage } from './pages/OAuthConsent';
 import { OverviewPage } from './pages/Overview';
 import { PrivacyPage } from './pages/Privacy';
+import { StatsPage } from './pages/Stats';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { TimetablePage } from './pages/Timetable';
 import { ConfigProvider, RequireSession } from './session';
@@ -46,6 +47,7 @@ function AppRoutes() {
           <Route path="courses/:courseId" element={<CoursesPage />} />
           <Route path="timetable" element={<TimetablePage />} />
           <Route path="actions" element={<ActionsPage />} />
+          <Route path="stats" element={<StatsPage />} />
           <Route path="settings/:tab?" element={<SettingsPage />} />
         </Route>
       </Route>
