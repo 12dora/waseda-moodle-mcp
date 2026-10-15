@@ -222,6 +222,17 @@ export function createMemoryStoreForTests(): MemoryStore {
       return new Map();
     },
     async putInferredSchedules() {},
+    async getCalendarFeed() {
+      return null;
+    },
+    async getCalendarFeedByHash() {
+      return null;
+    },
+    async replaceCalendarFeed() {},
+    async deleteCalendarFeed() {
+      return false;
+    },
+    async recordCalendarFetch() {},
 
     async audit(row) {
       auditLog.push({ ...row, id: nextAuditId++ });

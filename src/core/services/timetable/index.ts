@@ -70,6 +70,16 @@ function unscheduledIn(entries: TimetableEntry[], dates: string[]): TimetableUns
   });
 }
 
+/** The scope's class courses resolved to timetable entries (one scope resolution, one syllabus / attendance pass). */
+async function loadEntries(ctx: ServiceContext) {
+  const scope = await resolveScope(ctx);
+  const resolved = await resolveCourses(
+    ctx,
+    scope.courses.filter((c) => c.mine && c.kind === 'class'),
+  );
+  return { scope, ...resolved };
+}
+
 /**
  * The user's timetable for `days` days from `date` ('today' | 'tomorrow' | YYYY-MM-DD; default today, 1 day).
  * Scope = the user's courses (confirmed, or the automatic suggestion). Uses the cached syllabus; courses not cached
@@ -82,11 +92,7 @@ export async function getTimetable(
 ): Promise<Timetable> {
   const from = resolveStart(opts.date);
   const count = resolveDays(opts.days);
-  const scope = await resolveScope(ctx);
-  const { entries, unknown } = await resolveCourses(
-    ctx,
-    scope.courses.filter((c) => c.mine && c.kind === 'class'),
-  );
+  const { scope, entries, unknown } = await loadEntries(ctx);
   const dates = Array.from({ length: count }, (_, i) => addDays(from, i));
   return {
     from,
@@ -98,4 +104,13 @@ export async function getTimetable(
     scopeMode: scope.mode,
     approximate: dates.some((d) => !calendarFor(d).official),
   };
+}
+
+/**
+ * The classes of each of `dates` (YYYY-MM-DD, any number and spread), resolving the courses once. For callers that
+ * need a longer range than getTimetable's 14 days (the calendar feed); dates are not validated.
+ */
+export async function getTimetableDays(ctx: ServiceContext, dates: readonly string[]): Promise<TimetableDay[]> {
+  const { entries } = await loadEntries(ctx);
+  return dates.map((d) => classesOn(d, entries));
 }

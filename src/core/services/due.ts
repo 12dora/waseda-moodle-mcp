@@ -227,10 +227,27 @@ function byDate(a: DueItem, b: DueItem): number {
   return ka < kb ? -1 : 1;
 }
 
-export async function getDueItems(
-  ctx: ServiceContext,
-  opts: { daysAhead?: number; overdueDays?: number; courseId?: number } = {},
-): Promise<DueList> {
+interface DueOptions {
+  daysAhead?: number;
+  overdueDays?: number;
+  courseId?: number;
+  /** Only these kinds (empty / undefined = all). Applied before the progress look-up, which then checks fewer items. */
+  kinds?: readonly DueKind[];
+  /** false drops items the user already handed in (default true: they are listed apart). */
+  includeSubmitted?: boolean;
+  /** 'cached': the sweep reads the stored course snapshots and refreshes none (calendar feed; the cron keeps them). */
+  sweep?: 'live' | 'cached';
+}
+
+function kindFilter(kinds: readonly DueKind[] | undefined): (i: DueItem) => boolean {
+  if (!kinds || kinds.length === 0) return () => true;
+  const wanted = new Set<DueKind>(kinds);
+  return (i) => wanted.has(i.kind);
+}
+
+const notSubmitted = (i: DueItem) => i.submission?.status !== 'submitted';
+
+export async function getDueItems(ctx: ServiceContext, opts: DueOptions = {}): Promise<DueList> {
   const courseId = optionalPositiveInt(opts.courseId, 'course_id');
   const now = nowSec();
   const from = now - clamp(opts.overdueDays, 0, 60, 14) * DAY;
@@ -252,23 +269,28 @@ export async function getDueItems(
     fromMs: from * 1000,
     toMs: to * 1000,
     rememberScope: courseId === undefined,
+    cachedOnly: opts.sweep === 'cached',
   });
 
   // the user's own progress (submitted / draft / in progress): one batched look-up for every listed item
-  const listed = [...sweep.calendar, ...sweep.items];
-  const checked = await attachSubmissions(ctx, [...listed, ...otherCourses]);
+  const wanted = kindFilter(opts.kinds);
+  const listed = [...sweep.calendar, ...sweep.items].filter(wanted);
+  const others = otherCourses.filter(wanted);
+  const checked = await attachSubmissions(ctx, [...listed, ...others]);
+  const keep = opts.includeSubmitted === false ? notSubmitted : () => true;
 
   return {
     generatedAt: isoJst(now * 1000),
     windowFrom: isoJst(from * 1000),
     windowTo: isoJst(to * 1000),
-    items: checked.slice(0, listed.length).sort(byDate), // sweep.calendar = calendar + dates found in module text
+    // sweep.calendar = calendar + dates found in module text
+    items: checked.slice(0, listed.length).filter(keep).sort(byDate),
     scope: {
       mode: scope.mode,
       courseIds: [...scope.mine],
       otherCount: scope.courses.filter((c) => !scope.mine.has(c.id)).length,
     },
-    otherCourses: checked.slice(listed.length),
+    otherCourses: checked.slice(listed.length).filter(keep),
     sweep: sweep.stats,
     truncated,
   };

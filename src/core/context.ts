@@ -136,6 +136,18 @@ export interface AuditRow {
   detail: Record<string, unknown> | null; // never tokens or file bytes
 }
 
+/** A user's secret calendar feed (§17.2); the token itself is never stored, only its SHA-256. */
+export interface CalendarFeedInfo {
+  userId: number;
+  createdAt: number;
+  lastFetchAt: number | null;
+  cacheAt: number | null; // when cacheIcs was rendered
+}
+
+export interface CalendarFeedRow extends CalendarFeedInfo {
+  cacheIcs: string | null;
+}
+
 export interface Store {
   // users
   getUser(id: number): Promise<UserRow | null>;
@@ -209,6 +221,17 @@ export interface Store {
   // class times inferred from Moodle attendance sessions (per user; an entry with no slots means "looked, found none")
   getInferredSchedules(userId: number): Promise<Map<number, InferredSchedule>>;
   putInferredSchedules(userId: number, schedules: ReadonlyMap<number, InferredSchedule>): Promise<void>;
+
+  // secret ICS calendar feed (Worker only; the local entry throws)
+  getCalendarFeed(userId: number): Promise<CalendarFeedInfo | null>;
+  /** By the SHA-256 of the URL token; includes the cached feed. null = unknown or revoked. */
+  getCalendarFeedByHash(tokenHash: string): Promise<CalendarFeedRow | null>;
+  /** Creates the user's feed or rotates its token (the old URL stops working; fetch time and cache are reset). */
+  replaceCalendarFeed(userId: number, feed: { tokenHash: string; createdAt: number }): Promise<void>;
+  /** Revokes the feed; false when the user had none. */
+  deleteCalendarFeed(userId: number): Promise<boolean>;
+  /** Stamps a fetch; with `ics` it also replaces the cached feed (cacheAt = at). */
+  recordCalendarFetch(userId: number, fetch: { at: number; ics?: string }): Promise<void>;
 
   // audit log
   audit(row: AuditRow): Promise<void>;

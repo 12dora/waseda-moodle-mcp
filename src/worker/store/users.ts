@@ -64,6 +64,7 @@ const USER_OWNED_TABLES = [
   'upload_drafts',
   'course_snapshots',
   'inferred_schedules',
+  'calendar_feeds',
   'audit',
 ] as const;
 

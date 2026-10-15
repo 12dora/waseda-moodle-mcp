@@ -80,26 +80,28 @@ function timely(items: readonly DueItem[], win: TextWindow): DueItem[] {
  * Text items are limited to `window`; ≤ 12 Moodle calls and ≤ 3 full refetches.
  * `calendar` is the given calendar list, where an undated item may have received the date its own module text mentions.
  * `rememberScope: false` (a one-course call) keeps the remembered cron scope untouched.
+ * `cachedOnly` spends no Moodle call: the stored snapshots are used as they are (the cron keeps them fresh) and
+ * announcements are skipped; the calendar feed builds this way so a poll never refreshes course content.
  */
 export async function collectSweepItems(
   ctx: ServiceContext,
   scope: CourseScope,
   calendar: readonly DueItem[],
-  window: { fromMs: number; toMs: number; rememberScope?: boolean },
+  window: { fromMs: number; toMs: number; rememberScope?: boolean; cachedOnly?: boolean },
 ): Promise<{ items: DueItem[]; calendar: DueItem[]; stats: SweepStats }> {
   const targets = inScope(scope);
   if (targets.length === 0) return { items: [], calendar: [...calendar], stats: NO_STATS };
   const now = nowMs();
   const api = await ctx.moodle();
-  const { rememberScope, ...span } = window;
+  const { rememberScope, cachedOnly, ...span } = window;
   const [refresh, announced] = await Promise.all([
     refreshSnapshots(ctx, targets, {
-      maxCalls: MAX_CALLS - ANNOUNCE_CALLS,
+      maxCalls: cachedOnly ? 0 : MAX_CALLS - ANNOUNCE_CALLS,
       maxFull: MAX_FULL,
       maxLarge: MAX_LARGE,
-      rememberScope,
+      rememberScope: cachedOnly ? false : rememberScope,
     }),
-    announcementItems(api, targets, { now, maxCalls: ANNOUNCE_CALLS }),
+    announcementItems(api, targets, { now, maxCalls: cachedOnly ? 0 : ANNOUNCE_CALLS }),
   ]);
   const win = { now, ...span };
   const found = extractAll(targets, refresh.snapshots, win);

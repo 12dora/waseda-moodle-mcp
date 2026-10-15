@@ -23,7 +23,6 @@ const MESSAGE_MAX = 4000;
 interface RawForum {
   id?: number;
   course?: number;
-  cmid?: number;
   type?: string;
 }
 
@@ -65,7 +64,7 @@ function discussionItems(
           now: opts.now,
           course: forum.course,
           kind: 'other',
-          cmid: forum.forum.cmid ?? null,
+          cmid: null, // the news forum is only where the date was mentioned, not the task itself
           name: subject,
           url,
           dueMs: hit.ms,

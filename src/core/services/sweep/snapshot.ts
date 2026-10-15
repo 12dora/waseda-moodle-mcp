@@ -1,5 +1,6 @@
 /** Compact per-course content snapshot (persisted as JSON in the Store). Short keys keep rows small. */
 
+import { hash53 } from '../../hash';
 import { decodeEntities, htmlToMarkdown } from '../../html';
 import type { RawContentFile, RawDate, RawModule, RawSection } from '../../moodle/raw-course';
 import { findDeadlines } from './extract-text';
@@ -143,20 +144,6 @@ function sectionName(raw: string | undefined, number: number): string {
 
 const HAS_DIGIT = /[\d０-９]/;
 
-/** 53-bit string hash (cyrb53): stable across runtimes, enough to tell two versions of a text apart. */
-function hashText(text: string): string {
-  let h1 = 0xdeadbeef;
-  let h2 = 0x41c6ce57;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 2654435761);
-    h2 = Math.imul(h2 ^ c, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
-}
-
 /**
  * Keeps a text only when it mentions a deadline that is not already past (a day's grace); the mentions are stored
  * so requests need no re-parsing.
@@ -170,7 +157,7 @@ function textSource(
   const x = htmlToMarkdown(html, { maxChars: SCAN_MAX });
   const found = findDeadlines(x, now, { max: MENTIONS_PER_TEXT, from: now - DAY_MS });
   if (found.length === 0) return null;
-  return { ...src, x: x.slice(0, TEXT_MAX), h: hashText(x), d: found.map((f) => [f.ms, f.evidence, f.lead]) };
+  return { ...src, x: x.slice(0, TEXT_MAX), h: hash53(x), d: found.map((f) => [f.ms, f.evidence, f.lead]) };
 }
 
 function moduleText(raw: RawModule, mod: SnapModule, env: { section: string; now: number }): SnapText | null {

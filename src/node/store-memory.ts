@@ -52,6 +52,10 @@ interface MemoryStoreOptions {
 
 const clone = <T>(v: T): T => structuredClone(v);
 
+const localOnly = async (): Promise<never> => {
+  throw new Error('Calendar feeds are not available in local mode.');
+};
+
 /** Removes the rows of one user from a map keyed by anything. */
 function dropOwnedBy(rows: Map<string, { userId: number }>, userId: number): void {
   for (const [k, v] of rows) if (v.userId === userId) rows.delete(k);
@@ -433,6 +437,13 @@ export class MemoryStore implements Store {
     for (const [courseId, s] of schedules) this.inferredSchedules.set(`${userId}:${courseId}`, clone(s));
     this.persist();
   }
+
+  // secret calendar feeds are a Worker feature
+  readonly getCalendarFeed = localOnly;
+  readonly getCalendarFeedByHash = localOnly;
+  readonly replaceCalendarFeed = localOnly;
+  readonly deleteCalendarFeed = localOnly;
+  readonly recordCalendarFetch = localOnly;
 
   // ------------------------------------------------------------------ audit
 

@@ -7,6 +7,7 @@
 import { Hono, type MiddlewareHandler } from 'hono';
 import { WmmError } from '../../core/errors';
 import { type AppEnv, csrfGuard } from '../auth';
+import { calendarRoutes } from '../calendar/routes';
 import { filesRoutes } from '../files-routes';
 import { errorPayload } from '../http-errors';
 import { accountRoutes } from './account';
@@ -50,6 +51,7 @@ export function createApi(): Hono<AppEnv> {
   app.route('/', handoffRoutes());
   app.route('/', keyRoutes());
   app.route('/', dataRoutes());
+  app.route('/', calendarRoutes());
   app.route('/', oauthRoutes());
   // signed file tickets (no cookies, CORS *)
   app.route('/', filesRoutes());
