@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+  <!-- Edge Add-ons store logo. -->
+  <rect width="300" height="300" rx="56" fill="#8c1d24"/>
+  <polygon transform="translate(80 92) scale(1.4 1.16)" points="0,0 24,0 50,38 76,0 100,0 100,100 76,100 76,42 56,72 44,72 24,42 24,100 0,100" fill="#ffffff"/>
+</svg>

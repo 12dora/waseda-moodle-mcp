@@ -6,7 +6,7 @@
     "message": "Moodle MCP Connector"
   },
   "extDescription": {
-    "message": "早稲田 Moodle のセッションを Moodle MCP サービスに接続し、接続状態を維持します。"
+    "message": "早稲田 Moodle のセッションを Moodle MCP サービスに接続し、接続状態を維持します。非公式 — 早稲田大学とは関係ありません。"
   },
   "badgeNotConfigured": {
     "message": "サービス URL が未設定です"
@@ -123,6 +123,21 @@
     "message": "プライバシー"
   },
   "privacyBody": {
-    "message": "コネクタは Moodle モバイルアプリ用トークンを、設定したサービスへ送信するためにのみ読み取ります。トークンを保存・失効させることはないため、公式 Moodle アプリはそのまま使えます。"
+    "message": "拡張機能はトークンを保存・失効させないため、公式 Moodle アプリはそのまま使えます。"
+  },
+  "badgeConsentNeeded": {
+    "message": "設定で同意が必要です"
+  },
+  "hintConsent": {
+    "message": "接続するには、設定でトークン送信に同意してください。"
+  },
+  "consentLabel": {
+    "message": "アカウント接続のため、Moodle アプリ用トークンをこのサーバーに送信します。"
+  },
+  "linkPrivacyPolicy": {
+    "message": "プライバシーポリシー"
+  },
+  "errorConsentRequired": {
+    "message": "接続するには同意のチェックを入れてください。それまで何も送信されません。"
   }
 }

@@ -6,14 +6,22 @@ import {
   MOODLE_ORIGIN,
   randomPassport,
 } from './lib/capture.js';
+import { hasConsentFor } from './lib/consent.js';
 
-// Storage (chrome.storage.local): serviceUrl, lastSync {at, result}. The launch token is never stored or logged.
+// Storage (chrome.storage.local): serviceUrl, consent {serviceUrl, at}, lastSync {at, result}.
+// The launch token is never stored or logged.
 const ALARM = 'wmm-refresh';
 const REFRESH_MINUTES = 12 * 60;
 const TAB_CAPTURE_TIMEOUT_MS = 20000;
 const SIGNIN_TIMEOUT_MS = 10 * 60 * 1000;
 
-const getState = () => chrome.storage.local.get(['serviceUrl', 'lastSync']);
+const getState = () => chrome.storage.local.get(['serviceUrl', 'consent', 'lastSync']);
+
+/** Service URL only when the user has consented to sending the token there; otherwise null. */
+async function getConsentedServiceUrl() {
+  const { serviceUrl, consent } = await getState();
+  return hasConsentFor(consent, serviceUrl) ? serviceUrl : null;
+}
 
 async function setResult(result) {
   const lastSync = { at: Date.now(), result };
@@ -23,12 +31,15 @@ async function setResult(result) {
 }
 
 async function updateBadge() {
-  const { serviceUrl, lastSync } = await getState();
+  const { serviceUrl, consent, lastSync } = await getState();
   let text = '';
   let title = chrome.i18n.getMessage('extName');
   if (!serviceUrl) {
     text = '!';
     title = chrome.i18n.getMessage('badgeNotConfigured');
+  } else if (!hasConsentFor(consent, serviceUrl)) {
+    text = '!';
+    title = chrome.i18n.getMessage('badgeConsentNeeded');
   } else if (lastSync && (lastSync.result === 'signin_required' || lastSync.result === 'unknown_user')) {
     text = '!';
     title = chrome.i18n.getMessage(lastSync.result === 'signin_required' ? 'badgeSigninNeeded' : 'badgeNotConnected');
@@ -138,10 +149,10 @@ async function createHandoff(serviceUrl, passport, launch) {
 }
 
 async function connect() {
-  const { serviceUrl } = await getState();
+  const serviceUrl = await getConsentedServiceUrl();
   if (!serviceUrl) {
     await chrome.runtime.openOptionsPage();
-    return { ok: false, error: 'not_configured' };
+    return { ok: false, error: 'consent_required' };
   }
   const passport = randomPassport();
   const { href, signinTabId } = await capture(passport, { interactive: true });
@@ -171,10 +182,10 @@ function refresh() {
 }
 
 async function doRefresh() {
-  const { serviceUrl } = await getState();
+  const serviceUrl = await getConsentedServiceUrl();
   if (!serviceUrl) {
     await updateBadge();
-    return { result: 'not_configured' };
+    return { result: 'consent_required' };
   }
   if (!(await hasServicePermission(serviceUrl))) return setResult('permission_missing');
   const passport = randomPassport();
@@ -216,7 +227,7 @@ chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === ALARM) refresh();
 });
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.serviceUrl) updateBadge();
+  if (area === 'local' && (changes.serviceUrl || changes.consent)) updateBadge();
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -231,7 +242,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const handlers = {
     'wmm:connect': connect,
     'wmm:refresh': refresh,
-    'wmm:moodle-status': async () => ({ signedIn: Boolean(await captureViaFetch(randomPassport())) }),
+    // Probing sign-in fetches the launch page, so it is gated by consent too.
+    'wmm:moodle-status': async () => {
+      if (!(await getConsentedServiceUrl())) return { signedIn: null };
+      return { signedIn: Boolean(await captureViaFetch(randomPassport())) };
+    },
   };
   const handler = handlers[msg.type];
   if (!handler) return false;

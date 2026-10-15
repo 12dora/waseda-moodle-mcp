@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- 96x96 art with 16px transparent padding (Chrome Web Store icon). -->
+  <rect x="16" y="16" width="96" height="96" rx="18" fill="#8c1d24"/>
+  <polygon transform="translate(39 44) scale(0.5 0.4)" points="0,0 24,0 50,38 76,0 100,0 100,100 76,100 76,42 56,72 44,72 24,42 24,100 0,100" fill="#ffffff"/>
+</svg>

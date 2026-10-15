@@ -6,7 +6,7 @@
     "message": "Moodle MCP Connector"
   },
   "extDescription": {
-    "message": "将早稻田 Moodle 会话连接到 Moodle MCP 服务，并保持登录状态。"
+    "message": "将早稻田 Moodle 会话连接到 Moodle MCP 服务，并保持登录状态。非官方 — 与早稻田大学无关。"
   },
   "badgeNotConfigured": {
     "message": "未设置服务 URL"
@@ -123,6 +123,21 @@
     "message": "隐私"
   },
   "privacyBody": {
-    "message": "连接器仅为发送到你配置的服务而读取 Moodle 移动应用令牌，不会保存或吊销该令牌，官方 Moodle 应用可照常使用。"
+    "message": "扩展不会保存或吊销该令牌，官方 Moodle 应用可照常使用。"
+  },
+  "badgeConsentNeeded": {
+    "message": "需要在设置中同意"
+  },
+  "hintConsent": {
+    "message": "请先在设置中同意发送令牌，再进行连接。"
+  },
+  "consentLabel": {
+    "message": "为连接我的账户，将我的 Moodle 应用令牌发送到此服务器。"
+  },
+  "linkPrivacyPolicy": {
+    "message": "隐私政策"
+  },
+  "errorConsentRequired": {
+    "message": "请勾选同意框以连接。勾选前不会发送任何内容。"
   }
 }

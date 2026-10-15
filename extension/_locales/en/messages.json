@@ -6,7 +6,7 @@
     "message": "Moodle MCP Connector"
   },
   "extDescription": {
-    "message": "Connects your Waseda Moodle session to your Moodle MCP service and keeps it signed in."
+    "message": "Keeps your Waseda Moodle session connected to your own Moodle MCP service. Unofficial — not affiliated with Waseda University."
   },
   "badgeNotConfigured": {
     "message": "Service URL not set"
@@ -123,6 +123,21 @@
     "message": "Privacy"
   },
   "privacyBody": {
-    "message": "The connector reads your Moodle mobile-app token only to send it to the service you configured. It never stores the token and never revokes it, so the official Moodle app keeps working."
+    "message": "The extension never stores or revokes the token, so the official Moodle app keeps working."
+  },
+  "badgeConsentNeeded": {
+    "message": "Consent needed in Settings"
+  },
+  "hintConsent": {
+    "message": "Agree to sending your token in Settings to connect."
+  },
+  "consentLabel": {
+    "message": "Send my Moodle app token to this server to connect my account."
+  },
+  "linkPrivacyPolicy": {
+    "message": "Privacy policy"
+  },
+  "errorConsentRequired": {
+    "message": "Tick the consent box to connect. Nothing is sent until you do."
   }
 }

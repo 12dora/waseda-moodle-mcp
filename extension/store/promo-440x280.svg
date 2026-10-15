@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="280" viewBox="0 0 440 280">
+  <!-- Chrome Web Store small promo tile. -->
+  <rect width="440" height="280" fill="#8c1d24"/>
+  <rect x="40" y="92" width="96" height="96" rx="18" fill="#ffffff"/>
+  <polygon transform="translate(63 120) scale(0.5 0.4)" points="0,0 24,0 50,38 76,0 100,0 100,100 76,100 76,42 56,72 44,72 24,42 24,100 0,100" fill="#8c1d24"/>
+  <text x="160" y="134" fill="#ffffff" font-family="system-ui, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="28" font-weight="700">Waseda Moodle</text>
+  <text x="160" y="170" fill="#ffffff" font-family="system-ui, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="28" font-weight="700">MCP</text>
+  <text x="160" y="200" fill="#f2c9cc" font-family="system-ui, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">Unofficial connector</text>
+</svg>

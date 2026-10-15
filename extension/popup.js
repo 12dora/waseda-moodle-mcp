@@ -1,4 +1,5 @@
 import { applyI18n, t } from './i18n.js';
+import { hasConsentFor } from './lib/consent.js';
 
 applyI18n();
 const $ = (id) => document.getElementById(id);
@@ -28,8 +29,14 @@ function showMessage(key) {
   if (key) el.textContent = t(key);
 }
 
+/** Service URL the user agreed to send the token to, or null (then Connect goes to Settings). */
+async function consentedServiceUrl() {
+  const { serviceUrl, consent } = await chrome.storage.local.get(['serviceUrl', 'consent']);
+  return hasConsentFor(consent, serviceUrl) ? serviceUrl : null;
+}
+
 async function render() {
-  const { serviceUrl, lastSync } = await chrome.storage.local.get(['serviceUrl', 'lastSync']);
+  const { serviceUrl, consent, lastSync } = await chrome.storage.local.get(['serviceUrl', 'consent', 'lastSync']);
   $('service').textContent = serviceUrl || t('statusNotConfigured');
   $('service').className = serviceUrl ? '' : 'warn';
   $('console').disabled = !serviceUrl;
@@ -42,23 +49,30 @@ async function render() {
     $('sync').className = 'muted';
   }
   if (!serviceUrl) showMessage('hintConfigure');
+  else if (!hasConsentFor(consent, serviceUrl)) showMessage('hintConsent');
 }
 
 async function checkMoodle() {
   const res = await chrome.runtime.sendMessage({ type: 'wmm:moodle-status' }).catch(() => null);
   const el = $('moodle');
-  el.textContent = t(res?.signedIn ? 'statusSignedIn' : 'statusSignedOut');
-  el.className = res?.signedIn ? 'ok' : 'warn';
+  if (res?.signedIn == null) {
+    // Not checked: no consent yet (or the worker did not answer).
+    el.textContent = '—';
+    el.className = 'muted';
+    return;
+  }
+  el.textContent = t(res.signedIn ? 'statusSignedIn' : 'statusSignedOut');
+  el.className = res.signedIn ? 'ok' : 'warn';
 }
 
 function connectMessageKey(res) {
   if (res?.ok) return null;
+  if (res?.error === 'consent_required') return 'hintConsent';
   return res?.error === 'signin_required' ? 'resultSigninRequired' : 'resultServerError';
 }
 
 $('connect').addEventListener('click', async () => {
-  const { serviceUrl } = await chrome.storage.local.get('serviceUrl');
-  if (!serviceUrl) {
+  if (!(await consentedServiceUrl())) {
     chrome.runtime.openOptionsPage();
     return;
   }
