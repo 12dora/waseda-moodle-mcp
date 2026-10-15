@@ -13,6 +13,7 @@ stdio process.
 **Deadlines and course sweep**
 - Outstanding deadlines grouped Overdue / Today / Tomorrow / Next 7 days / Later, from the Moodle calendar plus a background sweep that finds undated activities and deadlines written in course text (marked "verify").
 - Recent teacher additions and changes in your courses.
+- Calendar feed: a secret ICS subscription URL (console **Settings**) for deadlines and the timetable in Google Calendar, Apple Calendar or Outlook.
 
 **Timetable**
 - Per-day classes with times, room and campus, built from the public Waseda syllabus and the academic calendar. On-demand and unknown slots listed separately.
@@ -51,29 +52,60 @@ AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- REST -->
 
 ## Clients
 
-| Client | Auth | Setup |
-|---|---|---|
-| claude.ai | OAuth | Settings -> Connectors -> Add custom connector -> URL `https://wasemoodle.example.com/mcp` |
-| Claude Code (OAuth) | OAuth | `claude mcp add --transport http waseda-moodle https://wasemoodle.example.com/mcp` |
-| Claude Code (API key) | API key | see below |
-| Other Streamable HTTP clients (e.g. LobeHub) | OAuth or API key | URL + optional `Authorization` header |
-| Local stdio | Moodle token on disk | see below |
+MCP URL: `https://wasemoodle.example.com/mcp` (Streamable HTTP). OAuth is the default: the client
+discovers the authorization server from the `401` response (RFC 9728), registers itself and opens
+the consent page, where you grant read-only or read+write access. API keys (`wmm_…`, created on the
+console **API keys** page) are for clients that can send an `Authorization: Bearer <API_KEY>` header.
+The console **Overview** page shows the same steps with your instance URL filled in.
 
-**Claude Code with an API key** (create the key on the console **API keys** page):
+| Client | Setup |
+|---|---|
+| Claude (web, Desktop; usable on mobile once added) | Customize → Connectors → Add custom connector → URL → Connect. Free plan: 1 custom connector; Team/Enterprise: an Owner adds it in Organization settings → Connectors. |
+| ChatGPT | Plugins → + → Add custom MCP server → URL, Authentication OAuth → Create. Available on Plus, Pro, Business, Enterprise and Edu. |
+| Grok | grok.com/connectors → New Connector → Custom → URL. Business/Enterprise: admin adds it first at console.x.ai. |
+| Claude Code | `claude mcp add --transport http waseda-moodle https://wasemoodle.example.com/mcp`, then `/mcp` → Authenticate |
+| Cursor | `~/.cursor/mcp.json`: `{"mcpServers": {"waseda-moodle": {"url": "https://wasemoodle.example.com/mcp"}}}` |
+| VS Code (Copilot) | `.vscode/mcp.json`: `{"servers": {"waseda-moodle": {"type": "http", "url": "https://wasemoodle.example.com/mcp"}}}` |
+| Codex CLI | `codex mcp add waseda-moodle --url https://wasemoodle.example.com/mcp`, then `codex mcp login waseda-moodle` |
+| Gemini CLI | `gemini mcp add --transport http waseda-moodle https://wasemoodle.example.com/mcp`, then `/mcp auth waseda-moodle` (free and Google One users now use Antigravity CLI) |
+| Grok CLI | `grok mcp add --transport http waseda-moodle https://wasemoodle.example.com/mcp` |
+| Other (LobeHub, Cherry Studio, …) | Streamable HTTP + URL; OAuth if supported, otherwise the API-key header |
+
+**With an API key** instead of OAuth. Keep the key out of project files: CLIs store it in your
+user config, and Codex and Cursor read it from `WMM_API_KEY` (set it in your shell profile, e.g.
+`export WMM_API_KEY='<API_KEY>'` in `~/.zshrc`).
 
 ```sh
+# Claude Code / Grok CLI (instead of the OAuth command; `claude mcp remove waseda-moodle` first if already added)
 claude mcp add --transport http waseda-moodle https://wasemoodle.example.com/mcp \
   --header "Authorization: Bearer <API_KEY>"
+grok mcp add --transport http waseda-moodle https://wasemoodle.example.com/mcp \
+  --header "Authorization: Bearer <API_KEY>"
+# Codex
+codex mcp add waseda-moodle --url https://wasemoodle.example.com/mcp --bearer-token-env-var WMM_API_KEY
 ```
 
-With OAuth, the client discovers the authorization server from the `401` response
-(RFC 9728), registers itself and opens the consent page, where you can grant read-only or
-read+write access.
+Cursor (`~/.cursor/mcp.json`): add `"headers": { "Authorization": "Bearer ${env:WMM_API_KEY}" }` to the
+server entry. VS Code (`.vscode/mcp.json`): let VS Code prompt for the key and store it securely:
 
-**Generic Streamable HTTP clients** (LobeHub and others): transport Streamable HTTP, URL
-`https://wasemoodle.example.com/mcp`. Clients that support MCP OAuth need only the URL;
-otherwise add the header `Authorization: Bearer <API_KEY>`. API keys start with `wmm_`
-and can be read-only or read+write.
+```json
+{
+  "inputs": [
+    { "type": "promptString", "id": "wmm-api-key", "description": "Waseda Moodle MCP API key", "password": true }
+  ],
+  "servers": {
+    "waseda-moodle": {
+      "type": "http",
+      "url": "https://wasemoodle.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${input:wmm-api-key}" }
+    }
+  }
+}
+```
+
+Gemini CLI (`~/.gemini/settings.json`, use `httpUrl`): add
+`"headers": { "Authorization": "Bearer <API_KEY>" }` to the server entry. ChatGPT and Claude
+(web) use OAuth only.
 
 **Local stdio** (Node 20+):
 
@@ -112,7 +144,7 @@ of writes or `create_upload_link`.
 
 | Tool | Purpose | Access |
 |---|---|---|
-| `get_due_items` | Outstanding deadlines grouped by day, with sweep results | read |
+| `get_due_items` | Outstanding deadlines grouped by day, with your submission state (draft, in progress, submitted) and sweep results | read |
 | `list_courses` | Enrolled courses (`scope`: `mine` or `all`) | read |
 | `get_course` | Sections and activities of one course | read |
 | `search_course_content` | Search activity, section and file names | read |
@@ -121,21 +153,29 @@ of writes or `create_upload_link`.
 | `set_my_courses` | Save this term's courses (server-side filter; does not change Moodle) | read scope |
 | `get_course_updates` | Recent teacher changes | read |
 | `get_timetable` | Classes per day with room and campus | read |
+| `set_course_schedule` | Set or clear a course's class time (server-side; does not change Moodle) | read scope |
+| `get_syllabus` | Public syllabus: plan, grading weights, textbooks | read |
+| `get_quiz_review` | Review a finished quiz attempt (questions, marks, right answers) | read |
 | `get_file` | Fetch a Moodle file (signed URL, temp file, or inline up to 1 MiB) | read |
 | `list_discussions` | Forum threads (default: announcements) | read |
 | `get_discussion` | Posts of one discussion | read |
 | `list_messages` | Moodle conversations | read |
 | `get_conversation` | Messages of one conversation | read |
 | `list_notifications` | Notifications and unread count | read |
+| `search_forums` | Keyword search over forum discussions (optionally messages) | read |
+| `search_people` | Find teachers and classmates seen in your course forums or conversations | read |
 | `create_upload_link` | Short-lived upload URL for large files (hosted only) | write |
 | `prepare_submission` | Preview an assignment submission | write |
 | `prepare_forum_post` | Preview a forum post or reply | write |
 | `prepare_message` | Preview a Moodle message | write |
 | `prepare_completion` | Preview marking an activity done / not done | write |
+| `prepare_forum_subscription` | Preview subscribing to / unsubscribing from a forum | write |
+| `prepare_mark_read` | Preview marking notifications or a conversation as read | write |
 | `confirm_action` | Execute a prepared action | write |
 | `cancel_action` | Discard a prepared action | write |
 
-Prompts: `daily_briefing` and `weekly_plan`. Prepared actions expire after 30 minutes. Times
+Prompts: `daily_briefing` (optional date), `weekly_plan`, `exam_prep` (course). Resources: `moodle://course/{course_id}`
+and `moodle://syllabus/{course_id}`. Prepared actions expire after 30 minutes. Times
 are shown in JST. The server never takes quizzes.
 
 ## Security and privacy

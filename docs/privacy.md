@@ -32,6 +32,7 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 | Course snapshots | Deadline detection and "what's new" | Compact outline of your courses: activity names, dates, completion, file names and links, and short text snippets (up to about 2 KB) that mention deadlines. |
 | Syllabus cache | Timetable | Parsed public Waseda syllabus pages (times, rooms, instructors). Public data, shared across users, not tied to you. |
 | Class times from Moodle | Timetable | Weekly class times derived from the attendance sessions of your courses in Moodle, when the syllabus gives none. Kept per user and refreshed weekly. |
+| Calendar subscription | Calendar apps (only if you turn it on) | A hash of your private calendar link (the link itself is not stored), the time of the last fetch, and the generated calendar (deadlines and classes) for up to 30 minutes. |
 | Rate-limit counters | Abuse protection | Keyed by IP address, user or token hash; short-lived. |
 
 ## What is never collected
@@ -52,6 +53,7 @@ Expired data is purged daily.
 | Revoked API keys | 90 days after revocation |
 | Course snapshots | 30 days after last check |
 | Class times from Moodle | 30 days after last check |
+| Calendar subscription | Until you turn it off or delete your account |
 | Sessions, connect handoffs, OAuth requests, upload drafts | Until they expire (sessions: 30 days of inactivity; handoffs: 2 minutes; upload links: 30 minutes) |
 | OAuth tokens | Access 12 hours, refresh 90 days, or until you revoke the app |
 | Rate-limit counters | 1 day |
@@ -73,7 +75,7 @@ In the console:
 
 - **Apps**: revoke an MCP client's OAuth access.
 - **API keys**: revoke a key.
-- **Settings -> Delete account**: revokes all OAuth grants and permanently deletes your user record, encrypted token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots and class times from Moodle. Your Moodle account is not affected.
+- **Settings -> Delete account**: revokes all OAuth grants and permanently deletes your user record, encrypted token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
 
 The service never revokes or resets your Moodle token, because it is the same token the
 official Moodle mobile app uses; revoking it would sign your phone out. If you also want to
