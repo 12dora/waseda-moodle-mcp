@@ -242,7 +242,7 @@ describe('lookupTerms', () => {
     const t = makeFakeContext();
     const c3 = course(3, '2026570010009901');
     const res = await lookupTerms(t.ctx, [C1, C2, c3]);
-    expect([...res.values()]).toEqual([null, null, null]);
+    expect(res.size).toBe(0); // the site could not tell: not known yet
     for (const c of [C1, C2, c3]) {
       expect(JSON.parse(t.state.syllabusCache.get(c.idnumber)?.json ?? '')).toEqual({ unknown: true });
     }
@@ -273,7 +273,7 @@ describe('lookupTerms', () => {
     const t = makeFakeContext();
     const res = await lookupTerms(t.ctx, [C1, C2]);
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    expect([...res.values()]).toEqual([null, null]);
+    expect(res.size).toBe(0); // not reached / failed: not known yet
     expect(JSON.parse(t.state.syllabusCache.get(C1.idnumber)?.json ?? '')).toEqual({ unknown: true });
     expect(t.state.syllabusCache.has(C2.idnumber)).toBe(false);
   });
@@ -301,7 +301,7 @@ describe('lookupTerms', () => {
     const res = await lookupTerms(t.ctx, courses);
     expect(fetchFn).toHaveBeenCalledTimes(3);
     expect(maxInFlight).toBe(1);
-    expect([...res.values()].map((i) => i?.term ?? null)).toEqual(['秋学期', '秋学期', '秋学期', null, null]);
+    expect([...res.values()].map((i) => i?.term ?? null)).toEqual(['秋学期', '秋学期', '秋学期']); // 4 and 5: not known yet
 
     await lookupTerms(t.ctx, courses); // the next call catches up
     expect(fetchFn).toHaveBeenCalledTimes(5);
@@ -347,7 +347,7 @@ describe('lookupTerms', () => {
     t.state.syllabusCache.set(C1.idnumber, { json: JSON.stringify(info), fetchedAt: NOW.getTime() - 500 * DAY });
     const res = await lookupTerms(t.ctx, [C1, C2], { syllabusLookup: false });
     expect(res.get(1)?.term).toBe('秋クォーター');
-    expect(res.get(2)).toBeNull();
+    expect(res.has(2)).toBe(false); // uncached and not fetched
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
@@ -682,7 +682,7 @@ describe('lookupSeenCourses', () => {
     const res = await lookupSeenCourses(t.ctx, [1, 4, 5, 99]);
     expect(fetchFn).toHaveBeenCalledTimes(3); // budget of the request is used up
     expect(res.get(1)?.slots).toEqual([slot(1, 1, 1)]);
-    expect(res.get(4)).toBeNull();
+    expect(res.has(4)).toBe(false); // over the request budget: not known yet
     expect(res.has(99)).toBe(false); // never presented: nothing to look up
   });
 

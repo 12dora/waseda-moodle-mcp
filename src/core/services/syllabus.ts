@@ -215,7 +215,8 @@ async function fetchSyllabus(course: LookupCourse, budget: FetchBudget): Promise
 
 // ------------------------------------------------------------------ cache + lookup
 
-type Cached = { info: SyllabusInfo | null; fresh: boolean };
+/** `known` false = a failure marker with no earlier answer: the site could not tell yet (backing off while fresh). */
+type Cached = { info: SyllabusInfo | null; fresh: boolean; known: boolean };
 
 /** What the cache table holds: a result (`null` = no syllabus), or a failure marker with the answer it replaced. */
 type UnknownMarker = { unknown: true; prev?: SyllabusInfo };
@@ -229,7 +230,7 @@ function isUnknownMarker(parsed: unknown): parsed is UnknownMarker {
  * v1 / v2 rows (no `scheduleUnparsed`) are refetched only for the current academic year: for other years the term is
  * all anyone needs, and refetching them would use up the call's fetches before the user's own courses get theirs.
  */
-function revive(stored: SyllabusInfo | null, idnumber: string, at: number): Cached {
+function revive(stored: SyllabusInfo | null, idnumber: string, at: number): Omit<Cached, 'known'> {
   if (stored === null) return { info: null, fresh: true };
   const info = stored.slots === undefined ? { ...stored, ...parseSchedule({ dayPeriod: stored.dayPeriod }) } : stored;
   const yearOk = info.year === Number(idnumber.slice(0, 4));
@@ -242,10 +243,11 @@ function readCached(idnumber: string, row: { json: string; fetchedAt: number }, 
     const parsed = JSON.parse(row.json) as SyllabusInfo | UnknownMarker | null;
     const age = at - row.fetchedAt;
     if (isUnknownMarker(parsed)) {
-      return { info: revive(parsed.prev ?? null, idnumber, at).info, fresh: age < UNKNOWN_TTL_MS };
+      const prev = parsed.prev ?? null;
+      return { info: revive(prev, idnumber, at).info, fresh: age < UNKNOWN_TTL_MS, known: prev !== null };
     }
     const { info, fresh } = revive(parsed, idnumber, at);
-    return { info, fresh: fresh && age < CACHE_TTL_MS };
+    return { info, fresh: fresh && age < CACHE_TTL_MS, known: true };
   } catch {
     return null;
   }
@@ -330,7 +332,13 @@ export async function lookupTerms(
     eligible.map((c) => c.idnumber),
     at,
   );
-  const result = new Map<number, SyllabusInfo | null>(courses.map((c) => [c.id, cache.get(c.idnumber)?.info ?? null]));
+  // no key = not known yet (no cached row and not fetched in this call); null = known to have no usable syllabus
+  const result = new Map<number, SyllabusInfo | null>();
+  for (const c of courses) {
+    const cached = cache.get(c.idnumber);
+    if (cached?.known) result.set(c.id, cached.info);
+    else if (!splitIdnumber(c.idnumber)) result.set(c.id, null);
+  }
   if (!state.enabled) return result;
 
   const allowed = opts.sharedBudget ? Math.max(0, MAX_FETCHES_PER_CALL - state.spent) : MAX_FETCHES_PER_CALL;
@@ -348,7 +356,7 @@ export async function lookupTerms(
 
 /**
  * Info for courses an earlier lookupTerms call of this request (the course scope) already presented, within what is
- * left of the request's 3 fetches. Ids never presented come back `null`. This is how the timetable reuses the scope's
+ * left of the request's 3 fetches. Ids never presented, or not fetched yet, have no key. This is how the timetable reuses the scope's
  * lookup without a second Moodle call for idnumbers.
  */
 export function lookupSeenCourses(ctx: ServiceContext, ids: number[]): Promise<Map<number, SyllabusInfo | null>> {

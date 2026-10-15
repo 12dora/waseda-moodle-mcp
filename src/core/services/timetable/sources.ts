@@ -33,6 +33,7 @@ interface Outcome {
 interface Unresolved {
   course: Course;
   info: SyllabusInfo | null;
+  pending: boolean; // the syllabus was not looked up yet (request budget), so "nothing found" is not sure
 }
 
 const entryOnly = (entry: TimetableEntry): Outcome => ({ entry, unknown: null });
@@ -46,7 +47,7 @@ const toSec = (iso: string | null) => (iso === null ? null : Math.floor(Date.par
 function missingReason(ctx: ServiceContext, c: Unresolved, checked: boolean): TimetableUnknown['reason'] {
   if (c.info?.scheduleUnparsed) return 'unparsed';
   if (ctx.syllabusLookup === false) return 'lookup-off';
-  return checked ? 'not-found' : 'pending';
+  return checked && !c.pending ? 'not-found' : 'pending';
 }
 
 /** What is left for a course after the syllabus and Moodle both had their say. */
@@ -86,10 +87,11 @@ export async function resolveCourses(ctx: ServiceContext, courses: Course[]): Pr
   const unresolved: Unresolved[] = [];
   for (const course of courses) {
     const info = infos.get(course.id) ?? null;
+    const pending = !infos.has(course.id);
     const override = overrides[String(course.id)];
     if (override !== undefined) outcomes.set(course.id, entryOnly(overrideEntry(course, override, info)));
     else if (info && hasUsableSchedule(info)) outcomes.set(course.id, entryOnly(syllabusEntry(course, info)));
-    else unresolved.push({ course, info });
+    else unresolved.push({ course, info, pending });
   }
   const inference = await inferFor(ctx, unresolved);
   for (const c of unresolved) outcomes.set(c.course.id, fallbackOutcome(ctx, c, inference));

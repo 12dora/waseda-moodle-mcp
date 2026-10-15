@@ -698,6 +698,17 @@ describe('getTimetable: unknown reasons with the real Moodle lookup', () => {
     expect((await mem.getInferredSchedules(ctx.user.id)).get(5)?.slots).toEqual([]);
   });
 
+  it('stays pending while the syllabus is not known yet, even when Moodle found nothing', async () => {
+    const { t, ctx } = await realInference();
+    t.state.syllabusCache.clear(); // never fetched; the site cannot answer in this call
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('busy', { status: 503 })),
+    );
+    t.api.set(EVENTS_FN, { events: [] });
+    expect((await getTimetable(ctx)).unknown.map((c) => [c.courseId, c.reason])).toEqual([[5, 'pending']]);
+  });
+
   it('stays pending only while Moodle could not be asked', async () => {
     const { t, ctx } = await realInference();
     t.api.set(EVENTS_FN, new MoodleError('no access', 'nopermissions'));
