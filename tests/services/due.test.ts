@@ -351,10 +351,20 @@ describe('getDueItems', () => {
     const [passedCtx, passed] = vi.mocked(attachSubmissions).mock.calls[0] ?? [];
     expect(passedCtx).toBe(ctx);
     expect(passed).toHaveLength(ALL_NAMES.length);
-    expect(passed?.at(-1)?.name).toBe('Elective Essay'); // listed items first: they win when the look-up is capped
+    expect(passed?.at(-1)?.name).toBe('Elective Essay'); // listed items first, then other-course items
     expect(list.items.find((i) => i.name === 'Report 1')).toMatchObject({ overdue: false, submission: submitted });
     expect(list.items.map((i) => i.name)).toEqual(ALL_NAMES.filter((n) => n !== 'Elective Essay'));
     expect(list.otherCourses.map((i) => [i.name, i.submission?.status])).toEqual([['Elective Essay', 'submitted']]);
+  });
+
+  it('passes maxSubmissionChecks through to attachSubmissions', async () => {
+    const { ctx } = makeFakeContext({
+      responses: { [GLOBAL]: { events: [] }, ...SCOPE_RESPONSES },
+    });
+    await getDueItems(ctx, { maxSubmissionChecks: 150 });
+    expect(vi.mocked(attachSubmissions).mock.calls[0]?.[2]).toEqual({ maxSubmissionChecks: 150 });
+    await getDueItems(ctx);
+    expect(vi.mocked(attachSubmissions).mock.calls[1]?.[2]).toEqual({ maxSubmissionChecks: undefined });
   });
 
   describe('filters', () => {

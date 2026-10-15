@@ -53,11 +53,25 @@ describe('get_due_items tool', () => {
     vi.mocked(getDueItems).mockResolvedValue(list);
   });
 
+  it('is titled Assignments & deadlines', () => {
+    expect(tool?.title).toBe('Assignments & deadlines');
+    expect(tool?.description).toContain('group_by=course');
+    expect(tool?.description).toContain('struck through');
+    expect(tool?.description).not.toContain('listed apart under Submitted');
+  });
+
   it('accepts kinds and include_submitted, and rejects unknown kinds or an empty list', () => {
     expect(tool?.input.safeParse({ kinds: ['assign', 'quiz'], include_submitted: false }).success).toBe(true);
     expect(tool?.input.safeParse({ kinds: ['homework'] }).success).toBe(false);
     expect(tool?.input.safeParse({ kinds: [] }).success).toBe(false);
     expect(tool?.input.safeParse({ include_submitted: 'no' }).success).toBe(false);
+  });
+
+  it('accepts group_by date or course and rejects other values', () => {
+    expect(tool?.input.safeParse({ group_by: 'date' }).success).toBe(true);
+    expect(tool?.input.safeParse({ group_by: 'course' }).success).toBe(true);
+    expect(tool?.input.safeParse({}).success).toBe(true);
+    expect(tool?.input.safeParse({ group_by: 'week' }).success).toBe(false);
   });
 
   it('passes the filters to the service', async () => {
@@ -71,6 +85,21 @@ describe('get_due_items tool', () => {
     });
   });
 
+  it('passes group_by to the renderer and not to the service', async () => {
+    const out = await run('worker', { group_by: 'course' });
+    expect(getDueItems).toHaveBeenCalledWith(expect.anything(), {
+      daysAhead: undefined,
+      overdueDays: undefined,
+      courseId: undefined,
+      kinds: undefined,
+      includeSubmitted: undefined,
+    });
+    expect(out.text).toContain('(course_id 101) — overdue 0 · to do 8 · draft 0 · submitted 0');
+    expect(out.text).toContain('## Strategic Marketing');
+    expect(out.text).not.toContain('## No deadline');
+    expect(out.data).toBe(list);
+  });
+
   it('echoes the filters in the text and returns the service list as structuredContent', async () => {
     const out = await run('worker', { kinds: ['other'], include_submitted: false });
     expect(out.text).toContain('Filtered: only kinds: other; submitted items hidden.');
@@ -78,7 +107,10 @@ describe('get_due_items tool', () => {
   });
 
   it('words the undated overflow by mode: console pointer hosted, none in stdio', async () => {
-    expect((await run('worker', {})).text).toContain("see the console's Due page");
+    const hosted = (await run('worker', {})).text;
+    expect(hosted).toContain('Assignments & deadlines. Times are JST');
+    expect(hosted).not.toContain('Due items.');
+    expect(hosted).toContain("see the console's Assignments & deadlines page");
     const stdio = (await run('stdio', {})).text;
     expect(stdio).toContain('all are in structuredContent');
     expect(stdio.toLowerCase()).not.toContain('console');

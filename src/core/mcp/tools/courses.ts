@@ -8,6 +8,7 @@ import type { DueKind } from '../../types';
 import { renderActivity } from '../render/activity';
 import { renderCourses, renderOutline, renderSearch } from '../render/courses';
 import { renderDueList } from '../render/due';
+import { renderDueByCourse } from '../render/due-course';
 import { renderGrades } from '../render/grades';
 import {
   activityOut,
@@ -23,14 +24,13 @@ const DUE_KINDS: [DueKind, ...DueKind[]] = ['assign', 'quiz', 'questionnaire', '
 
 const getDueItemsTool = defineTool({
   name: 'get_due_items',
-  title: 'Due items',
+  title: 'Assignments & deadlines',
   description:
-    "Lists the user's outstanding assignments, quizzes, questionnaires and other deadlines, grouped as Overdue / Today / Tomorrow / Next 7 days / Later. " +
-    'Use this first for "what is due", "what should I work on" or "did I miss anything". ' +
-    'Items already submitted are listed apart under Submitted; saved drafts, unfinished quiz attempts and reopened assignments are tagged as not submitted. ' +
-    'It combines the Moodle calendar with tasks found by checking the course pages: activities without a deadline in Moodle, and deadlines written in course text (marked "verify"; confirm them with the quoted evidence). ' +
-    "Covers the user's own courses; the footer says how many were checked. Times are JST, and a deadline at 00:00 means the previous day 24:00. Each line carries the cmid to pass to get_activity when Moodle gives one; deadlines found in announcements name the announcement link instead. " +
-    'Pass kinds to list only some types (e.g. ["assign"]) and include_submitted=false to hide what is already handed in.',
+    "Lists the user's assignments and deadlines from the Moodle calendar and from course pages (activities with no Moodle deadline, and dates written in course text, marked verify). " +
+    'Grouped by date (Overdue / Today / Tomorrow / Next 7 days / Later) or by course when group_by=course. ' +
+    'Submitted items stay in their group struck through (~~name~~ ✓ submitted); drafts, unfinished attempts and reopened work are tagged as not submitted. ' +
+    'Use this first for what is due, what to work on, or missed work. Times are JST; a deadline at 00:00 is the previous day 24:00. Lines include the cmid for get_activity. ' +
+    'Pass kinds to list only some types; include_submitted=false hides handed-in items.',
   annotations: READ_HINTS,
   input: z.object({
     days_ahead: z
@@ -55,7 +55,16 @@ const getDueItemsTool = defineTool({
       .optional(),
     include_submitted: z
       .boolean()
-      .describe('List items the user already handed in under "Submitted". Default true; false hides them.')
+      .describe(
+        'Include items already handed in, struck through in their date or course group. Default true; false hides them.',
+      )
+      .optional(),
+    group_by: z
+      .enum(['date', 'course'])
+      .describe(
+        "How to group the markdown. 'date' (default): Overdue / Today / Tomorrow / Next 7 days / Later. " +
+          "'course': one section per course with counts overdue / to do / draft / submitted.",
+      )
       .optional(),
   }),
   output: dueItemsOut,
@@ -68,7 +77,8 @@ const getDueItemsTool = defineTool({
       includeSubmitted: a.include_submitted,
     });
     const view = { stdio: ctx.mode === 'stdio', kinds: a.kinds, includeSubmitted: a.include_submitted };
-    return { text: renderDueList(r, view), data: r };
+    const render = a.group_by === 'course' ? renderDueByCourse : renderDueList;
+    return { text: render(r, view), data: r };
   },
 });
 

@@ -51,6 +51,13 @@ function batchResponder(handlers: Record<string, Handler>) {
 const sentFunctions = (params: Record<string, unknown> | undefined) =>
   ((params?.requests ?? []) as Array<{ function: string }>).map((r) => r.function);
 
+function questionnaireCmids(params: Record<string, unknown> | undefined): number[] {
+  return ((params?.requests ?? []) as Array<{ arguments: string }>).map((r) => {
+    const args = (JSON.parse(r.arguments) as { args: Array<{ value: string }> }).args;
+    return Number(args[0]?.value);
+  });
+}
+
 /** cmid -> { modname, instance }: instance = cmid + 1000. */
 const MODULES: Record<number, string> = { 5001: 'assign', 5002: 'assign', 5003: 'quiz', 5004: 'quiz', 5005: 'forum' };
 const moduleOf: Handler = (args) => {
@@ -254,5 +261,37 @@ describe('attachSubmissions', () => {
     expect(requests).toHaveLength(40);
     expect(result.slice(0, 40).every((i) => i.submission === null)).toBe(true);
     expect(result.slice(40, 45)).toEqual(items.slice(40));
+  });
+
+  it('checks nearest deadlines first when the default cap is hit', async () => {
+    const far = Array.from({ length: 40 }, (_, i) =>
+      item({ kind: 'questionnaire', cmid: 8000 + i, dueAt: '2026-12-01T12:00:00+09:00' }),
+    );
+    const near = item({ kind: 'questionnaire', cmid: 8999, dueAt: '2026-10-14T18:00:00+09:00' });
+    const { ctx, api } = setup({ tool_mobile_get_content: questionnaireContent({}) });
+    await attachSubmissions(ctx, [...far, near]);
+    const cmids = questionnaireCmids(api.calls[0]?.params);
+    expect(cmids).toHaveLength(40);
+    expect(cmids[0]).toBe(8999);
+    expect(cmids).not.toContain(8039);
+  });
+
+  it('honours maxSubmissionChecks and still prefers the nearest items', async () => {
+    const items = [
+      item({ kind: 'questionnaire', cmid: 1, dueAt: '2026-12-01T12:00:00+09:00', name: 'far upcoming' }),
+      item({ kind: 'questionnaire', cmid: 2, dueAt: '2026-10-15T12:00:00+09:00', name: 'near upcoming' }),
+      item({ kind: 'questionnaire', cmid: 3, dueAt: '2026-09-20T12:00:00+09:00', name: 'far overdue' }),
+      item({ kind: 'questionnaire', cmid: 4, dueAt: '2026-10-13T12:00:00+09:00', name: 'near overdue' }),
+      item({ kind: 'questionnaire', cmid: 5, dueAt: null, opensAt: null, name: 'undated' }),
+    ];
+    const few = setup({ tool_mobile_get_content: questionnaireContent({}) });
+    await attachSubmissions(few.ctx, items, { maxSubmissionChecks: 3 });
+    expect(questionnaireCmids(few.api.calls[0]?.params).sort()).toEqual([2, 3, 4]);
+
+    const many = setup({ tool_mobile_get_content: questionnaireContent({}) });
+    const lots = Array.from({ length: 50 }, (_, i) => item({ kind: 'questionnaire', cmid: 7000 + i }));
+    await attachSubmissions(many.ctx, lots, { maxSubmissionChecks: 50 });
+    // one batched call per 40 requests
+    expect(many.api.calls.map((c) => questionnaireCmids(c.params).length)).toEqual([40, 10]);
   });
 });

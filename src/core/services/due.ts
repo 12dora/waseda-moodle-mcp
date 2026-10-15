@@ -237,6 +237,8 @@ interface DueOptions {
   includeSubmitted?: boolean;
   /** 'cached': the sweep reads the stored course snapshots and refreshes none (calendar feed; the cron keeps them). */
   sweep?: 'live' | 'cached';
+  /** Distinct activities whose submission state is looked up (nearest deadline first). Default 40. */
+  maxSubmissionChecks?: number;
 }
 
 function kindFilter(kinds: readonly DueKind[] | undefined): (i: DueItem) => boolean {
@@ -276,7 +278,9 @@ export async function getDueItems(ctx: ServiceContext, opts: DueOptions = {}): P
   const wanted = kindFilter(opts.kinds);
   const listed = [...sweep.calendar, ...sweep.items].filter(wanted);
   const others = otherCourses.filter(wanted);
-  const checked = await attachSubmissions(ctx, [...listed, ...others]);
+  const checked = await attachSubmissions(ctx, [...listed, ...others], {
+    maxSubmissionChecks: opts.maxSubmissionChecks,
+  });
   const keep = opts.includeSubmitted === false ? notSubmitted : () => true;
 
   return {

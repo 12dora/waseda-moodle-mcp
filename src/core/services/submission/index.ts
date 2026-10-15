@@ -7,6 +7,7 @@
 
 import type { MoodleApi, ServiceContext } from '../../context';
 import { isObj } from '../../moodle/wire';
+import { nowMs, toMs } from '../../time';
 import type { DueItem, DueSubmission } from '../../types';
 import { assignStatusRequest, parseAssignStatus } from './assign';
 import { type BatchRequest, type BatchResult, callBatch } from './batch';
@@ -17,14 +18,39 @@ type Kind = 'assign' | 'quiz' | 'questionnaire';
 type Target = DueItem & { cmid: number; kind: Kind };
 type Statuses = Map<number, DueSubmission | null>;
 
-/** Most items checked per listing: keeps both rounds within one or two batched calls. */
-const MAX_CHECKED = 40;
+/** Default cap: one or two batched calls for the MCP / console due list. The overview passes a higher cap. */
+const DEFAULT_CHECKED = 40;
 const CHECKED_KINDS: ReadonlySet<string> = new Set<Kind>(['assign', 'quiz', 'questionnaire']);
+
+interface AttachSubmissionsOptions {
+  /** Distinct cmids to look up (nearest deadline first). Default 40. */
+  maxSubmissionChecks?: number;
+}
 
 const isTarget = (i: DueItem): i is Target => i.cmid !== null && CHECKED_KINDS.has(i.kind) && !i.closed;
 
-/** Distinct cmids, in listing order. */
-function pickTargets(items: readonly DueItem[]): Target[] {
+function checkLimit(v: number | undefined): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_CHECKED;
+  return Math.max(0, Math.trunc(v));
+}
+
+function deadlineMs(item: DueItem): number | null {
+  const at = item.dueAt ?? item.opensAt;
+  return at === null ? null : toMs(at);
+}
+
+/** Closest overdue and closest upcoming first; undated last. Equal distance keeps listing order. */
+function byNearness(now: number, a: DueItem, b: DueItem): number {
+  const ta = deadlineMs(a);
+  const tb = deadlineMs(b);
+  if (ta === tb) return 0;
+  if (ta === null) return 1;
+  if (tb === null) return -1;
+  return Math.abs(ta - now) - Math.abs(tb - now);
+}
+
+/** Distinct cmids, nearest deadline first. */
+function pickTargets(items: readonly DueItem[], max: number): Target[] {
   const seen = new Set<number>();
   const out: Target[] = [];
   for (const item of items) {
@@ -32,7 +58,9 @@ function pickTargets(items: readonly DueItem[]): Target[] {
     seen.add(item.cmid);
     out.push(item);
   }
-  return out.slice(0, MAX_CHECKED);
+  const now = nowMs();
+  out.sort((a, b) => byNearness(now, a, b));
+  return out.slice(0, max);
 }
 
 // ------------------------------------------------------------------ round 1: cmid -> instance
@@ -151,9 +179,13 @@ function withState(item: DueItem, state: DueSubmission | null): DueItem {
  * Adds `submission` to assignments, quizzes and questionnaires (with a cmid, not closed); everything else keeps
  * its value. Never throws: on any failure the items come back unchanged.
  */
-export async function attachSubmissions(ctx: ServiceContext, items: DueItem[]): Promise<DueItem[]> {
+export async function attachSubmissions(
+  ctx: ServiceContext,
+  items: DueItem[],
+  opts: AttachSubmissionsOptions = {},
+): Promise<DueItem[]> {
   try {
-    const targets = pickTargets(items);
+    const targets = pickTargets(items, checkLimit(opts.maxSubmissionChecks));
     if (targets.length === 0) return items;
     const states = await statesFor(ctx, targets);
     return items.map((item) => {

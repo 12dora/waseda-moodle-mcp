@@ -80,6 +80,10 @@ describe('renderDueList', () => {
   });
 
   it('formats lines and shows a midnight deadline as the previous day 24:00', () => {
+    expect(text).toContain(
+      'Assignments & deadlines. Times are JST; a deadline at 00:00 is shown as the previous day 24:00.',
+    );
+    expect(text).not.toContain('Due items.');
     expect(text).toContain('- [assign] Old report — Strategic Marketing — due 2026-10-10 Sat 23:59 — OVERDUE (cmid 1)');
     expect(text).toContain('Midnight task — Strategic Marketing — due 2026-10-14 Wed 24:00 (cmid 3)');
     expect(text).toContain('opens 2026-10-20 Tue 09:00');
@@ -113,43 +117,49 @@ describe('renderDueList', () => {
       ]),
     );
 
-    it('keeps submitted items out of the outstanding groups, the counts and the headline', () => {
+    it('keeps submitted items in their date group; outstanding headline and Overdue exclude them', () => {
       expect(mixed).toContain('1 item between');
       expect(mixed).toContain('## Tomorrow (1)');
+      expect(mixed).toContain('## Today (1)');
+      expect(mixed).toMatch(/## Past deadline \(1\)\n- \[questionnaire\] ~~Session report~~/);
+      expect(mixed.indexOf('## Past deadline')).toBeGreaterThan(mixed.indexOf('## Tomorrow'));
       expect(mixed).not.toContain('## Overdue');
-      expect(mixed).not.toContain('## Today');
-      expect(mixed).not.toMatch(/- \[assign\] Final essay[^\n]*due /);
+      expect(mixed).not.toContain('## Submitted');
+      expect(mixed).toContain('Open task — Strategic Marketing — due 2026-10-15 Thu 23:59 (cmid 801)');
     });
 
-    it('lists them in a compact Submitted section after the outstanding groups', () => {
-      expect(mixed).toContain('## Submitted (2)');
-      expect(mixed.indexOf('## Submitted')).toBeGreaterThan(mixed.indexOf('## Tomorrow'));
-      const at = 'Strategic Marketing — submitted 2026-10-11 Sun 15:29';
-      expect(mixed).toContain(`- [assign] Final essay — ${at} — can still edit (cmid 802)`);
-      expect(mixed).toContain(`- [questionnaire] Session report — ${at} (cmid 800)\n`);
-      expect(mixed).not.toContain(`Session report — ${at} — can still edit`);
+    it('renders a submitted item as a struck name with ✓ submitted, course and cmid outside the strike', () => {
+      const at = '✓ submitted 2026-10-11 Sun 15:29 — Strategic Marketing';
+      expect(mixed).toContain(
+        '- [assign] ~~Final essay~~ ✓ submitted 2026-10-11 Sun 15:29 (can still edit) — Strategic Marketing — due 2026-10-14 Wed 18:00 (cmid 802)',
+      );
+      expect(mixed).toContain(`- [questionnaire] ~~Session report~~ ${at} — due 2026-10-10 Sat 13:00 (cmid 800)`);
+      expect(mixed).not.toMatch(/~~[^~\n]*Strategic Marketing[^~\n]*~~/);
+      expect(mixed).not.toContain('OVERDUE');
     });
 
-    it('says nothing is outstanding when everything was submitted, and still lists the submitted items', () => {
+    it('says nothing is outstanding when everything was submitted, and still lists them in the date group', () => {
       const t = renderDueList(dueList([submitted('Session report')]));
       expect(t).toContain('Nothing outstanding between');
-      expect(t).toContain('## Submitted (1)');
+      expect(t).toContain('## Tomorrow (1)');
+      expect(t).toContain('~~Session report~~ ✓ submitted 2026-10-11 Sun 15:29');
+      expect(t).not.toContain('## Submitted');
       expect(t).not.toContain('1 item between');
     });
 
-    it('shows a submitted item without a time as plain "submitted", newest first, and caps the list', () => {
-      const many = Array.from({ length: 9 }, (_, i) =>
-        submitted(`Done ${i}`, { submittedAt: `2026-10-0${i + 1}T10:00:00+09:00` }, { cmid: 900 + i }),
+    it('omits the time when submittedAt is unknown; a submitted item is never OVERDUE', () => {
+      const lone = renderDueList(dueList([submitted('Handed in', { submittedAt: null })]));
+      expect(lone).toContain('~~Handed in~~ ✓ submitted — Strategic Marketing');
+      expect(lone).toContain('due 2026-10-15 Thu 23:59 (cmid 800)');
+      expect(lone).not.toMatch(/✓ submitted 20/);
+      const noCmid = renderDueList(dueList([submitted('Handed in', { submittedAt: null }, { cmid: null })]));
+      expect(noCmid).toContain('~~Handed in~~ ✓ submitted — Strategic Marketing — due 2026-10-15 Thu 23:59\n');
+      const late = renderDueList(
+        dueList([submitted('Late', {}, { overdue: true, dueAt: '2026-10-10T13:00:00+09:00' })]),
       );
-      const t = renderDueList(dueList([...many, submitted('Undated', { submittedAt: null }, { cmid: 999 })]));
-      expect(t).toContain('## Submitted (10)');
-      expect(t).toContain('… 2 more');
-      const shown = [...t.matchAll(/- \[assign\] (Done \d)/g)].map((m) => m[1]);
-      expect(shown).toEqual(['Done 8', 'Done 7', 'Done 6', 'Done 5', 'Done 4', 'Done 3', 'Done 2', 'Done 1']);
-      const lone = renderDueList(dueList([submitted('Undated', { submittedAt: null })]));
-      expect(lone).toContain('- [assign] Undated — Strategic Marketing — submitted (cmid 800)\n');
-      const noCmid = renderDueList(dueList([submitted('Undated', { submittedAt: null }, { cmid: null })]));
-      expect(noCmid).toContain('- [assign] Undated — Strategic Marketing — submitted\n');
+      expect(late).not.toContain('OVERDUE');
+      expect(late).not.toContain('## Overdue');
+      expect(late).toContain('~~Late~~ ✓ submitted');
     });
 
     it('tags drafts, attempts in progress and reopened items in their date group; overdue stays', () => {
@@ -191,11 +201,57 @@ describe('renderDueList', () => {
     });
 
     it('stays within the size cap with many outstanding and submitted items', () => {
-      const todo = Array.from({ length: 120 }, (_, i) => due({ name: `Task number ${i}`, cmid: 3000 + i }));
-      const done = Array.from({ length: 40 }, (_, i) => submitted(`Finished ${i}`, {}, { cmid: 4000 + i }));
+      const todo = Array.from({ length: 120 }, (_, i) =>
+        due({ name: `Task number ${i}`, dueAt: '2026-10-20T23:59:00+09:00', cmid: 3000 + i }),
+      );
+      const done = Array.from({ length: 40 }, (_, i) =>
+        submitted(`Finished ${i}`, {}, { cmid: 4000 + i, dueAt: '2026-10-14T18:00:00+09:00' }),
+      );
       const t = renderDueList(dueList([...todo, ...done]));
       expect(t.length).toBeLessThanOrEqual(LIMIT);
-      expect(t).toContain('## Submitted (40)');
+      expect(t).not.toContain('## Submitted');
+      expect(t).toContain('## Next 7 days (120)');
+      expect(t).toContain('Task number 0');
+      expect(t).toContain('## Today (40)');
+      expect(t).toMatch(/## Today \(40\)[\s\S]*… \d+ more \(use course_id, kinds or a smaller days_ahead\)/);
+    });
+
+    it('keeps original item order inside a date group after the two-pass budget', () => {
+      const t = renderDueList(
+        dueList([
+          due({ name: 'Open first', cmid: 1, dueAt: '2026-10-14T18:00:00+09:00' }),
+          submitted('Done middle', {}, { cmid: 2, dueAt: '2026-10-14T19:00:00+09:00' }),
+          due({ name: 'Open last', cmid: 3, dueAt: '2026-10-14T20:00:00+09:00' }),
+        ]),
+      );
+      const a = t.indexOf('Open first');
+      const b = t.indexOf('~~Done middle~~');
+      const c = t.indexOf('Open last');
+      expect([a, b, c].every((i) => i >= 0)).toBe(true);
+      expect(a).toBeLessThan(b);
+      expect(b).toBeLessThan(c);
+    });
+
+    it('lists open Later / No deadline items before dropping submitted Today / Tomorrow lines', () => {
+      const todayDone = Array.from({ length: 50 }, (_, i) =>
+        submitted(`Done today ${i}`, {}, { cmid: 4000 + i, dueAt: '2026-10-14T18:00:00+09:00' }),
+      );
+      const tomorrowDone = Array.from({ length: 50 }, (_, i) =>
+        submitted(`Done tomorrow ${i}`, {}, { cmid: 5000 + i, dueAt: '2026-10-15T18:00:00+09:00' }),
+      );
+      const later = due({ name: 'Later open', dueAt: '2026-10-30T23:59:00+09:00', cmid: 10 });
+      const undated = due({ source: 'activity', dueAt: null, name: 'Undated open', cmid: 11 });
+      const t = renderDueList(dueList([...todayDone, ...tomorrowDone, later, undated]));
+      expect(t.length).toBeLessThanOrEqual(LIMIT);
+      expect(t).toContain('Later open');
+      expect(t).toContain('Undated open');
+      expect(t).toContain('## Later (1)');
+      expect(t).toContain('## No deadline (1)');
+      expect(t).toContain('## Today (50)');
+      expect(t).toContain('## Tomorrow (50)');
+      expect(t).toMatch(/## Today \(50\)[\s\S]*… \d+ more \(use course_id, kinds or a smaller days_ahead\)/);
+      expect(t).not.toMatch(/## Later \(1\)\n… /);
+      expect(t).not.toMatch(/## No deadline \(1\)\n… /);
     });
   });
 
@@ -215,7 +271,7 @@ describe('renderDueList', () => {
     expect(t).toContain('## No deadline (8)');
     const shown = [...t.matchAll(/- \[assign\] (Undated \d)/g)].map((m) => m[1]);
     expect(shown).toEqual(['Undated 1', 'Undated 7', 'Undated 6', 'Undated 5', 'Undated 4']);
-    expect(t).toContain("… 3 more without a deadline (see the console's Due page)");
+    expect(t).toContain("… 3 more without a deadline (see the console's Assignments & deadlines page)");
     const few = renderDueList(dueList(undated.slice(0, 5)));
     expect(few).not.toContain('more without a deadline');
   });
@@ -227,7 +283,9 @@ describe('renderDueList', () => {
     const stdio = renderDueList(dueList(undated), { stdio: true });
     expect(stdio).toContain('… 3 more without a deadline (pass course_id to narrow; all are in structuredContent)');
     expect(stdio.toLowerCase()).not.toContain('console');
-    expect(renderDueList(dueList(undated), { stdio: false })).toContain("see the console's Due page");
+    expect(renderDueList(dueList(undated), { stdio: false })).toContain(
+      "see the console's Assignments & deadlines page",
+    );
   });
 
   it('echoes the kinds and submitted filters, and not when there are none', () => {
