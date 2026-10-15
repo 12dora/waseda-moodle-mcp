@@ -175,7 +175,7 @@ export const en = {
   'courses.modeAuto': 'Not confirmed. Suggested courses are used.',
   'courses.modeMine': 'Confirmed: {count} courses',
   'courses.class': 'Classes',
-  'courses.other': 'Other enrolled courses ({count})',
+  'courses.other': 'Other courses ({count})',
   'courses.suggested': 'Suggested',
   'courses.lastAccess': 'Last accessed {time}',
   'courses.notAccessed': 'Not accessed',

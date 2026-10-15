@@ -174,7 +174,7 @@ export const zhCN: Dictionary = {
   'courses.modeAuto': '尚未确认。当前使用推荐课程。',
   'courses.modeMine': '已确认：{count} 门课程',
   'courses.class': '授课课程',
-  'courses.other': '其他已选课程（{count}）',
+  'courses.other': '其他课程（{count}）',
   'courses.suggested': '推荐',
   'courses.lastAccess': '最近访问 {time}',
   'courses.notAccessed': '未访问',

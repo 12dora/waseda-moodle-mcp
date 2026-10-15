@@ -14,7 +14,9 @@ function GradingTable({ rows }: { rows: GradingRow[] }) {
       <table className="table cv-grading">
         <thead>
           <tr>
-            <th scope="col">{t('courses.view.method')}</th>
+            <th scope="col" className="cv-method">
+              {t('courses.view.method')}
+            </th>
             <th scope="col" className="cv-weight">
               {t('courses.view.weight')}
             </th>
@@ -24,7 +26,7 @@ function GradingTable({ rows }: { rows: GradingRow[] }) {
         <tbody>
           {rows.map((r) => (
             <tr key={`${r.method}|${r.weight}|${r.criteria}`}>
-              <td>{r.method}</td>
+              <td className="cv-method">{r.method}</td>
               <td className="cv-weight">{r.weight === null ? '–' : `${r.weight}%`}</td>
               <td className="cv-criteria">{r.criteria}</td>
             </tr>

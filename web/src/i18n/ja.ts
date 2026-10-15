@@ -176,7 +176,7 @@ export const ja: Dictionary = {
   'courses.modeAuto': '未確定です。提案されたコースを使用しています。',
   'courses.modeMine': '確定済み：{count} コース',
   'courses.class': '授業',
-  'courses.other': 'その他の登録コース（{count}）',
+  'courses.other': 'その他のコース（{count}）',
   'courses.suggested': '提案',
   'courses.lastAccess': '最終アクセス {time}',
   'courses.notAccessed': '未アクセス',

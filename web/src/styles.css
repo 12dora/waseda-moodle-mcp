@@ -1521,6 +1521,9 @@ fieldset {
 .cv-grading {
   min-width: 420px;
 }
+.cv-grading .cv-method {
+  white-space: nowrap;
+}
 .cv-grading .cv-weight {
   white-space: nowrap;
   text-align: right;
