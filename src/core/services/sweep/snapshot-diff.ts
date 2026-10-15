@@ -35,8 +35,26 @@ function stampModule(cur: SnapModule, old: SnapModule | undefined, env: DiffEnv)
   }
 }
 
+const DAY_MS = 86_400_000;
+
+/** A deadline the old snapshot knew and that is still upcoming but gone from the new one. */
+function lostDeadline(old: SnapText, cur: SnapText, now: number): boolean {
+  const kept = new Set((cur.d ?? []).map((m) => m[0]));
+  return (old.d ?? []).some((m) => m[0] >= now - DAY_MS && !kept.has(m[0]));
+}
+
+/**
+ * Hashes of the whole scanned text decide. A snapshot stored before they existed counts as unchanged unless one of
+ * its upcoming deadlines is gone or its (possibly "…"-cut) body is no longer the start of the new one.
+ */
+function textChanged(old: SnapText, cur: SnapText, now: number): boolean {
+  if (old.h !== undefined && cur.h !== undefined) return old.h !== cur.h;
+  if (lostDeadline(old, cur, now)) return true;
+  return !cur.x.startsWith(old.x.endsWith('…') ? old.x.slice(0, -1) : old.x);
+}
+
 function stampText(cur: SnapText, old: SnapText | undefined, now: number): void {
-  if (!old || old.x !== cur.x) cur.s = now;
+  if (!old || textChanged(old, cur, now)) cur.s = now;
   else if (old.s !== undefined) cur.s = old.s;
 }
 

@@ -13,6 +13,7 @@ const TIME_PAD = 40;
 const LEAD_MAX = 30;
 const MAX_HITS_PER_PATTERN = 300;
 const DEFAULT_MAX = 12;
+const CANDIDATES_MAX = 40; // upcoming candidates examined per text before the nearest `max` are picked
 const DAY = 86_400_000;
 const JST_MS = 9 * 3_600_000;
 const PAST_LIMIT = 30 * DAY;
@@ -57,11 +58,11 @@ const DATE_PATTERNS: DatePattern[] = [
     pick: (m) => ({ y: yearOf(m[1]), mo: Number(m[2]), d: Number(m[3]) }),
   },
   {
-    re: /(?<![\d/.:-])(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/g,
+    re: /(?<![\d/.-])(?<!\d:)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/g,
     pick: (m) => ({ y: yearOf(m[1]), mo: Number(m[2]), d: Number(m[3]) }),
   },
   {
-    re: /(?<![\d/.:-])(\d{1,2})\/(\d{1,2})(?![\d/:])/g,
+    re: /(?<![\d/.-])(?<!\d:)(\d{1,2})\/(\d{1,2})(?![\d/:])/g,
     pick: (m) => ({ y: null, mo: Number(m[1]), d: Number(m[2]) }),
   },
   {
@@ -70,7 +71,7 @@ const DATE_PATTERNS: DatePattern[] = [
   },
   {
     re: new RegExp(
-      `(?<![\\d/.:-])(\\d{1,2})(?:st|nd|rd|th)?[ \\t]+(?:of[ \\t]+)?(${MONTH_NAME})(?![a-z])${YEAR_TAIL}`,
+      `(?<![\\d/.-])(?<!\\d:)(\\d{1,2})(?:st|nd|rd|th)?[ \\t]+(?:of[ \\t]+)?(${MONTH_NAME})(?![a-z])${YEAR_TAIL}`,
       'gi',
     ),
     pick: (m) => ({ y: yearOf(m[3]), mo: monthNumber(m[2]), d: Number(m[1]) }),
@@ -234,22 +235,33 @@ function leadPhrase(text: string, hit: DateHit): string {
 /** Cheap pre-check for callers that store text: dates need digits (full-width digits included). */
 const mayHaveDate = (text: string): boolean => /[\d０-９]/.test(text);
 
-/** Deadlines mentioned in `text`, in order of appearance; each with its snippet. `now` is unix ms. */
-export function findDeadlines(raw: string, now: number, opts: { max?: number } = {}): TextDeadline[] {
+/** The `max` candidates closest to `now`, back in order of appearance. */
+function nearestTo(found: TextDeadline[], max: number, now: number): TextDeadline[] {
+  if (found.length <= max) return found;
+  const keep = new Set([...found].sort((a, b) => Math.abs(a.ms - now) - Math.abs(b.ms - now)).slice(0, max));
+  return found.filter((d) => keep.has(d));
+}
+
+/**
+ * Deadlines mentioned in `text`, in order of appearance; each with its snippet. `now` is unix ms.
+ * Dates before `opts.from` are skipped before anything is counted (so past dates never take a slot); when more than
+ * `opts.max` remain, the ones closest to `now` are kept.
+ */
+export function findDeadlines(raw: string, now: number, opts: { max?: number; from?: number } = {}): TextDeadline[] {
   if (!mayHaveDate(raw)) return [];
   const text = raw.normalize('NFKC');
-  const max = opts.max ?? DEFAULT_MAX;
+  const from = opts.from ?? Number.NEGATIVE_INFINITY;
   const hits = findDateHits(text);
   const out: TextDeadline[] = [];
   const seen = new Set<number>();
-  for (let i = 0; i < hits.length && out.length < max; i++) {
+  for (let i = 0; i < hits.length && out.length < CANDIDATES_MAX; i++) {
     const hit = hits[i];
     if (!hit || !isDeadlineContext(text, hit)) continue;
     const bounds = { lo: hits[i - 1]?.end ?? 0, hi: hits[i + 1]?.start ?? text.length };
     const ms = inferDeadlineMs(hit, nearestTime(text, hit, bounds), now);
-    if (ms === null || seen.has(ms)) continue;
+    if (ms === null || ms < from || seen.has(ms)) continue;
     seen.add(ms);
     out.push({ ms, evidence: snippet(text, hit), lead: leadPhrase(text, hit) });
   }
-  return out;
+  return nearestTo(out, opts.max ?? DEFAULT_MAX, now);
 }

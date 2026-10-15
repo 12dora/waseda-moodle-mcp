@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EVIDENCE_MAX, findDeadlines, inferDeadlineMs } from '../../../src/core/services/sweep/extract-text';
 import { fmt, isoJst } from '../../../src/core/time';
-import { NOW_MS } from './helpers';
+import { DAY, NOW_MS } from './helpers';
 
 const jst = (text: string) => findDeadlines(text, NOW_MS).map((d) => isoJst(d.ms).slice(0, 16));
 
@@ -90,6 +90,20 @@ describe('findDeadlines', () => {
     const many = Array.from({ length: 30 }, (_, i) => `Report due 10/${i + 1}`).join('\n');
     expect(findDeadlines(many, NOW_MS, { max: 5 })).toHaveLength(5);
     expect(jst('Due 10/18 ... and again due 10/18')).toEqual(['2026-10-18T23:59']);
+  });
+
+  it('skips dates before `from` before counting, so past dates never take a slot', () => {
+    const dates = ['10/1', '10/3', '10/5', '10/8', '10/10', '10/20', '10/27'];
+    const text = dates.map((d) => `Report due ${d}`).join('\n');
+    const upcoming = findDeadlines(text, NOW_MS, { max: 4, from: NOW_MS - DAY }).map((d) => isoJst(d.ms).slice(5, 10));
+    expect(upcoming).toEqual(['10-20', '10-27']);
+    expect(findDeadlines(text, NOW_MS, { max: 4 })).toHaveLength(4); // without `from` past dates count
+  });
+
+  it('keeps the nearest candidates, in order of appearance, when more than `max` remain', () => {
+    const text = ['Report due 11/30', 'Report due 10/22', 'Report due 10/16', 'Report due 12/10'].join('\n');
+    const kept = findDeadlines(text, NOW_MS, { max: 2, from: NOW_MS }).map((d) => isoJst(d.ms).slice(5, 10));
+    expect(kept).toEqual(['10-22', '10-16']);
   });
 
   it('handles 200 KB of text fast (no backtracking blow-up)', () => {

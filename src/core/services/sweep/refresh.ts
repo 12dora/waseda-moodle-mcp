@@ -30,12 +30,15 @@ export interface RefreshOptions {
   maxFull: number; // full core_course_get_contents fetches
   maxLarge?: number; // of those, fetches of courses known to be large (default: maxFull)
   maxAgeMs?: number; // refetch snapshots whose last full fetch is older (default 36 h)
+  /** Remember `courses` as the interactive scope for the cron (default true; false for the cron, one-course calls). */
+  rememberScope?: boolean;
 }
 
 export interface RefreshResult {
   snapshots: Map<number, CourseSnapshot>; // every target course that has a snapshot (possibly stale)
   stats: SweepStats;
   refreshed: number; // full fetches done
+  large: number; // of those, fetches of large courses (known beforehand or measured on arrival)
 }
 
 interface Entry {
@@ -80,6 +83,7 @@ function readUpdates(
 
 class Refresher {
   refreshed = 0;
+  largeFetches = 0;
   private fullLeft: number;
   private largeLeft: number;
   private readonly budget: CallBudget;
@@ -107,22 +111,45 @@ class Refresher {
     entry.checkedAt = this.now;
   }
 
-  /** A course known to be large takes one of the few large-fetch slots of a request. */
-  private takeLarge(entry: Entry): boolean {
-    if ((entry.snap?.z ?? 0) <= LARGE_COURSE_BYTES) return true;
-    if (this.largeLeft <= 0) return false;
+  private takeLarge(): void {
     this.largeLeft--;
-    return true;
+    this.largeFetches++;
+  }
+
+  /**
+   * Claims a full fetch and, for a course known to be large, one of the few large-fetch slots; nothing is consumed
+   * unless the fetch can really happen. null when out of fetches, large slots or calls.
+   */
+  private reserve(entry: Entry): { large: boolean } | null {
+    const large = (entry.snap?.z ?? 0) > LARGE_COURSE_BYTES;
+    if (this.fullLeft <= 0 || (large && this.largeLeft <= 0) || !this.budget.take()) return null;
+    this.fullLeft--;
+    if (large) this.takeLarge();
+    return { large };
   }
 
   /** Full fetch + store. false when out of budget or Moodle failed for this course. */
   async fetchFull(entry: Entry, updates: Updates = new Map()): Promise<boolean> {
-    if (this.fullLeft <= 0 || !this.takeLarge(entry) || !this.budget.take()) return false;
-    this.fullLeft--;
+    const slot = this.reserve(entry);
+    return slot ? this.download(entry, { large: slot.large, updates }) : false;
+  }
+
+  /** An aged course is refetched when it can be; otherwise it still gets the cheap change check. */
+  async refetchOrCheck(entry: Entry): Promise<Escalation | null> {
+    const slot = this.reserve(entry);
+    if (!slot) return this.check(entry);
+    await this.download(entry, { large: slot.large, updates: new Map() });
+    return null;
+  }
+
+  private async download(entry: Entry, opts: { large: boolean; updates: Updates }): Promise<boolean> {
     try {
       const raw = await this.api.call(CONTENTS_FN, { courseid: entry.course.id });
       const fresh = buildSnapshot(raw, { baseUrl: this.api.baseUrl, now: this.now });
-      await this.persist(entry, stampChanges(fresh, entry.snap, { now: this.now, updates }), this.now);
+      // a course whose size was not known beforehand still counts against the large budget once it proves large
+      if (!opts.large && (fresh.z ?? 0) > LARGE_COURSE_BYTES) this.takeLarge();
+      const stamped = stampChanges(fresh, entry.snap, { now: this.now, updates: opts.updates });
+      await this.persist(entry, stamped, this.now);
       entry.fetchedAt = this.now;
       entry.aged = false;
       this.refreshed++;
@@ -194,7 +221,7 @@ async function loadEntries(
 
 const isFresh = (e: Entry, now: number) => e.snap !== null && !e.aged && now - e.checkedAt <= FRESH_MS;
 
-function summarize(entries: readonly Entry[], now: number, refreshed: number): RefreshResult {
+function summarize(entries: readonly Entry[], now: number): Pick<RefreshResult, 'snapshots' | 'stats'> {
   const snapshots = new Map<number, CourseSnapshot>();
   let oldest: number | null = null;
   let checked = 0;
@@ -209,7 +236,25 @@ function summarize(entries: readonly Entry[], now: number, refreshed: number): R
     stale: entries.length - checked,
     checkedAt: oldest === null ? null : isoJst(oldest),
   };
-  return { snapshots, stats, refreshed };
+  return { snapshots, stats };
+}
+
+const sameIds = (a: readonly number[] | undefined, b: readonly number[]) =>
+  a !== undefined && a.length === b.length && a.every((id, i) => id === b[i]);
+
+/**
+ * The cron has no calendar signal and reads cached syllabus rows only, so it learns the scope an interactive call
+ * resolved. Best effort, and written only when the list changed.
+ */
+async function rememberScope(ctx: ServiceContext, courses: readonly Course[]): Promise<void> {
+  const ids = [...new Set(courses.map((c) => c.id))].sort((a, b) => a - b);
+  if (sameIds(ctx.user.scopeCourseIds, ids)) return;
+  try {
+    await ctx.store.setScopeCourseIds(ctx.user.id, ids);
+    ctx.user.scopeCourseIds = ids;
+  } catch {
+    console.error('scope remember failed');
+  }
 }
 
 /**
@@ -222,20 +267,21 @@ export async function refreshSnapshots(
   opts: RefreshOptions,
 ): Promise<RefreshResult> {
   const now = nowMs();
+  if (opts.rememberScope ?? true) await rememberScope(ctx, courses);
   const entries = await loadEntries(ctx, courses, { now, maxAgeMs: opts.maxAgeMs ?? INTERACTIVE_MAX_AGE_MS });
   const stale = entries.filter((e) => !isFresh(e, now));
-  if (stale.length === 0) return summarize(entries, now, 0);
+  if (stale.length === 0) return { ...summarize(entries, now), refreshed: 0, large: 0 };
 
   const r = new Refresher(ctx, await ctx.moodle(), now, opts);
   const missing = stale.filter((e) => !e.snap);
   const aged = stale.filter((e) => e.snap && e.aged);
   const existing = stale.filter((e) => e.snap && !e.aged).sort((a, b) => a.checkedAt - b.checkedAt);
   // Reservations happen synchronously in this order: new courses, then aged ones, get their fetch before any cheap check.
-  const [, , checks] = await Promise.all([
+  const [, agedChecks, checks] = await Promise.all([
     Promise.all(missing.map((e) => r.fetchFull(e))),
-    Promise.all(aged.map((e) => r.fetchFull(e))),
+    Promise.all(aged.map((e) => r.refetchOrCheck(e))),
     Promise.all(existing.map((e) => r.check(e))),
   ]);
-  await Promise.all(checks.flatMap((c) => (c ? [r.fetchFull(c.entry, c.updates)] : [])));
-  return summarize(entries, now, r.refreshed);
+  await Promise.all([...agedChecks, ...checks].flatMap((c) => (c ? [r.fetchFull(c.entry, c.updates)] : [])));
+  return { ...summarize(entries, now), refreshed: r.refreshed, large: r.largeFetches };
 }

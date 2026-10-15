@@ -38,7 +38,8 @@ export interface SnapText {
   r: string; // stable reference: "s<section id>" section summary, "m<cmid>" module description
   n: string; // where it was found (section or module name)
   u: string; // link to it
-  x: string; // markdown, <= TEXT_MAX chars (change detection; older snapshots also re-parse it)
+  x: string; // markdown, <= TEXT_MAX chars (older snapshots also re-parse it)
+  h?: string; // hash of the whole scanned markdown (change detection); absent in older snapshots
   d?: SnapMention[]; // deadlines found in the whole text; absent in snapshots stored before extraction moved here
   s?: number; // first seen (ms)
 }
@@ -56,7 +57,7 @@ export const REFETCH_AREAS: ReadonlySet<string> = new Set(['configuration', 'con
 const TEXT_MAX = 2000; // stored per text
 const SCAN_MAX = 6000; // scanned per text for deadlines
 const MAX_TEXTS = 120;
-export const MENTIONS_PER_TEXT = 4;
+export const MENTIONS_PER_TEXT = 8; // upcoming deadlines kept per text (paid once per fetch)
 const NAME_MAX = 160;
 const DAY_MS = 86_400_000;
 const MODULE_OVERHEAD = 350; // rough bytes of the raw JSON per module / per content file, besides its strings
@@ -142,7 +143,24 @@ function sectionName(raw: string | undefined, number: number): string {
 
 const HAS_DIGIT = /[\d０-９]/;
 
-/** Keeps a text only when it mentions a deadline; the mentions are stored so requests need no re-parsing. */
+/** 53-bit string hash (cyrb53): stable across runtimes, enough to tell two versions of a text apart. */
+function hashText(text: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+/**
+ * Keeps a text only when it mentions a deadline that is not already past (a day's grace); the mentions are stored
+ * so requests need no re-parsing.
+ */
 function textSource(
   src: { k: TextKind; r: string; n: string; u: string },
   html: string | undefined,
@@ -150,9 +168,9 @@ function textSource(
 ): SnapText | null {
   if (!html || !HAS_DIGIT.test(html)) return null;
   const x = htmlToMarkdown(html, { maxChars: SCAN_MAX });
-  const found = findDeadlines(x, now, { max: MENTIONS_PER_TEXT });
+  const found = findDeadlines(x, now, { max: MENTIONS_PER_TEXT, from: now - DAY_MS });
   if (found.length === 0) return null;
-  return { ...src, x: x.slice(0, TEXT_MAX), d: found.map((f) => [f.ms, f.evidence, f.lead]) };
+  return { ...src, x: x.slice(0, TEXT_MAX), h: hashText(x), d: found.map((f) => [f.ms, f.evidence, f.lead]) };
 }
 
 function moduleText(raw: RawModule, mod: SnapModule, env: { section: string; now: number }): SnapText | null {
@@ -187,20 +205,8 @@ function mapSection(raw: RawSection, env: SnapshotEnv, out: { texts: SnapText[];
   return { i: id, k: number, n: name, m: modules };
 }
 
-/**
- * At most MAX_TEXTS texts: ones with a deadline that is not long past first, then the later sections
- * (teachers append content as the term goes on); original order is kept.
- */
-function capTexts(texts: SnapText[], now: number): SnapText[] {
-  if (texts.length <= MAX_TEXTS) return texts;
-  const current = (t: SnapText) => (t.d?.some((d) => d[0] >= now - DAY_MS) ? 1 : 0);
-  return texts
-    .map((t, i) => ({ t, i, c: current(t) }))
-    .sort((a, b) => b.c - a.c || b.i - a.i)
-    .slice(0, MAX_TEXTS)
-    .sort((a, b) => a.i - b.i)
-    .map((e) => e.t);
-}
+/** At most MAX_TEXTS texts: the later sections win (teachers append content as the term goes on); order is kept. */
+const capTexts = (texts: SnapText[]): SnapText[] => texts.slice(-MAX_TEXTS);
 
 /** Raw `core_course_get_contents` → snapshot (no first-seen stamps yet; see snapshot-diff.ts). */
 export function buildSnapshot(raw: unknown, env: SnapshotEnv): CourseSnapshot {
@@ -210,7 +216,7 @@ export function buildSnapshot(raw: unknown, env: SnapshotEnv): CourseSnapshot {
     const mapped = mapSection(s, env, out);
     if (mapped) sections.push(mapped);
   }
-  return { v: 1, s: sections, x: capTexts(out.texts, env.now), z: out.size };
+  return { v: 1, s: sections, x: capTexts(out.texts), z: out.size };
 }
 
 export function parseSnapshot(json: string): CourseSnapshot | null {

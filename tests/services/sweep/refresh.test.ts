@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MoodleError, MoodleUnavailable, NeedsReconnect } from '../../../src/core/errors';
 import { refreshSnapshots } from '../../../src/core/services/sweep/refresh';
 import { buildSnapshot, parseSnapshot } from '../../../src/core/services/sweep/snapshot';
-import { BASE, course, MIN, makeFake, NOW, NOW_MS, NOW_SEC, rawSection, snapshotRow } from './helpers';
+import { BASE, course, DAY, MIN, makeFake, NOW, NOW_MS, NOW_SEC, rawSection, snapshotRow } from './helpers';
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -170,5 +170,122 @@ describe('refreshSnapshots', () => {
     expect(mods[1]).toMatchObject({ c: 2, s: NOW_MS });
     expect(mods[0]?.s).toBeUndefined();
     expect(NOW_SEC).toBeGreaterThan(0);
+  });
+});
+
+describe('refreshSnapshots: large courses and aged snapshots', () => {
+  const LARGE_Z = 200_000;
+  const AGE = 24 * 60 * MIN;
+  const largeJson = () => {
+    const snap = buildSnapshot(contents(), { baseUrl: BASE, now: NOW_MS });
+    snap.z = LARGE_Z;
+    return JSON.stringify(snap);
+  };
+  const agedRow = (id: number) => ({
+    ...snapshotRow(id, largeJson(), NOW_MS - 2 * MIN),
+    fetchedAt: NOW_MS - 25 * 60 * MIN,
+  });
+
+  it('uses no large slot for a fetch that the call budget does not allow', async () => {
+    const f = makeFake({ [CONTENTS]: () => contents() }, [agedRow(101)]);
+    const r = await refreshSnapshots(f.ctx, [course(100), course(101)], {
+      maxCalls: 1,
+      maxFull: 3,
+      maxLarge: 1,
+      maxAgeMs: AGE,
+    });
+    expect(f.calls).toEqual([{ fn: CONTENTS, params: { courseid: 100 } }]); // the missing course took the only call
+    expect(r.refreshed).toBe(1);
+    expect(r.large).toBe(0);
+  });
+
+  it('counts a large refetch once and reports it', async () => {
+    const f = makeFake({ [CONTENTS]: () => contents() }, [agedRow(100)]);
+    const r = await refreshSnapshots(f.ctx, [course(100)], { ...OPTS, maxAgeMs: AGE });
+    expect(r.refreshed).toBe(1);
+    expect(r.large).toBe(1);
+  });
+
+  it('gives an aged course no refetch when the large slots are gone, but still checks it for changes', async () => {
+    const f = makeFake({ [UPDATES]: () => ({ instances: [] }) }, [agedRow(100)]);
+    const r = await refreshSnapshots(f.ctx, [course(100)], { ...OPTS, maxLarge: 0, maxAgeMs: AGE });
+    expect(f.calls.map((c) => c.fn)).toEqual([UPDATES]);
+    expect(f.touched).toEqual([100]);
+    expect(r.snapshots.has(100)).toBe(true);
+    expect(r.large).toBe(0);
+  });
+
+  it('keeps serving an aged course whose change check asks for a refetch it cannot do', async () => {
+    const f = makeFake({ [UPDATES]: () => ({ instances: [{ id: 1, updates: [{ name: 'configuration' }] }] }) }, [
+      agedRow(100),
+    ]);
+    const r = await refreshSnapshots(f.ctx, [course(100)], { ...OPTS, maxLarge: 0, maxAgeMs: AGE });
+    expect(f.calls.map((c) => c.fn)).toEqual([UPDATES]);
+    expect(r.refreshed).toBe(0);
+    expect(r.snapshots.has(100)).toBe(true);
+  });
+
+  it('does not check an aged course whose refetch merely failed', async () => {
+    const f = makeFake(
+      {
+        [CONTENTS]: () => {
+          throw new MoodleUnavailable();
+        },
+      },
+      [agedRow(100)],
+    );
+    await refreshSnapshots(f.ctx, [course(100)], { ...OPTS, maxLarge: 1, maxAgeMs: AGE });
+    expect(f.calls.map((c) => c.fn)).toEqual([CONTENTS]);
+  });
+
+  it('measures a course without a known size on arrival and charges it to the large budget', async () => {
+    const big = [rawSection(1, [{ id: 1, modname: 'page', name: 'Big', description: 'x'.repeat(120_000) }])];
+    const f = makeFake({ [CONTENTS]: () => big });
+    const r = await refreshSnapshots(f.ctx, [course(100)], { ...OPTS, maxLarge: 1 });
+    expect(r.refreshed).toBe(1);
+    expect(r.large).toBe(1);
+    expect(parseSnapshot(f.rows.get(100)?.json ?? '')?.z).toBeGreaterThan(100_000);
+    // next time it is a known large course: with no slot left it is not refetched
+    const stored = f.rows.get(100) ?? snapshotRow(100, '', 0);
+    const again = makeFake({ [CONTENTS]: () => big, [UPDATES]: () => ({ instances: [] }) }, [
+      { ...stored, fetchedAt: NOW_MS - 2 * DAY },
+    ]);
+    const second = await refreshSnapshots(again.ctx, [course(100)], { ...OPTS, maxLarge: 0 });
+    expect(again.calls.filter((c) => c.fn === CONTENTS)).toEqual([]);
+    expect(second.large).toBe(0);
+  });
+});
+
+describe('refreshSnapshots: remembered scope', () => {
+  it('stores the sorted course ids of an interactive call once, not again while they are unchanged', async () => {
+    const f = makeFake({ [CONTENTS]: () => contents() });
+    await refreshSnapshots(f.ctx, [course(102), course(100)], OPTS);
+    await refreshSnapshots(f.ctx, [course(100), course(102)], OPTS);
+    expect(f.scopeWrites).toEqual([[100, 102]]);
+    expect(f.ctx.user.scopeCourseIds).toEqual([100, 102]);
+    await refreshSnapshots(f.ctx, [course(100)], OPTS);
+    expect(f.scopeWrites).toEqual([[100, 102], [100]]);
+  });
+
+  it('records the scope even when every snapshot is fresh', async () => {
+    const f = makeFake({}, [snapshotRow(100, json(), NOW_MS - MIN)]);
+    await refreshSnapshots(f.ctx, [course(100)], OPTS);
+    expect(f.scopeWrites).toEqual([[100]]);
+  });
+
+  it('leaves the scope alone when the caller opts out (the cron, one-course calls)', async () => {
+    const f = makeFake({ [CONTENTS]: () => contents() });
+    await refreshSnapshots(f.ctx, [course(100)], { ...OPTS, rememberScope: false });
+    expect(f.scopeWrites).toEqual([]);
+  });
+
+  it('survives a failing store write', async () => {
+    const f = makeFake({ [CONTENTS]: () => contents() });
+    vi.spyOn(f.ctx.store, 'setScopeCourseIds').mockRejectedValue(new Error('d1 down'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const r = await refreshSnapshots(f.ctx, [course(100)], OPTS);
+    expect(r.refreshed).toBe(1);
+    expect(err).toHaveBeenCalledWith('scope remember failed');
+    err.mockRestore();
   });
 });

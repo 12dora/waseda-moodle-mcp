@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvalidInput, MoodleError, NotFound } from '../../../src/core/errors';
 import type { CourseScope } from '../../../src/core/services/scope';
-import { collectSweepItems, getCourseUpdates, searchSnapshots, sweepForCron } from '../../../src/core/services/sweep';
+import { collectSweepItems, getCourseUpdates, searchSnapshots } from '../../../src/core/services/sweep';
 import { buildSnapshot } from '../../../src/core/services/sweep/snapshot';
 import type { DueItem } from '../../../src/core/types';
 import { BASE, course, DAY, MIN, makeFake, NOW, NOW_MS, NOW_SEC, rawSection, scopeOf, snapshotRow } from './helpers';
@@ -276,7 +276,7 @@ describe('searchSnapshots', () => {
   });
 });
 
-describe('getCourseUpdates / sweepForCron', () => {
+describe('getCourseUpdates', () => {
   it('lists new and updated modules newest first within sinceDays', async () => {
     const oldSnap = buildSnapshot(sectionsFor(101), { baseUrl: BASE, now: NOW_MS });
     const checked = NOW_MS - 40 * MIN;
@@ -313,16 +313,5 @@ describe('getCourseUpdates / sweepForCron', () => {
     expect(r.stats.checked).toBe(1);
     expect((await getCourseUpdates(f.ctx, { courseId: 101 })).updates).toHaveLength(2);
     await expect(getCourseUpdates(f.ctx, { courseId: 5 })).rejects.toBeInstanceOf(NotFound);
-  });
-
-  it('sweepForCron refreshes the scope with maxRefresh and returns the stats', async () => {
-    const cs = [course(1), course(2), course(3)];
-    const f = makeFake({ [CONTENTS]: (p) => sectionsFor(Number(p.courseid)) });
-    scope = scopeOf(...cs);
-    const stats = await sweepForCron(f.ctx, { maxRefresh: 2 });
-    expect(f.calls).toHaveLength(2);
-    expect(stats).toMatchObject({ checked: 2, stale: 1 });
-    scope = scopeOf();
-    expect(await sweepForCron(f.ctx)).toEqual({ checked: 0, stale: 0, checkedAt: null });
   });
 });

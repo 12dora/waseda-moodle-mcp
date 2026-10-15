@@ -20,6 +20,7 @@ const UPDATES = 'core_course_get_updates_since';
 const COMPLETION = 'core_completion_get_activities_completion_status';
 const env = { baseUrl: BASE, now: NOW_MS };
 const C = { id: 101, name: 'Course' };
+const win = { now: NOW_MS, fromMs: NOW_MS - DAY, toMs: NOW_MS + 30 * DAY };
 const snapOf = (...sections: ReturnType<typeof rawSection>[]) => buildSnapshot(sections, env);
 
 describe('snapshot text', () => {
@@ -27,7 +28,7 @@ describe('snapshot text', () => {
     const snap = snapOf(rawSection(1, [], '<p>１０月２０日（火）２３：５９までにレポートを提出</p>'));
     expect(snap.x).toHaveLength(1);
     expect(snap.x[0]?.d?.[0]?.[0]).toBe(Date.parse('2026-10-20T23:59:00+09:00'));
-    expect(textDeadlineItems(C, snap, NOW_MS)[0]?.dueAt).toBe('2026-10-20T23:59:00+09:00');
+    expect(textDeadlineItems(C, snap, win)[0]?.dueAt).toBe('2026-10-20T23:59:00+09:00');
   });
 
   it('references a section by its id and drops texts without a deadline', () => {
@@ -38,17 +39,15 @@ describe('snapshot text', () => {
     expect(snap.x.map((t) => t.r)).toEqual(['s9006']);
   });
 
-  it('keeps current deadlines and the later sections when over the cap', () => {
-    const sections = Array.from({ length: 130 }, (_, i) =>
+  it('keeps only texts with an upcoming deadline, and the later sections when over the cap', () => {
+    const sections = Array.from({ length: 150 }, (_, i) =>
       rawSection(i + 1, [], i < 20 ? '<p>Report due on 9/20</p>' : '<p>Report due on 10/20</p>'),
     );
     const snap = snapOf(...sections);
     expect(snap.x).toHaveLength(120);
-    expect(snap.x.at(-1)?.r).toBe('s9130');
-    expect(snap.x.filter((t) => t.d?.[0]?.[0] === Date.parse('2026-09-20T23:59:00+09:00'))).toHaveLength(10);
-    expect(snap.x.map((t) => t.r)).toEqual(
-      [...snap.x.map((t) => t.r)].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1))),
-    );
+    expect(snap.x[0]?.r).toBe('s9031');
+    expect(snap.x.at(-1)?.r).toBe('s9150');
+    expect(snap.x.every((t) => t.d?.[0]?.[0] === Date.parse('2026-10-20T23:59:00+09:00'))).toBe(true);
   });
 
   it('estimates the raw size', () => {
@@ -96,7 +95,7 @@ describe("a task module's own description", () => {
         { id: 3, modname: 'assign', name: '質問・振り返り', description: '<p>第2回の提出期限10/15</p>' },
       ]),
     );
-    expect(textDeadlineItems(C, snap, NOW_MS)).toEqual([]);
+    expect(textDeadlineItems(C, snap, win)).toEqual([]);
   });
 
   it('lets an undated module take a date with an explicit deadline cue for itself', () => {
@@ -107,10 +106,58 @@ describe("a task module's own description", () => {
         { id: 3, modname: 'assign', name: 'Plan', description: '<p>Room 10/22 is booked for the review</p>' },
       ]),
     );
-    expect(textDeadlineItems(C, snap, NOW_MS).map((i) => [i.cmid, i.dueAt])).toEqual([
+    expect(textDeadlineItems(C, snap, win).map((i) => [i.cmid, i.dueAt])).toEqual([
       [1, '2026-10-22T23:59:00+09:00'],
       [2, '2026-10-20T23:59:00+09:00'],
     ]);
+  });
+});
+
+describe('own deadline evidence with links and cues', () => {
+  const link = '<a href="https://moodle.example.edu/mod/assign/view.php?id=77">提出ページ</a>';
+  const mod = (id: number, name: string, description: string) => ({ id, modname: 'assign', name, description });
+
+  it('ignores `?` inside link targets and URLs, and accepts 提出日 / 提出： / 提出 + date as cues', () => {
+    const snap = snapOf(
+      rawSection(1, [
+        mod(1, 'Final report', `<p>提出期限：10月20日 23:59 ${link}</p>`),
+        mod(2, 'Plan', '<p>提出日：10/21 https://moodle.example.edu/x?id=5</p>'),
+        mod(3, 'Memo', '<p>提出：10/22 Moodleへ</p>'),
+        mod(4, 'Draft', '<p>Draft 提出10/23 Moodleへ</p>'),
+      ]),
+    );
+    expect(textDeadlineItems(C, snap, win).map((i) => [i.cmid, i.dueAt])).toEqual([
+      [1, '2026-10-20T23:59:00+09:00'],
+      [2, '2026-10-21T23:59:00+09:00'],
+      [3, '2026-10-22T23:59:00+09:00'],
+      [4, '2026-10-23T23:59:00+09:00'],
+    ]);
+  });
+
+  it('still rejects a question that ends with `?`', () => {
+    const snap = snapOf(rawSection(1, [mod(1, 'Essay', '<p>提出10/23を忘れていませんか?</p>')]));
+    expect(textDeadlineItems(C, snap, win)).toEqual([]);
+  });
+});
+
+describe('text item cap', () => {
+  const same = (n: number, text: string) => Array.from({ length: n }, (_, i) => rawSection(i + 1, [], text));
+
+  it('applies the window before the cap: stale past items never crowd out a later deadline', () => {
+    const fetched = { baseUrl: BASE, now: NOW_MS - 20 * DAY }; // stored dates outlive the fetch
+    const snap = buildSnapshot(
+      [...same(35, '<p>Report due on 10/1</p>'), rawSection(36, [], '<p>Report due on 10/16</p>', 'Late')],
+      fetched,
+    );
+    expect(textDeadlineItems(C, snap, win).map((i) => i.dueAt)).toEqual(['2026-10-16T23:59:00+09:00']);
+  });
+
+  it('keeps the items closest to now when over the cap', () => {
+    const soon = rawSection(36, [], '<p>Report due on 10/14 23:00</p>');
+    const snap = snapOf(...same(35, '<p>Report due on 10/25</p>'), soon);
+    const items = textDeadlineItems(C, snap, win);
+    expect(items).toHaveLength(30);
+    expect(items.some((i) => i.dueAt === '2026-10-14T23:00:00+09:00')).toBe(true);
   });
 });
 
@@ -186,23 +233,43 @@ describe('refresh', () => {
 });
 
 describe('announcement rotation', () => {
-  it('starts at a different news forum every hour', async () => {
-    const cs = Array.from({ length: 6 }, (_, i) => course(100 + i));
-    const scanned = async (now: number) => {
-      const f = makeFake({
-        mod_forum_get_forums_by_courses: () => cs.map((c) => ({ id: c.id, course: c.id, cmid: c.id, type: 'news' })),
-        mod_forum_get_forum_discussions: () => ({ discussions: [] }),
-      });
-      await announcementItems(await f.ctx.moodle(), cs, { now, maxCalls: 5 });
-      return f.calls.filter((c) => c.fn === 'mod_forum_get_forum_discussions').map((c) => c.params.forumid);
-    };
-    const hour = Math.floor(NOW_MS / 3_600_000);
-    const a = await scanned(NOW_MS);
-    const b = await scanned(NOW_MS + 3_600_000);
-    expect(a).toHaveLength(4);
-    expect(a).not.toEqual(b);
-    const all = new Set<unknown>();
-    for (let h = 0; h < 6; h++) for (const id of await scanned((hour + h) * 3_600_000)) all.add(id);
-    expect(all.size).toBe(6);
+  const cs = Array.from({ length: 6 }, (_, i) => course(100 + i));
+  const scanned = async (now: number) => {
+    const f = makeFake({
+      mod_forum_get_forums_by_courses: () => cs.map((c) => ({ id: c.id, course: c.id, cmid: c.id, type: 'news' })),
+      mod_forum_get_forum_discussions: () => ({ discussions: [] }),
+    });
+    await announcementItems(await f.ctx.moodle(), cs, { now, maxCalls: 5 });
+    return f.calls.filter((c) => c.fn === 'mod_forum_get_forum_discussions').map((c) => c.params.forumid);
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('starts at a random news forum on every run, wrapping around', async () => {
+    const random = vi.spyOn(Math, 'random');
+    random.mockReturnValue(0);
+    expect(await scanned(NOW_MS)).toEqual([100, 101, 102, 103]);
+    random.mockReturnValue(0.5);
+    expect(await scanned(NOW_MS)).toEqual([103, 104, 105, 100]);
+    random.mockReturnValue(0.99);
+    expect(await scanned(NOW_MS)).toEqual([105, 100, 101, 102]);
+  });
+
+  it('does not depend on the time of day: a daily check at the same hour reaches every forum', async () => {
+    const seen = new Set<unknown>();
+    for (let run = 0; run < 40; run++) for (const id of await scanned(NOW_MS)) seen.add(id);
+    expect(seen.size).toBe(6);
+  });
+
+  it('keeps every forum when there are not more than four', async () => {
+    const few = cs.slice(0, 3);
+    const f = makeFake({
+      mod_forum_get_forums_by_courses: () => few.map((c) => ({ id: c.id, course: c.id, cmid: c.id, type: 'news' })),
+      mod_forum_get_forum_discussions: () => ({ discussions: [] }),
+    });
+    await announcementItems(await f.ctx.moodle(), few, { now: NOW_MS, maxCalls: 5 });
+    expect(f.calls.filter((c) => c.fn === 'mod_forum_get_forum_discussions')).toHaveLength(3);
   });
 });

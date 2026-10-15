@@ -8,12 +8,12 @@ import { buildSweepItem } from './due-item';
 import { findDeadlines } from './extract-text';
 import { CallBudget } from './types';
 
+const DAY_MS = 86_400_000;
 const FORUMS_FN = 'mod_forum_get_forums_by_courses';
 const DISCUSSIONS_FN = 'mod_forum_get_forum_discussions';
 const CREATED_DESC = 3;
-const RECENT_MS = 14 * 86_400_000;
+const RECENT_MS = 14 * DAY_MS;
 const MAX_FORUMS = 4;
-const HOUR_MS = 3_600_000;
 /** Moodle calls announcementItems may use: the forum list plus MAX_FORUMS discussion lists. */
 export const ANNOUNCE_CALLS = 1 + MAX_FORUMS;
 const PER_FORUM = 10;
@@ -59,7 +59,7 @@ function discussionItems(
     const subject = decodeEntities(d.subject || d.name || '');
     const url = `${api.baseUrl}/mod/forum/discuss.php?d=${d.discussion}`;
     const text = `${subject}\n${htmlToMarkdown(d.message, { maxChars: MESSAGE_MAX })}`;
-    for (const hit of findDeadlines(text, opts.now, { max: PER_DISCUSSION })) {
+    for (const hit of findDeadlines(text, opts.now, { max: PER_DISCUSSION, from: opts.now - DAY_MS })) {
       out.push(
         buildSweepItem({
           now: opts.now,
@@ -78,15 +78,16 @@ function discussionItems(
   return out;
 }
 
-/** The same list starting at a different place every hour, so no forum is skipped every time. */
-function rotated<T>(list: readonly T[], now: number): T[] {
-  const start = list.length === 0 ? 0 : Math.floor(now / HOUR_MS) % list.length;
+/** The same list from a random starting point, so a user checking at fixed times does not always miss the same forums. */
+function rotated<T>(list: readonly T[]): T[] {
+  const start = Math.floor(Math.random() * list.length);
   return [...list.slice(start), ...list.slice(0, start)];
 }
 
 /**
  * One forums call for all courses + one discussions call per news forum (max 4; with more news forums
- * the starting forum rotates hourly), all within `maxCalls`. Per-forum failures (no permission, network) are skipped.
+ * the starting forum is random on every run), all within `maxCalls`. Per-forum failures (no permission, network) are
+ * skipped.
  */
 export async function announcementItems(
   api: MoodleApi,
@@ -106,7 +107,7 @@ export async function announcementItems(
     if (forum.type === 'news' && forum.id && course) candidates.push({ forum, course });
   }
   candidates.sort((a, b) => (a.forum.id ?? 0) - (b.forum.id ?? 0));
-  const news = rotated(candidates, opts.now)
+  const news = rotated(candidates)
     .slice(0, MAX_FORUMS)
     .filter(() => budget.take());
   const lists = await Promise.all(

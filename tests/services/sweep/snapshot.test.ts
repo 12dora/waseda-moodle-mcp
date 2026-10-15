@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildSnapshot, parseSnapshot, snapshotCmids } from '../../../src/core/services/sweep/snapshot';
+import {
+  buildSnapshot,
+  MENTIONS_PER_TEXT,
+  parseSnapshot,
+  snapshotCmids,
+} from '../../../src/core/services/sweep/snapshot';
 import { stampChanges } from '../../../src/core/services/sweep/snapshot-diff';
 import { BASE, NOW_MS, NOW_SEC, rawSection } from './helpers';
 
@@ -58,7 +63,7 @@ describe('buildSnapshot', () => {
 
 describe('stampChanges', () => {
   const first = buildSnapshot(
-    [rawSection(1, [{ id: 1, modname: 'resource', name: 'A', files: ['a.pdf'] }], '<p>due 10/1</p>')],
+    [rawSection(1, [{ id: 1, modname: 'resource', name: 'A', files: ['a.pdf'] }], '<p>due 10/20</p>')],
     env,
   );
 
@@ -80,7 +85,7 @@ describe('stampChanges', () => {
             { id: 1, modname: 'resource', name: 'A v2', files: ['a.pdf', 'b.pdf'] },
             { id: 2, modname: 'assign', name: 'B' },
           ],
-          '<p>due 10/2</p>',
+          '<p>due 10/21</p>',
         ),
       ],
       env,
@@ -99,5 +104,62 @@ describe('stampChanges', () => {
     const out = stampChanges(structuredClone(first), prev, { now: NOW_MS, updates: none });
     expect(out.s[0]?.m[0]).toMatchObject({ a: 7, w: ['contentfiles'] });
     expect(out.x[0]?.s).toBeUndefined();
+  });
+});
+
+describe('upcoming deadlines of a text', () => {
+  it('stores the upcoming ones only, past dates never take a slot', () => {
+    const past = Array.from({ length: 6 }, (_, i) => `10/${i + 1} Report ${i + 1} due`);
+    const text = `<p>${[...past, '10/20 Report 7 due', '10/27 Report 8 due'].join('<br>')}</p>`;
+    const snap = buildSnapshot([rawSection(1, [], text)], env);
+    expect(snap.x[0]?.d?.map((m) => m[0])).toEqual([
+      Date.parse('2026-10-20T23:59:00+09:00'),
+      Date.parse('2026-10-27T23:59:00+09:00'),
+    ]);
+  });
+
+  it('keeps up to MENTIONS_PER_TEXT of them and drops texts that only mention past dates', () => {
+    const days = Array.from({ length: MENTIONS_PER_TEXT + 4 }, (_, i) => `Report due 10/${15 + i}`).join('<br>');
+    const sections = [rawSection(1, [], `<p>${days}</p>`), rawSection(2, [], '<p>Report due 10/1</p>')];
+    const snap = buildSnapshot(sections, env);
+    expect(snap.x.map((t) => t.r)).toEqual(['s9001']);
+    expect(snap.x[0]?.d).toHaveLength(MENTIONS_PER_TEXT);
+  });
+});
+
+describe('stampChanges on long texts', () => {
+  const filler = 'lorem ipsum '.repeat(250); // 3000 chars
+  const textOf = (tail: string) => buildSnapshot([rawSection(1, [], `<p>Report due 10/20 ${filler}${tail}</p>`)], env);
+
+  it('flags a change after the stored 2000 chars as new, and an identical text as unchanged', () => {
+    const prev = textOf('');
+    expect(prev.x[0]?.x.length).toBe(2000);
+    const same = stampChanges(textOf(''), prev, { now: NOW_MS, updates: none });
+    expect(same.x[0]?.s).toBeUndefined();
+    const edited = stampChanges(textOf('Also due 10/25'), prev, { now: NOW_MS, updates: none });
+    expect(edited.x[0]?.s).toBe(NOW_MS);
+  });
+
+  it('a snapshot stored without hashes is unchanged unless a deadline is gone or the body differs', () => {
+    const legacy = () => {
+      const old = textOf('');
+      const t = old.x[0];
+      if (t) {
+        t.h = undefined;
+        t.x = `${t.x.slice(0, 1990)}…`; // the old body was cut with an ellipsis
+      }
+      return old;
+    };
+    const unchanged = stampChanges(textOf(''), legacy(), { now: NOW_MS, updates: none });
+    expect(unchanged.x[0]?.s).toBeUndefined();
+
+    const lost = legacy();
+    lost.x[0]?.d?.push([Date.parse('2026-10-19T12:00:00+09:00'), 'Report due 10/19', '']);
+    expect(stampChanges(textOf(''), lost, { now: NOW_MS, updates: none }).x[0]?.s).toBe(NOW_MS);
+
+    const edited = legacy();
+    const t = edited.x[0];
+    if (t) t.x = `Other ${t.x}`;
+    expect(stampChanges(textOf(''), edited, { now: NOW_MS, updates: none }).x[0]?.s).toBe(NOW_MS);
   });
 });

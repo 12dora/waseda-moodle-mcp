@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex } from '../../src/core/crypto';
 import { NeedsReconnect } from '../../src/core/errors';
-import { sweepForCron } from '../../src/core/services/sweep';
+import { refreshSnapshots } from '../../src/core/services/sweep/refresh';
 import { resetRateLimitMemory } from '../../src/worker/auth';
 import type { Env } from '../../src/worker/env';
 import worker, {
@@ -32,10 +32,16 @@ vi.mock('@cloudflare/workers-oauth-provider', () => ({
   },
 }));
 vi.mock('../../src/core/mcp/server', () => ({ buildMcpServer: vi.fn() }));
-vi.mock('../../src/core/services/sweep', () => ({ sweepForCron: vi.fn() }));
+vi.mock('../../src/core/services/sweep/refresh', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/core/services/sweep/refresh')>()),
+  refreshSnapshots: vi.fn(),
+}));
 vi.mock('../../src/core/services/scope', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/core/services/scope')>()),
-  resolveScope: vi.fn(async () => ({ mode: 'auto', mine: new Set(), courses: [] })),
+  resolveScope: vi.fn(async () => {
+    const { course } = await import('../services/sweep/helpers');
+    return { mode: 'auto', mine: new Set([1]), courses: [course(1)] };
+  }),
 }));
 
 const MASTER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).map((_, i) => i + 5)));
@@ -54,7 +60,14 @@ beforeEach(async () => {
   resetRateLimitMemory();
   deferred = [];
   rec.purge.mockReset();
-  vi.mocked(sweepForCron).mockReset().mockResolvedValue({ checked: 0, stale: 0, checkedAt: null });
+  vi.mocked(refreshSnapshots)
+    .mockReset()
+    .mockResolvedValue({
+      snapshots: new Map(),
+      stats: { checked: 0, stale: 0, checkedAt: null },
+      refreshed: 0,
+      large: 0,
+    });
   const { db } = createTestD1();
   kv = new MemoryKV();
   // unique URL per test: the Worker caches one provider per PUBLIC_URL
@@ -256,13 +269,13 @@ describe('scheduled', () => {
   it('sweeps on every run, with a purge failure not blocking the sweep', async () => {
     await seedCredential();
     await runScheduled(env, HOURLY_TIME, execCtx());
-    expect(sweepForCron).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(sweepForCron).mock.calls[0]?.[1]).toEqual({ maxRefresh: 2 });
+    expect(refreshSnapshots).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(refreshSnapshots).mock.calls[0]?.[2]).toMatchObject({ maxFull: 2, maxLarge: 1 });
 
     rec.purge.mockRejectedValue(new Error('kv down'));
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await runScheduled(env, PURGE_TIME, execCtx());
-    expect(sweepForCron).toHaveBeenCalledTimes(2);
+    expect(refreshSnapshots).toHaveBeenCalledTimes(2);
     spy.mockRestore();
   });
 
@@ -270,9 +283,9 @@ describe('scheduled', () => {
     await seedCredential();
     const second = await store.upsertUser({ moodleUserId: 1002, fullname: 'Hanako Sato', lang: 'ja' });
     await seedCredential(second.id, 'h2');
-    vi.mocked(sweepForCron).mockRejectedValueOnce(new NeedsReconnect());
+    vi.mocked(refreshSnapshots).mockRejectedValueOnce(new NeedsReconnect());
     await runScheduled(env, HOURLY_TIME);
-    expect(sweepForCron).toHaveBeenCalledTimes(2);
+    expect(refreshSnapshots).toHaveBeenCalledTimes(2);
   });
 
   it('does not touch KV when there is nothing to remember', async () => {

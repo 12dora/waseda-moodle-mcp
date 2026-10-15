@@ -13,6 +13,7 @@ const C = { id: 101, name: 'Valuation' };
 const snap = (...mods: Parameters<typeof rawSection>[1]) =>
   buildSnapshot([rawSection(1, mods)], { baseUrl: BASE, now: NOW_MS });
 const opts = { now: NOW_MS, toMs: NOW_MS + 14 * DAY };
+const win = { now: NOW_MS, fromMs: NOW_MS - DAY, toMs: NOW_MS + 30 * DAY };
 
 describe('pendingActivityItems', () => {
   it('lists undated, incomplete, visible pending activities only', () => {
@@ -92,7 +93,7 @@ describe('textDeadlineItems', () => {
   );
 
   it('extracts from module names, section summaries, labels and descriptions', () => {
-    const items = textDeadlineItems(C, s, NOW_MS);
+    const items = textDeadlineItems(C, s, win);
     expect(items.map((i) => [i.name, i.dueAt, i.cmid])).toEqual([
       ['Report Due on 10/18', '2026-10-18T23:59:00+09:00', 20],
       ['Project Plan Form (due 23:00 p.m. on Oct 19 (Mon)', '2026-10-19T23:00:00+09:00', 21],
@@ -129,7 +130,7 @@ describe('text items of task modules and titles', () => {
       },
       { id: 32, modname: 'feedback', name: 'Course feedback', description: '<p>Please answer by 10/20</p>' },
     ]);
-    const items = textDeadlineItems(C, s, NOW_MS);
+    const items = textDeadlineItems(C, s, win);
     expect(items.map((i) => [i.kind, i.cmid, i.name, i.dueAt])).toEqual([
       ['questionnaire', 31, 'Session 3 & 4 - Weekly Reflection Log', '2026-10-18T23:59:00+09:00'],
       ['other', 32, 'Course feedback', '2026-10-20T23:59:00+09:00'],
@@ -144,7 +145,7 @@ describe('text items of task modules and titles', () => {
       { id: 42, modname: 'assign', name: 'Hidden', visible: 0, description: '<p>Due 10/18</p>' },
       { id: 43, modname: 'assign', name: 'Done 10/19 due', state: 1 },
     ]);
-    expect(textDeadlineItems(C, s, NOW_MS)).toEqual([]);
+    expect(textDeadlineItems(C, s, win)).toEqual([]);
   });
 
   it('names label / section / page mentions "<where>: <trigger phrase>" and keeps the evidence', () => {
@@ -155,7 +156,7 @@ describe('text items of task modules and titles', () => {
       ],
       '<p>10月15日（木）23：59までに以下の課題をやって</p>',
     );
-    const items = textDeadlineItems(C, s, NOW_MS);
+    const items = textDeadlineItems(C, s, win);
     expect(items.map((i) => i.name)).toEqual([
       'Week1 授業概要',
       'Week1 授業概要: 課題の提出',

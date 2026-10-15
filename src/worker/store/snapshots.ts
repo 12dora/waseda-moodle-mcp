@@ -1,6 +1,7 @@
 /** Per-course content snapshots (sweep, "what's new", search) and the scheduled-sweep user queue. */
 
 import type { CourseSnapshotRow, Store } from '../../core/context';
+import { toJson } from './rows';
 import { toUser, type UserRaw } from './users';
 
 interface SnapshotRaw {
@@ -28,6 +29,7 @@ type SnapshotMethods = Pick<
   | 'putSyllabusCache'
   | 'listSweepUsers'
   | 'markSwept'
+  | 'setScopeCourseIds'
 >;
 
 /** D1 allows 100 bound variables per statement. */
@@ -103,6 +105,15 @@ export function snapshotMethods(db: D1Database): SnapshotMethods {
 
     async markSwept(userId, at) {
       await db.prepare('UPDATE users SET last_swept_at = ? WHERE id = ?').bind(at, userId).run();
+    },
+
+    /** The WHERE clause makes an unchanged list a no-op: D1 bills a row write only for a row that is updated. */
+    async setScopeCourseIds(userId, ids) {
+      const json = toJson([...new Set(ids)].sort((a, b) => a - b));
+      await db
+        .prepare('UPDATE users SET scope_course_ids = ? WHERE id = ? AND scope_course_ids IS NOT ?')
+        .bind(json, userId, json)
+        .run();
     },
   };
 }

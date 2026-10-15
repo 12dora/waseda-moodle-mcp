@@ -82,6 +82,7 @@ export interface Fake {
   rows: Map<number, CourseSnapshotRow>;
   touched: number[];
   puts: number[];
+  scopeWrites: number[][]; // every setScopeCourseIds call
 }
 
 export function makeFake(handlers: Record<string, Handler>, rows: CourseSnapshotRow[] = []): Fake {
@@ -89,6 +90,7 @@ export function makeFake(handlers: Record<string, Handler>, rows: CourseSnapshot
   const state = new Map(rows.map((r) => [r.courseId, r]));
   const touched: number[] = [];
   const puts: number[] = [];
+  const scopeWrites: number[][] = [];
   const counts = new Map<string, number>();
   const api = {
     baseUrl: BASE,
@@ -114,6 +116,9 @@ export function makeFake(handlers: Record<string, Handler>, rows: CourseSnapshot
       const cur = state.get(courseId);
       if (cur) state.set(courseId, { ...cur, checkedAt });
     },
+    setScopeCourseIds: async (_u: number, ids: readonly number[]) => {
+      scopeWrites.push([...ids]);
+    },
   } as unknown as Store;
   const ctx = {
     user: { id: 1, moodleUserId: 1001 },
@@ -125,7 +130,7 @@ export function makeFake(handlers: Record<string, Handler>, rows: CourseSnapshot
     source: 'test',
     defer: () => {},
   } as unknown as ServiceContext;
-  return { ctx, calls, rows: state, touched, puts };
+  return { ctx, calls, rows: state, touched, puts, scopeWrites };
 }
 
 export const snapshotRow = (courseId: number, json: string, checkedAt: number): CourseSnapshotRow => ({

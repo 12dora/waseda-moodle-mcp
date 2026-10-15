@@ -7,8 +7,14 @@ import type { Course, CourseUpdate, DueItem, SearchHit } from '../../types';
 import { type CourseScope, resolveScope } from '../scope';
 import { ANNOUNCE_CALLS, announcementItems } from './announcements';
 import { dropCoveredText } from './dedupe';
-import { pendingActivityItems, taskModules, textDeadlineItems } from './extract-activities';
-import { CRON_MAX_AGE_MS, refreshSnapshots } from './refresh';
+import {
+  inTextWindow,
+  pendingActivityItems,
+  type TextWindow,
+  taskModules,
+  textDeadlineItems,
+} from './extract-activities';
+import { refreshSnapshots } from './refresh';
 import { parseQuery, type ScoredHit, searchSnapshot } from './search';
 import type { CourseSnapshot } from './snapshot';
 import { attachTaskMentions } from './task-mentions';
@@ -21,7 +27,6 @@ const MAX_CALLS = 12; // Moodle calls per request
 const MAX_FULL = 3; // full course refetches per request
 const MAX_LARGE = 1; // of those, courses whose raw JSON is large (> 100 KB): CPU limit
 const DAY_MS = 86_400_000;
-const PAST_MENTION_MS = DAY_MS; // text mentions older than this are dropped
 const SEARCH_DEFAULT_LIMIT = 20;
 const SEARCH_MAX_LIMIT = 100;
 const UPDATES_DEFAULT_DAYS = 7;
@@ -51,26 +56,22 @@ interface Extracted {
 function extractAll(
   targets: readonly Course[],
   snapshots: ReadonlyMap<number, CourseSnapshot>,
-  opts: { now: number; toMs: number },
+  opts: { now: number; fromMs: number; toMs: number },
 ): Extracted {
   const out: Extracted = { pending: [], mentioned: [], taskCmids: new Set() };
   for (const course of targets) {
     const snap = snapshots.get(course.id);
     if (!snap) continue;
     out.pending.push(...pendingActivityItems(course, snap, opts));
-    out.mentioned.push(...textDeadlineItems(course, snap, opts.now));
+    out.mentioned.push(...textDeadlineItems(course, snap, opts));
     for (const cmid of taskModules(snap).keys()) out.taskCmids.add(cmid);
   }
   return out;
 }
 
-/** Text mentions inside the window; ones already past by more than a day are noise (we cannot know if it was done). */
-function timely(items: readonly DueItem[], window: { fromMs: number; toMs: number }, now: number): DueItem[] {
-  const from = Math.max(window.fromMs, now - PAST_MENTION_MS);
-  return items.filter((i) => {
-    const ms = i.dueAt ? Date.parse(i.dueAt) : Number.NaN;
-    return ms >= from && ms <= window.toMs;
-  });
+/** Announcement mentions inside the window (course-text mentions are already filtered, before their cap). */
+function timely(items: readonly DueItem[], win: TextWindow): DueItem[] {
+  return items.filter((i) => inTextWindow(i.dueAt ? Date.parse(i.dueAt) : Number.NaN, win));
 }
 
 /**
@@ -93,10 +94,11 @@ export async function collectSweepItems(
     refreshSnapshots(ctx, targets, { maxCalls: MAX_CALLS - ANNOUNCE_CALLS, maxFull: MAX_FULL, maxLarge: MAX_LARGE }),
     announcementItems(api, targets, { now, maxCalls: ANNOUNCE_CALLS }),
   ]);
-  const found = extractAll(targets, refresh.snapshots, { now, toMs: window.toMs });
+  const win = { now, ...window };
+  const found = extractAll(targets, refresh.snapshots, win);
   const calendarCmids = new Set(calendar.flatMap((i) => (i.cmid === null ? [] : [i.cmid])));
   const attached = attachTaskMentions({
-    mentions: timely([...found.mentioned, ...announced], window, now),
+    mentions: [...found.mentioned, ...timely(announced, win)],
     calendar,
     activities: found.pending.filter((i) => i.cmid === null || !calendarCmids.has(i.cmid)),
     taskCmids: found.taskCmids,
@@ -116,6 +118,7 @@ export async function getCourseUpdates(
     maxCalls: MAX_CALLS,
     maxFull: MAX_FULL,
     maxLarge: MAX_LARGE,
+    rememberScope: opts.courseId === undefined, // a one-course call must not replace the remembered scope
   });
   const updates = targets.flatMap((c) => {
     const snap = snapshots.get(c.id);
@@ -140,6 +143,7 @@ export async function searchSnapshots(
     maxCalls: MAX_CALLS,
     maxFull: MAX_FULL,
     maxLarge: MAX_LARGE,
+    rememberScope: opts.courseId === undefined,
   });
   const scored: ScoredHit[] = [];
   for (const course of targets) {
@@ -153,16 +157,4 @@ export async function searchSnapshots(
     refreshed,
     skipped: targets.length - snapshots.size,
   };
-}
-
-/** Worker cron: bring the scope snapshots of one user up to date (≤ `maxRefresh` full refetches). */
-export async function sweepForCron(ctx: ServiceContext, opts: { maxRefresh?: number } = {}): Promise<SweepStats> {
-  const targets = inScope(await resolveScope(ctx));
-  if (targets.length === 0) return NO_STATS;
-  const { stats } = await refreshSnapshots(ctx, targets, {
-    maxCalls: MAX_CALLS,
-    maxFull: opts.maxRefresh ?? MAX_FULL,
-    maxAgeMs: CRON_MAX_AGE_MS,
-  });
-  return stats;
 }
