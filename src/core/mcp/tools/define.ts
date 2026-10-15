@@ -16,6 +16,8 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   description: string;
   annotations: ToolAnnotations;
   input: S;
+  /** structuredContent shape; the SDK validates every result against it, so keep it permissive (see ../schemas). */
+  output: z.ZodType;
   run(ctx: ServiceContext, args: z.output<S>): Promise<ToolOut>;
 }
 

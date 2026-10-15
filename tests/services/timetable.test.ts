@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvalidInput, MoodleError } from '../../src/core/errors';
 import type { SyllabusInfo, SyllabusSlot } from '../../src/core/services/syllabus';
-import { classesOn, getTimetable } from '../../src/core/services/timetable';
-import { ACADEMIC_CALENDAR, type AcademicCalendar } from '../../src/core/services/timetable/calendar';
+import { classesOn, getTimetable, getTimetableDays } from '../../src/core/services/timetable';
+import { ACADEMIC_CALENDAR, type AcademicCalendar, addDays } from '../../src/core/services/timetable/calendar';
 import {
   inferredEntry,
   overrideEntry,
@@ -353,6 +353,17 @@ describe('getTimetable', () => {
       ['2026-11-07', [], closed('早稲田祭')],
       ['2026-11-08', [], closed('早稲田祭')],
     ]);
+  });
+
+  it('getTimetableDays: any number of dates beyond the 14-day cap, from one course resolution', async () => {
+    const { t, seed } = setup();
+    seedAll(seed);
+    const dates = Array.from({ length: 28 }, (_, i) => addDays('2026-11-02', i));
+    const days = await getTimetableDays(t.ctx, dates);
+    expect(days.map((d) => d.date)).toEqual(dates);
+    expect(days.find((d) => d.date === '2026-11-04')?.classes.map((c) => c.courseId)).toEqual([2]);
+    expect(days.find((d) => d.date === '2026-11-25')?.classes.map((c) => c.courseId)).toEqual([2]);
+    expect(vi.mocked(inferSchedules)).toHaveBeenCalledTimes(1);
   });
 
   it('accepts tomorrow and an explicit date and shows the night clock', async () => {

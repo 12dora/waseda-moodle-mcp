@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { getTimetable } from '../../services/timetable';
 import { renderTimetable } from '../render/timetable';
+import { timetableOut } from '../schemas/timetable';
 import { defineTool, READ_HINTS } from './define';
 
 const getTimetableTool = defineTool({
@@ -21,6 +22,7 @@ const getTimetableTool = defineTool({
       .optional(),
     days: z.number().int().min(1).max(14).describe('How many days from `date`. Default 1, max 14.').optional(),
   }),
+  output: timetableOut,
   async run(ctx, a) {
     const r = await getTimetable(ctx, { date: a.date, days: a.days });
     return { text: renderTimetable(r), data: r };

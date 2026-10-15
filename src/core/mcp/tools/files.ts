@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { createFileLink, createUploadLink } from '../../services/files';
 import type { FileLink } from '../../types';
 import { renderFileLink, renderUploadLink } from '../render/files';
+import { fileLinkOut, uploadLinkOut } from '../schemas/files';
 import { getFileDescription } from '../wording';
 import { defineTool, id, PREPARE_HINTS, READ_HINTS } from './define';
 
@@ -51,6 +52,7 @@ export const getFileTool = (stdio: boolean) =>
         .describe('Also attach the content to the result when the file is small (<= 1 MiB). Default false.')
         .optional(),
     }),
+    output: fileLinkOut,
     async run(ctx, a) {
       const link = await createFileLink(ctx, a.url, { inline: a.inline });
       // the inline payload already travels in `content`; do not duplicate it in structuredContent
@@ -68,6 +70,7 @@ export const createUploadLinkTool = defineTool({
     "This does not submit anything; submitting still needs prepare_submission and the user's confirmation.",
   annotations: PREPARE_HINTS,
   input: z.object({ cmid: id('Assignment cmid (see get_activity); it must accept file submissions.') }),
+  output: uploadLinkOut,
   async run(ctx, a) {
     const r = await createUploadLink(ctx, a.cmid);
     return { text: renderUploadLink(r, a.cmid), data: r };

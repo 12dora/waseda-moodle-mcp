@@ -8,7 +8,7 @@ import type { ToolDef } from './define';
 const asSchema = (s: z.ZodType) => s as unknown as StandardSchemaWithJSON;
 
 /** Only plain, non-content values go to the audit log (never message text, file names or bytes). */
-const AUDIT_STRING_KEYS = new Set(['forum_type', 'scope', 'upload_id', 'action_id']);
+const AUDIT_STRING_KEYS = new Set(['forum_type', 'scope', 'upload_id', 'action_id', 'course_id']);
 
 function auditDetail(args: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -21,7 +21,7 @@ function auditDetail(args: unknown): Record<string, unknown> {
 }
 
 /** WmmError messages are user-safe and pass through; anything else is replaced by a generic message. */
-function toToolError(ctx: ServiceContext, e: unknown): Error {
+export function toToolError(ctx: ServiceContext, e: unknown): Error {
   if (e instanceof NeedsReconnect) {
     if (ctx.mode === 'stdio' || !ctx.publicUrl) return new NeedsReconnect(RECONNECT_STDIO);
     if (e.message.includes('/connect')) return e;
@@ -37,11 +37,12 @@ function toToolError(ctx: ServiceContext, e: unknown): Error {
   );
 }
 
-function audit(ctx: ServiceContext, name: string, args: unknown, error?: unknown): void {
+/** `action` is the audit-log label, e.g. `tool:get_course`. */
+export function audit(ctx: ServiceContext, action: string, args: unknown, error?: unknown): void {
   try {
     const detail = auditDetail(args);
     if (error !== undefined) detail.error = error instanceof WmmError ? error.code : 'internal_error';
-    const row = { userId: ctx.user.id, at: Date.now(), actor: `mcp:${ctx.source}`, action: `tool:${name}`, detail };
+    const row = { userId: ctx.user.id, at: Date.now(), actor: `mcp:${ctx.source}`, action, detail };
     ctx.defer(
       Promise.resolve()
         .then(() => ctx.store.audit(row))
@@ -70,18 +71,24 @@ export function callScoped(ctx: ServiceContext): ServiceContext {
 export function registerTool(server: McpServer, ctx: ServiceContext, def: ToolDef): void {
   server.registerTool(
     def.name,
-    { title: def.title, description: def.description, inputSchema: asSchema(def.input), annotations: def.annotations },
+    {
+      title: def.title,
+      description: def.description,
+      inputSchema: asSchema(def.input),
+      outputSchema: asSchema(def.output),
+      annotations: def.annotations,
+    },
     async (raw: unknown): Promise<CallToolResult> => {
       const args = raw ?? {};
       try {
         const out = await def.run(callScoped(ctx), args);
-        audit(ctx, def.name, args);
+        audit(ctx, `tool:${def.name}`, args);
         return {
           content: [{ type: 'text', text: out.text }, ...(out.extra ?? [])],
           structuredContent: out.data as Record<string, unknown>,
         };
       } catch (e) {
-        audit(ctx, def.name, args, e);
+        audit(ctx, `tool:${def.name}`, args, e);
         throw toToolError(ctx, e);
       }
     },

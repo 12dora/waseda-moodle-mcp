@@ -48,7 +48,7 @@ function contentText(c: ContentDetail): string {
     `Link: ${c.url}`,
   ];
   if (c.externalUrl) lines.push(`External link: ${c.externalUrl}`);
-  if (c.files.length > 0) lines.push('Files (pass a url to get_file):', ...fileLines(c.files, 15));
+  if (c.files.length > 0) lines.push('Files (pass a url to get_file):', ...fileLines(c.files, 15, { hint: false }));
   const room = Math.max(500, MAX_TEXT_CHARS - lines.join('\n').length - 160);
   const desc = c.description.trim();
   const body = c.body?.trim() ?? '';

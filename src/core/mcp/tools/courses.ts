@@ -4,11 +4,22 @@ import { getCourseOutline, listCourses, searchCourseContent } from '../../servic
 import { getDueItems } from '../../services/due';
 import { getGrades } from '../../services/grades';
 import { resolveScope } from '../../services/scope';
+import type { DueKind } from '../../types';
 import { renderActivity } from '../render/activity';
 import { renderCourses, renderOutline, renderSearch } from '../render/courses';
 import { renderDueList } from '../render/due';
 import { renderGrades } from '../render/grades';
+import {
+  activityOut,
+  courseOutlineOut,
+  dueItemsOut,
+  gradesOut,
+  listCoursesOut,
+  searchContentOut,
+} from '../schemas/courses';
 import { defineTool, id, limit, READ_HINTS } from './define';
+
+const DUE_KINDS: [DueKind, ...DueKind[]] = ['assign', 'quiz', 'questionnaire', 'forum', 'lesson', 'workshop', 'other'];
 
 const getDueItemsTool = defineTool({
   name: 'get_due_items',
@@ -18,7 +29,8 @@ const getDueItemsTool = defineTool({
     'Use this first for "what is due", "what should I work on" or "did I miss anything". ' +
     'Items already submitted are listed apart under Submitted; saved drafts, unfinished quiz attempts and reopened assignments are tagged as not submitted. ' +
     'It combines the Moodle calendar with tasks found by checking the course pages: activities without a deadline in Moodle, and deadlines written in course text (marked "verify"; confirm them with the quoted evidence). ' +
-    "Covers the user's own courses; the footer says how many were checked. Times are JST, and a deadline at 00:00 means the previous day 24:00. Each line carries the cmid to pass to get_activity.",
+    "Covers the user's own courses; the footer says how many were checked. Times are JST, and a deadline at 00:00 means the previous day 24:00. Each line carries the cmid to pass to get_activity when Moodle gives one; deadlines found in announcements name the announcement link instead. " +
+    'Pass kinds to list only some types (e.g. ["assign"]) and include_submitted=false to hide what is already handed in.',
   annotations: READ_HINTS,
   input: z.object({
     days_ahead: z
@@ -36,10 +48,27 @@ const getDueItemsTool = defineTool({
       .describe('How many days back to include overdue items. Default 14, max 60.')
       .optional(),
     course_id: id('Only items of this course (see list_courses).').optional(),
+    kinds: z
+      .array(z.enum(DUE_KINDS))
+      .min(1)
+      .describe('Only these kinds of items, e.g. ["assign","quiz"]. Omit for all kinds.')
+      .optional(),
+    include_submitted: z
+      .boolean()
+      .describe('List items the user already handed in under "Submitted". Default true; false hides them.')
+      .optional(),
   }),
+  output: dueItemsOut,
   async run(ctx, a) {
-    const r = await getDueItems(ctx, { daysAhead: a.days_ahead, overdueDays: a.overdue_days, courseId: a.course_id });
-    return { text: renderDueList(r), data: r };
+    const r = await getDueItems(ctx, {
+      daysAhead: a.days_ahead,
+      overdueDays: a.overdue_days,
+      courseId: a.course_id,
+      kinds: a.kinds,
+      includeSubmitted: a.include_submitted,
+    });
+    const view = { stdio: ctx.mode === 'stdio', kinds: a.kinds, includeSubmitted: a.include_submitted };
+    return { text: renderDueList(r, view), data: r };
   },
 });
 
@@ -57,6 +86,7 @@ const listCoursesTool = defineTool({
       .describe("mine (default): the user's courses this term. all: also the other enrolled courses.")
       .optional(),
   }),
+  output: listCoursesOut,
   async run(ctx, a) {
     const scope = a.scope ?? 'mine';
     const [courses, { mode }] = await Promise.all([listCourses(ctx, { scope }), resolveScope(ctx)]);
@@ -81,6 +111,7 @@ const getCourseTool = defineTool({
       .describe('Only this section number (0 = the general section). Omit for all sections.')
       .optional(),
   }),
+  output: courseOutlineOut,
   async run(ctx, a) {
     const r = await getCourseOutline(ctx, a.course_id, { sectionNumber: a.section });
     return { text: renderOutline(r), data: r };
@@ -104,6 +135,7 @@ const searchCourseContentTool = defineTool({
     course_id: id('Restrict the search to this course.').optional(),
     limit: limit('Maximum number of hits. Default 20.', 50).optional(),
   }),
+  output: searchContentOut,
   async run(ctx, a) {
     const r = await searchCourseContent(ctx, a.query, { courseId: a.course_id, limit: a.limit });
     return { text: renderSearch(r, a.query), data: r };
@@ -119,6 +151,7 @@ const getActivityTool = defineTool({
     'Call it before answering questions about requirements or before preparing a submission.',
   annotations: READ_HINTS,
   input: z.object({ cmid: id('Course module id (cmid) shown in due items, course outlines and search results.') }),
+  output: activityOut,
   async run(ctx, a) {
     const r = await getActivity(ctx, a.cmid);
     return { text: renderActivity(r), data: r };
@@ -134,6 +167,7 @@ const getGradesTool = defineTool({
     'Grades can only be read, never changed.',
   annotations: READ_HINTS,
   input: z.object({ course_id: id('Course id from list_courses. Recommended.').optional() }),
+  output: gradesOut,
   async run(ctx, a) {
     const r = await getGrades(ctx, { courseId: a.course_id });
     return { text: renderGrades(r), data: r };

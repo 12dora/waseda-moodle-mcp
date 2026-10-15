@@ -1,5 +1,5 @@
 import { deadlineMs, fmt, fmtDue } from '../../time';
-import type { DueItem, DueList } from '../../types';
+import type { DueItem, DueKind, DueList } from '../../types';
 import { clip, hardCap, MAX_TEXT_CHARS, oneLine, plural } from './common';
 
 const JST_OFFSET_MS = 9 * 3600 * 1000;
@@ -45,11 +45,23 @@ function dueWhen(i: DueItem): string {
   return i.notOpenYet ? `opens ${fmt(i.opensAt)}` : `open since ${fmt(i.opensAt)}, no deadline`;
 }
 
-/** Text items carry the quoted snippet and where it was found, so the model can check the date itself. */
+const FORUM_DISCUSSION_URL = /\/mod\/(?:hsu)?forum\/discuss\.php/;
+
+/** A deadline found in an announcement: its link is the news thread, not the task's own activity. */
+const isAnnouncement = (i: DueItem) => i.source === 'text' && FORUM_DISCUSSION_URL.test(i.sourceUrl ?? '');
+
+/**
+ * Text items carry the quoted snippet and where it was found, so the model can check the date itself.
+ * Announcement items say so and give the discussion link (they have no cmid of their own).
+ */
 function evidenceLine(i: DueItem): string {
   if (!i.evidence && i.source !== 'text') return '';
   const quote = i.evidence ? ` «${oneLine(i.evidence, 160)}»` : '';
   const where = i.sourceUrl ? ` ${i.sourceUrl}` : '';
+  if (isAnnouncement(i)) {
+    const evidence = quote ? `\n  evidence:${quote}` : '';
+    return `\n  source: announcement${where}${evidence}`;
+  }
   return quote || where ? `\n  evidence:${quote}${where}` : '';
 }
 
@@ -67,8 +79,11 @@ function submissionTag(i: DueItem): string {
   return text ? ` [${text}]` : '';
 }
 
+/** The id get_activity needs; announcement items have none (their link is printed under the line). */
+const cmidTag = (i: DueItem) => (i.cmid !== null ? ` (cmid ${i.cmid})` : '');
+
 function dueLine(i: DueItem): string {
-  const cm = i.cmid !== null ? ` (cmid ${i.cmid})` : '';
+  const cm = cmidTag(i);
   const late = i.overdue ? ' — OVERDUE' : '';
   const fresh = i.isNew ? ' — NEW' : '';
   const verify = i.source === 'text' || i.evidence ? ' — mentioned in course text — verify' : '';
@@ -181,7 +196,7 @@ const submittedAtMs = (i: DueItem) => (i.submission?.submittedAt ? Date.parse(i.
 function submittedLine(i: DueItem): string {
   const at = i.submission?.submittedAt ? `submitted ${fmt(i.submission.submittedAt)}` : 'submitted';
   const edit = i.submission?.canContinue ? ' — can still edit' : '';
-  return `- [${i.kind}] ${oneLine(i.name, 60)} — ${oneLine(i.courseName, 40)} — ${at}${edit}`;
+  return `- [${i.kind}] ${oneLine(i.name, 60)} — ${oneLine(i.courseName, 40)} — ${at}${edit}${cmidTag(i)}`;
 }
 
 /** Compact group after the outstanding ones: what the user already handed in (newest first). */
@@ -193,7 +208,39 @@ function submittedSection(items: DueItem[]): string[] {
   return ['', `## Submitted (${items.length})`, ...lines, ...(more > 0 ? [`… ${more} more`] : [])];
 }
 
-export function renderDueList(list: DueList): string {
+/** How the list was asked for and where it is read: the filters are echoed, console pointers only exist hosted. */
+interface DueView {
+  stdio?: boolean;
+  kinds?: readonly DueKind[];
+  includeSubmitted?: boolean;
+}
+
+function filterNote({ kinds, includeSubmitted }: DueView): string[] {
+  const parts: string[] = [];
+  if (kinds && kinds.length > 0) parts.push(`only kinds: ${kinds.join(', ')}`);
+  if (includeSubmitted === false) parts.push('submitted items hidden');
+  return parts.length > 0 ? [`Filtered: ${parts.join('; ')}.`] : [];
+}
+
+/** Undated items beyond the cap are only in structuredContent when there is no console to browse them. */
+function undatedMore(n: number, view: DueView): string {
+  const where = view.stdio ? 'pass course_id to narrow; all are in structuredContent' : "see the console's Due page";
+  return `… ${n} more without a deadline (${where})`;
+}
+
+function sectionLines(sections: Map<DueGroup, Section>, view: DueView): string[] {
+  const body: string[] = [];
+  for (const g of DISPLAY_ORDER) {
+    const s = sections.get(g);
+    if (!s) continue;
+    body.push('', s.heading, ...s.lines);
+    if (s.dropped > 0) body.push(`… ${s.dropped} more (use course_id, kinds or a smaller days_ahead)`);
+    if (s.capped > 0) body.push(undatedMore(s.capped, view));
+  }
+  return body;
+}
+
+export function renderDueList(list: DueList, view: DueView = {}): string {
   const submitted = list.items.filter(isSubmitted);
   const open = list.items.filter((i) => !i.closed && !isSubmitted(i));
   const closed = list.items.filter((i) => i.closed);
@@ -201,6 +248,7 @@ export function renderDueList(list: DueList): string {
   const window = `${list.windowFrom.slice(0, 10)} and ${list.windowTo.slice(0, 10)}`;
   const head = [
     'Due items. Times are JST; a deadline at 00:00 is shown as the previous day 24:00.',
+    ...filterNote(view),
     outstanding === 0
       ? `Nothing outstanding ${otherCourseItems(list).length > 0 ? 'in your courses ' : ''}between ${window}.`
       : `${plural(outstanding, 'item')} between ${window}:`,
@@ -221,13 +269,6 @@ export function renderDueList(list: DueList): string {
   const reserved = [...head, ...notes, ...tail, ...other, ...done].join('\n').length + 160;
   const sections = fitSections(groups, MAX_TEXT_CHARS - reserved);
 
-  const body: string[] = [];
-  for (const g of DISPLAY_ORDER) {
-    const s = sections.get(g);
-    if (!s) continue;
-    body.push('', s.heading, ...s.lines);
-    if (s.dropped > 0) body.push(`… ${s.dropped} more (use course_id or a smaller days_ahead)`);
-    if (s.capped > 0) body.push(`… ${s.capped} more without a deadline (see the console's Due page)`);
-  }
+  const body = sectionLines(sections, view);
   return hardCap([...head, ...body, ...done, ...other, ...notes, ...tail].join('\n'));
 }

@@ -1,18 +1,23 @@
 /**
- * MCP surface: 23 tools + 2 prompts over the service layer.
+ * MCP surface: 29 tools, 3 prompts and 2 resource templates over the service layer.
  * One McpServer per request (Worker) or per connection (stdio); tool definitions live in ./tools.
  */
 
 import { McpServer } from '@modelcontextprotocol/server';
 import type { ServiceContext } from '../context';
 import { registerPrompts } from './prompts';
+import { registerResources } from './resources';
 import { courseTools } from './tools/courses';
 import type { ToolDef } from './tools/define';
 import { createUploadLinkTool, getFileTool } from './tools/files';
 import { myCoursesTools } from './tools/my-courses';
+import { quizReviewTools } from './tools/quiz-review';
+import { markReadTools } from './tools/read-state';
 import { registerTool } from './tools/register';
 import { scheduleTools } from './tools/schedule';
+import { searchTools } from './tools/search';
 import { socialTools } from './tools/social';
+import { syllabusTools } from './tools/syllabus';
 import { timetableTools } from './tools/timetable';
 import { prepareSubmissionTool, writeTools } from './tools/write';
 import { serverInstructions } from './wording';
@@ -29,11 +34,12 @@ function toolsFor({ canRead, canWrite, stdio }: ReturnType<typeof access>): Tool
   const tools: ToolDef[] = [];
   if (canRead) {
     tools.push(...courseTools, ...myCoursesTools, ...timetableTools, ...scheduleTools);
-    tools.push(getFileTool(stdio), ...socialTools);
+    tools.push(...syllabusTools, ...quizReviewTools);
+    tools.push(getFileTool(stdio), ...socialTools, ...searchTools);
   }
   if (canWrite) {
     if (!stdio) tools.push(createUploadLinkTool);
-    tools.push(prepareSubmissionTool(stdio), ...writeTools);
+    tools.push(prepareSubmissionTool(stdio), ...writeTools, ...markReadTools);
   }
   return tools;
 }
@@ -45,6 +51,9 @@ export function buildMcpServer(ctx: ServiceContext): McpServer {
   );
   const rights = access(ctx);
   for (const def of toolsFor(rights)) registerTool(server, ctx, def);
-  if (rights.canRead) registerPrompts(server);
+  if (rights.canRead) {
+    registerPrompts(server, ctx);
+    registerResources(server, ctx);
+  }
   return server;
 }

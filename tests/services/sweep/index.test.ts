@@ -98,7 +98,8 @@ describe('collectSweepItems', () => {
     const announce = items[2];
     expect(announce).toMatchObject({
       kind: 'other',
-      cmid: 55,
+      cmid: null, // the news forum (cmid 55) is where it was mentioned, not the task
+      url: `${BASE}/mod/forum/discuss.php?d=71`,
       sourceUrl: `${BASE}/mod/forum/discuss.php?d=71`,
       isNew: true,
       closed: false,
@@ -222,6 +223,22 @@ describe('collectSweepItems', () => {
     expect(f.scopeWrites).toEqual([]);
     await collectSweepItems(f.ctx, sc, [], WINDOW);
     expect(f.scopeWrites).toEqual([[101]]);
+  });
+
+  it('cachedOnly spends no Moodle call: snapshots stay as stored, announcements are skipped', async () => {
+    const stale = snapshotRow(
+      101,
+      JSON.stringify(buildSnapshot(sectionsFor(101), { baseUrl: BASE, now: NOW_MS })),
+      NOW_MS - 5 * 3_600_000,
+    );
+    const f = makeFake({}, [stale]); // any call throws 'unexpected call'
+    const sc = scopeOf(course(101, 'Valuation'), course(102, 'Law'));
+    const { items, stats } = await collectSweepItems(f.ctx, sc, [], { ...WINDOW, cachedOnly: true });
+    expect(f.calls).toEqual([]);
+    expect(items.map((i) => i.name)).toContain('Final upload');
+    expect(items.every((i) => i.courseId === 101)).toBe(true);
+    expect(stats).toMatchObject({ checked: 0, stale: 2 });
+    expect(f.scopeWrites).toEqual([]);
   });
 
   it('stays within 12 calls and 3 refetches with many courses', async () => {

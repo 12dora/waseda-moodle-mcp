@@ -403,7 +403,14 @@ export interface Notification {
 
 // ------------------------------------------------------------------ write actions
 
-export type ActionKind = 'assign_submit' | 'forum_reply' | 'forum_discussion' | 'message' | 'completion';
+export type ActionKind =
+  | 'assign_submit'
+  | 'forum_reply'
+  | 'forum_discussion'
+  | 'message'
+  | 'completion'
+  | 'mark_read' // notifications / a conversation marked read
+  | 'forum_subscription'; // subscribe to / unsubscribe from a forum
 export type ActionStatus = 'pending' | 'executing' | 'executed' | 'cancelled' | 'expired' | 'failed';
 export type Approval = 'chat' | 'console';
 

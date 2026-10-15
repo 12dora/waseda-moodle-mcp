@@ -294,7 +294,17 @@ describe('getDueItems', () => {
       fromMs: (NOW_SEC - 14 * DAY) * 1000,
       toMs: (NOW_SEC + 14 * DAY) * 1000,
       rememberScope: true,
+      cachedOnly: false,
     });
+  });
+
+  it("passes sweep: 'cached' on to the sweep as cachedOnly", async () => {
+    const { ctx } = makeFakeContext({
+      responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES },
+      user: { settings: { myCourseIds: [101] } },
+    });
+    await getDueItems(ctx, { sweep: 'cached' });
+    expect(vi.mocked(collectSweepItems).mock.calls[0]?.[3]).toMatchObject({ cachedOnly: true });
   });
 
   it('lists the calendar items as the sweep returns them (a date found in module text is attached there)', async () => {
@@ -345,6 +355,69 @@ describe('getDueItems', () => {
     expect(list.items.find((i) => i.name === 'Report 1')).toMatchObject({ overdue: false, submission: submitted });
     expect(list.items.map((i) => i.name)).toEqual(ALL_NAMES.filter((n) => n !== 'Elective Essay'));
     expect(list.otherCourses.map((i) => [i.name, i.submission?.status])).toEqual([['Elective Essay', 'submitted']]);
+  });
+
+  describe('filters', () => {
+    const scoped = () =>
+      makeFakeContext({
+        responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES },
+        user: { settings: { myCourseIds: [101, 102, 104] } },
+      });
+
+    it('keeps only the asked kinds in the list and the other-course group, and looks up only those', async () => {
+      const quizzes = await getDueItems(scoped().ctx, { kinds: ['quiz', 'questionnaire'] });
+      expect(quizzes.items.map((i) => i.name)).toEqual(['Quiz A', 'Survey 1', 'Quiz B']);
+      expect(quizzes.otherCourses).toEqual([]); // Elective Essay is an assignment
+
+      vi.mocked(attachSubmissions).mockClear();
+      const assigns = await getDueItems(scoped().ctx, { kinds: ['assign'] });
+      expect(assigns.items.every((i) => i.kind === 'assign')).toBe(true);
+      expect(assigns.otherCourses.map((i) => i.name)).toEqual(['Elective Essay']);
+      const passed = vi.mocked(attachSubmissions).mock.calls[0]?.[1] ?? [];
+      expect(passed.every((i) => i.kind === 'assign')).toBe(true);
+      expect(passed).toHaveLength(assigns.items.length + 1);
+    });
+
+    it('filters the items the sweep adds too, and treats an empty kinds list as no filter', async () => {
+      const mention = {
+        ...mergeDueEvents([event(1, 1)], NOW_SEC)[0],
+        kind: 'other',
+        source: 'text',
+        name: 'Mention',
+      };
+      vi.mocked(collectSweepItems).mockImplementation(async (_c, _s, calendar) => ({
+        items: [mention as DueItem],
+        calendar: [...calendar],
+        stats: NO_STATS,
+      }));
+      const only = await getDueItems(scoped().ctx, { kinds: ['other'] });
+      expect(only.items.map((i) => i.name).sort()).toEqual(['External Tool', 'Mention']);
+      const all = await getDueItems(scoped().ctx, { kinds: [] });
+      expect(all.items).toHaveLength(ALL_NAMES.length); // 8 calendar items in scope + the mention
+    });
+
+    it('hides submitted items (also of other courses) only when include_submitted is false', async () => {
+      const submitted = {
+        status: 'submitted',
+        canContinue: false,
+        submittedAt: null,
+        graded: false,
+        note: null,
+      } as const;
+      const handedIn = new Set(['Report 1', 'Elective Essay']);
+      vi.mocked(attachSubmissions).mockImplementation(async (_c, items) =>
+        items.map((i) => (handedIn.has(i.name) ? { ...i, submission: submitted } : i)),
+      );
+      const hidden = await getDueItems(scoped().ctx, { includeSubmitted: false });
+      expect(hidden.items.map((i) => i.name)).toEqual(
+        ALL_NAMES.filter((n) => n !== 'Elective Essay' && n !== 'Report 1'),
+      );
+      expect(hidden.otherCourses).toEqual([]);
+      const kept = await getDueItems(scoped().ctx, { includeSubmitted: true });
+      expect(kept.items.map((i) => i.name)).toContain('Report 1');
+      expect(kept.otherCourses.map((i) => i.name)).toEqual(['Elective Essay']);
+      expect((await getDueItems(scoped().ctx)).items.map((i) => i.name)).toContain('Report 1');
+    });
   });
 
   it('uses a shared 30-day events call as the signal of the automatic suggestion; later events stay listed apart', async () => {

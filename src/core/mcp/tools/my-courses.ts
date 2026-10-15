@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { setMyCourses } from '../../services/scope';
 import { getCourseUpdates } from '../../services/sweep';
 import { renderCourseUpdates, renderMyCourses } from '../render/updates';
+import { courseUpdatesOut, mySettingsOut } from '../schemas/my-courses';
 import { defineTool, id, LOCAL_SETTING_HINTS, READ_HINTS } from './define';
 
 const DEFAULT_SINCE_DAYS = 7;
@@ -22,6 +23,7 @@ const setMyCoursesTool = defineTool({
       .nullable()
       .describe('The course_ids the user attends this term, or null to return to the automatic suggestion.'),
   }),
+  output: mySettingsOut,
   async run(ctx, a) {
     const r = await setMyCourses(ctx, a.course_ids);
     return { text: renderMyCourses(r.myCourseIds), data: r };
@@ -46,6 +48,7 @@ const getCourseUpdatesTool = defineTool({
       .optional(),
     course_id: id('Only this course (see list_courses).').optional(),
   }),
+  output: courseUpdatesOut,
   async run(ctx, a) {
     const r = await getCourseUpdates(ctx, { sinceDays: a.since_days, courseId: a.course_id });
     return { text: renderCourseUpdates(r, a.since_days ?? DEFAULT_SINCE_DAYS), data: r };

@@ -2,7 +2,7 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceContext } from '../../src/core/context';
-import { InvalidInput, MoodleError, NeedsReconnect } from '../../src/core/errors';
+import { InvalidInput, MoodleError, NeedsReconnect, NotFound } from '../../src/core/errors';
 import { buildMcpServer } from '../../src/core/mcp/server';
 import { callScoped } from '../../src/core/mcp/tools/register';
 import {
@@ -13,12 +13,13 @@ import {
   prepareMessage,
   prepareSubmission,
 } from '../../src/core/services/actions';
-import { listCourses } from '../../src/core/services/courses';
+import { getCourseOutline, listCourses } from '../../src/core/services/courses';
 import { getDueItems } from '../../src/core/services/due';
 import { createFileLink } from '../../src/core/services/files';
 import { setScheduleOverride } from '../../src/core/services/schedule-overrides';
 import { resolveScope, setMyCourses } from '../../src/core/services/scope';
 import { getCourseUpdates } from '../../src/core/services/sweep';
+import { getSyllabusDetails } from '../../src/core/services/syllabus-details';
 import type { Course, CourseUpdate, DueList, ScheduleOverride, Scope } from '../../src/core/types';
 import { DEFAULT_SETTINGS } from '../../src/core/types';
 import { type FakeContextOptions, makeFakeContext } from '../helpers/fake-context';
@@ -28,6 +29,8 @@ vi.mock('../../src/core/services/actions', () => ({
   prepareForumPost: vi.fn(),
   prepareMessage: vi.fn(),
   prepareCompletion: vi.fn(),
+  prepareMarkRead: vi.fn(),
+  prepareForumSubscription: vi.fn(),
   confirmAction: vi.fn(),
   cancelAction: vi.fn(),
 }));
@@ -45,6 +48,7 @@ vi.mock('../../src/core/services/due', () => ({ getDueItems: vi.fn() }));
 vi.mock('../../src/core/services/schedule-overrides', () => ({ setScheduleOverride: vi.fn() }));
 vi.mock('../../src/core/services/scope', () => ({ resolveScope: vi.fn(), setMyCourses: vi.fn() }));
 vi.mock('../../src/core/services/sweep', () => ({ getCourseUpdates: vi.fn() }));
+vi.mock('../../src/core/services/syllabus-details', () => ({ getSyllabusDetails: vi.fn() }));
 
 const READ: Scope[] = ['moodle:read'];
 const WRITE: Scope[] = ['moodle:read', 'moodle:write'];
@@ -66,14 +70,20 @@ const READ_TOOLS = [
   'list_messages',
   'get_conversation',
   'list_notifications',
+  'search_people',
+  'get_syllabus',
+  'get_quiz_review',
+  'search_forums',
 ];
 const WRITE_TOOLS = [
   'prepare_submission',
   'prepare_forum_post',
   'prepare_message',
   'prepare_completion',
+  'prepare_forum_subscription',
   'confirm_action',
   'cancel_action',
+  'prepare_mark_read',
 ];
 
 const open: Array<{ client: Client; server: McpServer }> = [];
@@ -124,18 +134,18 @@ describe('tool registration', () => {
     expect(names).toEqual([...READ_TOOLS].sort());
   });
 
-  it('adds write tools and create_upload_link for write scope in worker mode (23 tools)', async () => {
+  it('adds write tools and create_upload_link for write scope in worker mode (29 tools)', async () => {
     const client = await connect(fake({ scopes: WRITE }).ctx);
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(names).toEqual([...READ_TOOLS, ...WRITE_TOOLS, 'create_upload_link'].sort());
-    expect(names).toHaveLength(23);
+    expect(names).toHaveLength(29);
   });
 
   it('drops create_upload_link in stdio mode and offers local paths instead of upload ids', async () => {
     const client = await connect(fake({ scopes: WRITE, mode: 'stdio', publicUrl: '' }).ctx);
     const tools = (await client.listTools()).tools;
     expect(tools.map((t) => t.name)).not.toContain('create_upload_link');
-    expect(tools).toHaveLength(22);
+    expect(tools).toHaveLength(28);
     const props = submissionProps(tools);
     expect(props.upload_id).toBeUndefined();
     expect(props.files?.items?.properties?.path).toBeDefined();
@@ -167,7 +177,16 @@ describe('tool registration', () => {
     expect(by.get('cancel_action')?.annotations).toMatchObject({ destructiveHint: false, idempotentHint: true });
   });
 
-  it('serves instructions and the two prompts', async () => {
+  it('advertises an object output schema for every tool', async () => {
+    const client = await connect(fake({ scopes: WRITE }).ctx);
+    const tools = (await client.listTools()).tools;
+    expect(tools).toHaveLength(29);
+    for (const t of tools) {
+      expect((t.outputSchema as { type?: string } | undefined)?.type, t.name).toBe('object');
+    }
+  });
+
+  it('serves instructions and the three prompts', async () => {
     const client = await connect(fake().ctx);
     expect(client.getServerVersion()).toMatchObject({ name: 'waseda-moodle', title: 'Waseda Moodle' });
     expect(client.getInstructions()).toMatch(/JST/);
@@ -175,7 +194,7 @@ describe('tool registration', () => {
     expect(client.getInstructions()).toMatch(/set_my_courses/);
     expect(client.getInstructions()).toMatch(/get_course_updates/);
     const prompts = (await client.listPrompts()).prompts.map((p) => p.name).sort();
-    expect(prompts).toEqual(['daily_briefing', 'weekly_plan']);
+    expect(prompts).toEqual(['daily_briefing', 'exam_prep', 'weekly_plan']);
     const p = await client.getPrompt({ name: 'daily_briefing' });
     const text = (p.messages[0]?.content as { text?: string } | undefined)?.text ?? '';
     expect(text).toContain('get_due_items');
@@ -769,5 +788,164 @@ describe('write tools', () => {
     const client = await connect(fake().ctx);
     await expect(client.callTool({ name: 'confirm_action', arguments: { action_id: 'act_1' } })).rejects.toThrow();
     expect(confirmAction).not.toHaveBeenCalled();
+  });
+});
+
+// ------------------------------------------------------------------ resources and prompts
+
+const COURSES = [course(), course({ id: 202, name: 'Marketing', shortName: 'M' })];
+const outlineOf = (c: Course) => ({ course: c, sections: [] });
+const SEARCH_URL = 'https://www.wsl.waseda.jp/syllabus/index.php';
+
+describe('resources', () => {
+  beforeEach(() => {
+    vi.mocked(listCourses).mockResolvedValue(COURSES);
+    vi.mocked(getCourseOutline).mockResolvedValue(outlineOf(course()));
+    vi.mocked(getSyllabusDetails).mockResolvedValue({
+      courseId: 101,
+      courseName: 'Finance',
+      status: 'no-page',
+      requestedLang: 'ja',
+      page: null,
+      url: null,
+      searchUrl: SEARCH_URL,
+    });
+  });
+
+  it('offers a course and a syllabus template', async () => {
+    const client = await connect(fake().ctx);
+    const templates = (await client.listResourceTemplates()).resourceTemplates;
+    expect(templates.map((t) => t.uriTemplate).sort()).toEqual([
+      'moodle://course/{course_id}',
+      'moodle://syllabus/{course_id}',
+    ]);
+    expect(templates.every((t) => t.mimeType === 'text/markdown' && t.description)).toBe(true);
+  });
+
+  it("lists the user's courses in scope, named by the course, resolving the scope once", async () => {
+    const f = fake();
+    const client = await connect(f.ctx);
+    const { resources } = await client.listResources();
+    expect(listCourses).toHaveBeenCalledTimes(1);
+    expect(listCourses).toHaveBeenCalledWith(sameUser(f.ctx), { scope: 'mine' });
+    expect(resources.map((r) => r.uri).sort()).toEqual([
+      'moodle://course/101',
+      'moodle://course/202',
+      'moodle://syllabus/101',
+      'moodle://syllabus/202',
+    ]);
+    expect(resources.find((r) => r.uri === 'moodle://syllabus/202')).toMatchObject({
+      title: 'Marketing',
+      mimeType: 'text/markdown',
+    });
+  });
+
+  it('lists nothing for a user without courses', async () => {
+    vi.mocked(listCourses).mockResolvedValue([]);
+    const client = await connect(fake().ctx);
+    expect((await client.listResources()).resources).toEqual([]);
+  });
+
+  it('reads the course outline like get_course and audits the read', async () => {
+    const f = fake();
+    const client = await connect(f.ctx);
+    const res = await client.readResource({ uri: 'moodle://course/101' });
+    expect(getCourseOutline).toHaveBeenCalledWith(sameUser(f.ctx), 101);
+    expect(res.contents).toHaveLength(1);
+    expect(res.contents[0]).toMatchObject({ uri: 'moodle://course/101', mimeType: 'text/markdown' });
+    expect((res.contents[0] as { text: string }).text).toContain('# Finance (course_id 101)');
+    await Promise.all(f.deferred);
+    expect(f.state.audit.map((a) => a.action)).toContain('resource:course');
+  });
+
+  it('reads the syllabus like get_syllabus', async () => {
+    const f = fake();
+    const client = await connect(f.ctx);
+    const res = await client.readResource({ uri: 'moodle://syllabus/101' });
+    expect(getSyllabusDetails).toHaveBeenCalledWith(sameUser(f.ctx), 101);
+    const text = (res.contents[0] as { text: string }).text;
+    expect(text).toContain('Syllabus — Finance (course_id 101)');
+    expect(text).toContain(SEARCH_URL);
+  });
+
+  it('turns service errors into MCP errors with the tool message', async () => {
+    vi.mocked(getCourseOutline).mockRejectedValue(new NotFound('Section 3 was not found in this course.'));
+    const client = await connect(fake().ctx);
+    await expect(client.readResource({ uri: 'moodle://course/101' })).rejects.toThrow(/Section 3 was not found/);
+    await expect(client.readResource({ uri: 'moodle://course/abc' })).rejects.toThrow(/course_id must be a positive/);
+    expect(getCourseOutline).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides unexpected error details like the tools do', async () => {
+    vi.mocked(getSyllabusDetails).mockRejectedValue(new Error('db password is hunter2'));
+    const client = await connect(fake().ctx);
+    const err = await client.readResource({ uri: 'moodle://syllabus/101' }).catch((e: unknown) => e);
+    expect(String(err)).toContain('Unexpected error while talking to Waseda Moodle');
+    expect(String(err)).not.toContain('hunter2');
+  });
+
+  it('completes course ids of the templates from the courses in scope', async () => {
+    const client = await connect(fake().ctx);
+    const ref = { type: 'ref/resource' as const, uri: 'moodle://course/{course_id}' };
+    const one = await client.complete({ ref, argument: { name: 'course_id', value: '10' } });
+    expect(one.completion.values).toEqual(['101']);
+    const all = await client.complete({ ref, argument: { name: 'course_id', value: '' } });
+    expect(all.completion.values).toEqual(['101', '202']);
+  });
+});
+
+describe('prompts', () => {
+  const text = (p: { messages: Array<{ content: unknown }> }) =>
+    (p.messages[0]?.content as { text: string } | undefined)?.text ?? '';
+
+  it('daily_briefing takes an optional date and adds the timetable', async () => {
+    const client = await connect(fake().ctx);
+    const listed = (await client.listPrompts()).prompts.find((p) => p.name === 'daily_briefing');
+    expect(listed?.arguments).toHaveLength(1);
+    expect(listed?.arguments?.[0]).toMatchObject({ name: 'date' });
+    expect(listed?.arguments?.[0]?.required).toBeFalsy();
+    const today = text(await client.getPrompt({ name: 'daily_briefing' }));
+    expect(today).toContain('briefing for today');
+    expect(today).toContain('get_timetable with date=today');
+    expect(today).toContain('list_notifications');
+    const other = text(await client.getPrompt({ name: 'daily_briefing', arguments: { date: '2026-10-20' } }));
+    expect(other).toContain('briefing for 2026-10-20');
+    expect(other).toContain('get_timetable with date=2026-10-20');
+    expect(other).not.toContain('list_notifications');
+    await expect(client.getPrompt({ name: 'daily_briefing', arguments: { date: 'tomorrow' } })).rejects.toThrow();
+  });
+
+  it('weekly_plan stays argument-free', async () => {
+    const client = await connect(fake().ctx);
+    const listed = (await client.listPrompts()).prompts.find((p) => p.name === 'weekly_plan');
+    expect(listed?.arguments ?? []).toEqual([]);
+    expect(text(await client.getPrompt({ name: 'weekly_plan' }))).toContain('days_ahead=7');
+  });
+
+  it('exam_prep suggests course ids with names and accepts a suggestion back', async () => {
+    vi.mocked(listCourses).mockResolvedValue(COURSES);
+    const f = fake();
+    const client = await connect(f.ctx);
+    const ref = { type: 'ref/prompt' as const, name: 'exam_prep' };
+    const all = await client.complete({ ref, argument: { name: 'course_id', value: '' } });
+    expect(all.completion.values).toEqual(['101 — Finance', '202 — Marketing']);
+    const byName = await client.complete({ ref, argument: { name: 'course_id', value: 'mark' } });
+    expect(byName.completion.values).toEqual(['202 — Marketing']);
+    const none = await client.complete({ ref, argument: { name: 'course_id', value: 'zzz' } });
+    expect(none.completion.values).toEqual([]);
+    expect(listCourses).toHaveBeenCalledWith(sameUser(f.ctx), { scope: 'mine' });
+
+    const prompt = await client.getPrompt({ name: 'exam_prep', arguments: { course_id: '202 — Marketing' } });
+    expect(text(prompt)).toContain('get_syllabus with course_id=202;');
+    expect(text(prompt)).not.toContain('Marketing');
+    await expect(client.getPrompt({ name: 'exam_prep', arguments: { course_id: 'Marketing' } })).rejects.toThrow();
+  });
+
+  it('completion never fails: a Moodle problem just means no suggestions', async () => {
+    vi.mocked(listCourses).mockRejectedValue(new MoodleError('boom', 'x'));
+    const client = await connect(fake().ctx);
+    const ref = { type: 'ref/prompt' as const, name: 'exam_prep' };
+    const res = await client.complete({ ref, argument: { name: 'course_id', value: '1' } });
+    expect(res.completion.values).toEqual([]);
   });
 });

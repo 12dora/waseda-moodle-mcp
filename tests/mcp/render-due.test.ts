@@ -125,8 +125,8 @@ describe('renderDueList', () => {
       expect(mixed).toContain('## Submitted (2)');
       expect(mixed.indexOf('## Submitted')).toBeGreaterThan(mixed.indexOf('## Tomorrow'));
       const at = 'Strategic Marketing — submitted 2026-10-11 Sun 15:29';
-      expect(mixed).toContain(`- [assign] Final essay — ${at} — can still edit`);
-      expect(mixed).toContain(`- [questionnaire] Session report — ${at}\n`);
+      expect(mixed).toContain(`- [assign] Final essay — ${at} — can still edit (cmid 802)`);
+      expect(mixed).toContain(`- [questionnaire] Session report — ${at} (cmid 800)\n`);
       expect(mixed).not.toContain(`Session report — ${at} — can still edit`);
     });
 
@@ -147,7 +147,9 @@ describe('renderDueList', () => {
       const shown = [...t.matchAll(/- \[assign\] (Done \d)/g)].map((m) => m[1]);
       expect(shown).toEqual(['Done 8', 'Done 7', 'Done 6', 'Done 5', 'Done 4', 'Done 3', 'Done 2', 'Done 1']);
       const lone = renderDueList(dueList([submitted('Undated', { submittedAt: null })]));
-      expect(lone).toContain('- [assign] Undated — Strategic Marketing — submitted\n');
+      expect(lone).toContain('- [assign] Undated — Strategic Marketing — submitted (cmid 800)\n');
+      const noCmid = renderDueList(dueList([submitted('Undated', { submittedAt: null }, { cmid: null })]));
+      expect(noCmid).toContain('- [assign] Undated — Strategic Marketing — submitted\n');
     });
 
     it('tags drafts, attempts in progress and reopened items in their date group; overdue stays', () => {
@@ -216,6 +218,53 @@ describe('renderDueList', () => {
     expect(t).toContain("… 3 more without a deadline (see the console's Due page)");
     const few = renderDueList(dueList(undated.slice(0, 5)));
     expect(few).not.toContain('more without a deadline');
+  });
+
+  it('points to the console only when hosted; stdio says where the rest is', () => {
+    const undated = Array.from({ length: 8 }, (_, i) =>
+      due({ source: 'activity', dueAt: null, name: `Undated ${i}`, cmid: 100 + i }),
+    );
+    const stdio = renderDueList(dueList(undated), { stdio: true });
+    expect(stdio).toContain('… 3 more without a deadline (pass course_id to narrow; all are in structuredContent)');
+    expect(stdio.toLowerCase()).not.toContain('console');
+    expect(renderDueList(dueList(undated), { stdio: false })).toContain("see the console's Due page");
+  });
+
+  it('echoes the kinds and submitted filters, and not when there are none', () => {
+    const plain = renderDueList(dueList([due({})]));
+    expect(plain).not.toContain('Filtered:');
+    const t = renderDueList(dueList([due({})]), { kinds: ['assign', 'quiz'], includeSubmitted: false });
+    expect(t).toContain('Filtered: only kinds: assign, quiz; submitted items hidden.');
+    expect(renderDueList(dueList([due({})]), { includeSubmitted: true })).not.toContain('Filtered:');
+    expect(renderDueList(dueList([], {}), { kinds: ['quiz'] })).toContain('Filtered: only kinds: quiz.');
+  });
+
+  describe('items found in announcements', () => {
+    const discussion = 'https://moodle.example.edu/mod/forum/discuss.php?d=71';
+    const announced = due({
+      source: 'text',
+      kind: 'other',
+      cmid: null,
+      name: 'Case & schedule',
+      evidence: 'Hand in by 10/20 09:00',
+      sourceUrl: discussion,
+      url: discussion,
+    });
+
+    it('names the announcement and its link as the source, with no cmid', () => {
+      const t = renderDueList(dueList([announced]));
+      expect(t).toContain('mentioned in course text — verify');
+      expect(t).toContain(`\n  source: announcement ${discussion}\n  evidence: «Hand in by 10/20 09:00»`);
+      expect(t).not.toContain('cmid');
+    });
+
+    it('keeps the plain evidence line for deadlines found on course pages', () => {
+      const page = 'https://moodle.example.edu/course/view.php?id=101#section-2';
+      const t = renderDueList(dueList([{ ...announced, cmid: 9, sourceUrl: page }]));
+      expect(t).toContain(`\n  evidence: «Hand in by 10/20 09:00» ${page}`);
+      expect(t).toContain('(cmid 9)');
+      expect(t).not.toContain('source: announcement');
+    });
   });
 
   it('lists calendar items of courses outside the selection last (max 5 lines) and mentions them in the footer', () => {
@@ -302,7 +351,7 @@ describe('renderDueList', () => {
     );
     const t = renderDueList(dueList(many));
     expect(t.length).toBeLessThanOrEqual(LIMIT);
-    expect(t).toMatch(/… \d+ more \(use course_id or a smaller days_ahead\)/);
+    expect(t).toMatch(/… \d+ more \(use course_id, kinds or a smaller days_ahead\)/);
   });
 });
 

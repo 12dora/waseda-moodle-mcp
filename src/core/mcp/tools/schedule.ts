@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { setScheduleOverride } from '../../services/schedule-overrides';
 import { resolveScope } from '../../services/scope';
 import type { Course, ScheduleOverride } from '../../types';
+import { courseScheduleOut } from '../schemas/schedule';
 import { defineTool, id, LOCAL_SETTING_HINTS } from './define';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
@@ -83,6 +84,7 @@ const setCourseScheduleTool = defineTool({
     "Mode 'auto' removes the saved times again. This only changes the times kept by this server, nothing in Moodle.",
   annotations: LOCAL_SETTING_HINTS,
   input,
+  output: courseScheduleOut,
   async run(ctx, a) {
     const override = await setScheduleOverride(ctx, a.course_id, overrideOf(a));
     const course = (await resolveScope(ctx)).courses.find((c) => c.id === a.course_id);

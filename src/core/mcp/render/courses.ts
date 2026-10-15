@@ -64,7 +64,7 @@ export function renderCourses(courses: Course[], view: CoursesView): string {
     head: [`${plural(courses.length, 'course')}. Times are JST.`],
     entries,
     footer: coursesFooter(view),
-    hint: 'narrow with classification',
+    hint: view.scope === 'all' ? 'use scope "mine" for only your courses' : 'the full list is in structuredContent',
   });
 }
 
@@ -105,7 +105,7 @@ export function renderSearch(r: { hits: SearchHit[]; searchedCourses: number }, 
   const q = query ? ` for "${oneLine(query, 60)}"` : '';
   const scope = plural(r.searchedCourses, 'course');
   if (r.hits.length === 0) {
-    return `No matches${q} in ${scope}. Try other words, or list_courses with classification "all".`;
+    return `No matches${q} in ${scope}. Try other words, or pass course_id for an enrolled course outside your selection (list_courses with scope "all" shows them).`;
   }
   const entries = r.hits.map<Entry>((h) => ({
     text: `- [${h.module.modname}] ${oneLine(h.module.name, 80)} (cmid ${h.module.cmid}) — ${oneLine(h.courseName, 50)} (course_id ${h.courseId}) — ${oneLine(h.sectionName, 40)}`,

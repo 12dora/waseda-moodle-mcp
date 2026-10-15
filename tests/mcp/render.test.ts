@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderActionPreview, renderActionResult } from '../../src/core/mcp/render/actions';
 import { renderActivity } from '../../src/core/mcp/render/activity';
-import { assembleTail, clip, MAX_TEXT_CHARS } from '../../src/core/mcp/render/common';
+import { assembleTail, clip, fileLines, MAX_TEXT_CHARS } from '../../src/core/mcp/render/common';
 import { renderCourses, renderOutline, renderSearch } from '../../src/core/mcp/render/courses';
 import { renderFileLink, renderUploadLink } from '../../src/core/mcp/render/files';
 import { renderDiscussion, renderDiscussions } from '../../src/core/mcp/render/forums';
@@ -33,6 +33,30 @@ describe('assembleTail', () => {
     expect(t).toContain('… 1 earlier posts omitted');
     expect(t.endsWith('FOOTER LINE')).toBe(true);
     expect(t).not.toContain('old block');
+  });
+});
+
+describe('fileLines', () => {
+  const file = (n: number) => ({
+    name: `f${n}.pdf`,
+    size: 1024,
+    mime: null,
+    url: `https://m.example.edu/f${n}`,
+    modified: null,
+  });
+
+  it('ends every list with the get_file hint, after the "more files" line', () => {
+    const lines = fileLines([file(1), file(2), file(3)], 2);
+    expect(lines).toEqual([
+      '- f1.pdf (1.0 KB) — https://m.example.edu/f1',
+      '- f2.pdf (1.0 KB) — https://m.example.edu/f2',
+      '- … 1 more files',
+      '(open a file with get_file, passing its url)',
+    ]);
+  });
+
+  it('adds nothing for an empty list', () => {
+    expect(fileLines([])).toEqual([]);
   });
 });
 
@@ -163,6 +187,17 @@ describe('courses, outline, search', () => {
     expect(t).toContain('1 match for "slides" in 3 courses');
     expect(t).toContain('(cmid 21)');
     expect(renderSearch({ hits: [], searchedCourses: 2 }, 'x')).toContain('No matches');
+  });
+
+  it('names the real scope parameter in its hints (there is no "classification" input)', () => {
+    const empty = renderSearch({ hits: [], searchedCourses: 2 }, 'x');
+    expect(empty).toContain('list_courses with scope "all"');
+    expect(empty).not.toContain('classification');
+    const many = Array.from({ length: 150 }, (_, i) => course({ id: 1000 + i, name: `Course number ${i}` }));
+    const all = renderCourses(many, { mode: 'mine', scope: 'all' });
+    expect(all).toContain('use scope "mine" for only your courses');
+    expect(renderCourses(many, { mode: 'mine', scope: 'mine' })).toContain('the full list is in structuredContent');
+    expect(all).not.toContain('classification');
   });
 });
 
@@ -450,21 +485,36 @@ describe('messages and notifications', () => {
     };
     const t = renderConversations([summary]);
     expect(t).toContain('conversation_id 12 — 2 unread — last: "See you then"');
+    expect(t).not.toContain('offset');
+    expect(renderConversations([summary], 20)).toContain('More: call list_messages again with offset 20.');
     expect(renderConversations([])).toContain('No conversations');
-    const c = renderConversation({
+    const page = {
       summary,
       messages: [
         { id: 1, author: 'Prof. Sato', fromMe: false, sentAt: '2026-10-13T09:00:00+09:00', text: 'Hello' },
         { id: 2, author: 'Taro Yamada', fromMe: true, sentAt: '2026-10-13T09:05:00+09:00', text: 'Hi' },
       ],
-    });
+      members: [
+        { id: 1, name: 'Taro Yamada' },
+        { id: 2, name: 'Prof. Sato' },
+      ],
+      nextOffset: null,
+    };
+    const c = renderConversation(page);
     expect(c).toContain('[2026-10-13 Tue 09:00] Prof. Sato: Hello');
     expect(c).toContain('You: Hi');
+    expect(c).toContain('Members: Taro Yamada (user_id 1), Prof. Sato (user_id 2)');
+    expect(c).toContain('Reply with prepare_message (conversation_id 12).');
+    expect(c).not.toContain('Older messages');
+    expect(renderConversation({ ...page, nextOffset: 30 })).toContain(
+      'Older messages: call get_conversation with offset 30.',
+    );
   });
 
   it('renders notifications', () => {
     const t = renderNotifications({
       unreadCount: 1,
+      nextOffset: 20,
       notifications: [
         {
           id: 1,
@@ -473,8 +523,8 @@ describe('messages and notifications', () => {
           sender: 'Moodle',
           sentAt: '2026-10-13T09:00:00+09:00',
           read: false,
-          url: null,
-          component: null,
+          url: 'https://moodle.example.com/mod/assign/view.php?id=5',
+          component: 'mod_assign',
         },
         {
           id: 2,
@@ -489,9 +539,12 @@ describe('messages and notifications', () => {
       ],
     });
     expect(t).toContain('1 unread notification.');
-    expect(t).toContain('[unread] 2026-10-13 Tue 09:00 — Grade posted — Report 1 graded (Moodle)');
-    expect(t).toContain('- 2026-10-01 Thu 09:00 — Old');
-    expect(renderNotifications({ unreadCount: 0, notifications: [] })).toContain('Nothing to show');
+    expect(t).toContain(
+      '[unread] 2026-10-13 Tue 09:00 — Grade posted — Report 1 graded (Moodle) [id 1, mod_assign] — https://moodle.example.com/mod/assign/view.php?id=5',
+    );
+    expect(t).toContain('- 2026-10-01 Thu 09:00 — Old [id 2]');
+    expect(t).toContain('Older: call list_notifications again with offset 20.');
+    expect(renderNotifications({ unreadCount: 0, nextOffset: null, notifications: [] })).toContain('Nothing to show');
   });
 });
 

@@ -6,7 +6,9 @@ import { isoJst, nowMs } from '../../time';
 import type { ActionKind, ActionRecord, ActionResult, ActionStatus } from '../../types';
 import { executeCompletion } from './completion';
 import { executeForumDiscussion, executeForumReply } from './forum';
+import { executeForumSubscription } from './forum-subscription';
 import { executeMessage } from './message';
+import { executeMarkRead } from './read-state';
 import { type ActionOutcome, approveUrlFor, auditSafe, canApproveInConsole, type Raw } from './shared';
 import { executeSubmission } from './submission';
 
@@ -21,6 +23,8 @@ const EXECUTORS: Record<ActionKind, (api: MoodleApi, payload: Raw) => Promise<Ac
   forum_discussion: executeForumDiscussion,
   message: executeMessage,
   completion: executeCompletion,
+  mark_read: executeMarkRead,
+  forum_subscription: executeForumSubscription,
 };
 
 /** Pending rows past their expiry read as expired even before anyone touches them. */

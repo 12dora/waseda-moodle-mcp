@@ -40,7 +40,7 @@ function statusLine(a: AssignDetail): string {
 
 function submissionLines(s: SubmissionState): string[] {
   const lines: string[] = [];
-  if (s.files.length > 0) lines.push('Submitted files:', ...fileLines(s.files, 5));
+  if (s.files.length > 0) lines.push('Submitted files:', ...fileLines(s.files, 5, { hint: false }));
   if (s.onlineText) lines.push(`Submitted text: ${oneLine(s.onlineText, 300)}`);
   return lines;
 }
@@ -48,7 +48,7 @@ function submissionLines(s: SubmissionState): string[] {
 function feedbackLines(fb: Feedback): string[] {
   const lines = [`Feedback: grade ${fb.grade ?? '-'}${fb.gradedAt ? ` (${fmt(fb.gradedAt)})` : ''}`];
   if (fb.comments) lines.push(oneLine(fb.comments, 500));
-  if (fb.files.length > 0) lines.push(...fileLines(fb.files, 4));
+  if (fb.files.length > 0) lines.push(...fileLines(fb.files, 4, { hint: false }));
   return lines;
 }
 
