@@ -1,12 +1,43 @@
+<div align="center">
+
 # Waseda Moodle MCP
 
-An [MCP](https://modelcontextprotocol.io) server that lets AI assistants read and act on
-**Waseda University's Moodle** (`https://wsdmoodle.waseda.jp`). It is Waseda-only by design:
-the Moodle origin, the login flow and several features (syllabus-based timetable,
-assignments & deadlines sweep) are specific to that site.
+**English** · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
+
+**Connect Waseda University Moodle (wsdmoodle) to Claude, ChatGPT, Cursor and other AI assistants.**<br>
+Assignments & deadlines, timetable, syllabus, grades and course updates — just ask.
+
+[Public instance](https://moodle.waseda-mcp.workers.dev) · [Self-hosting](docs/self-hosting.md) · [MIT License](LICENSE)
+
+<img src="docs/images/en/landing.png" alt="Waseda Moodle MCP landing page" width="820">
+
+</div>
+
+An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server for **Waseda University's Moodle**
+(`https://wsdmoodle.waseda.jp`). Ask your AI assistant what is due this week, when and where your
+next class is, how a course is graded, or what teachers posted recently — across every course at once.
+It is Waseda-only by design: the Moodle origin, the login flow and several features (syllabus-based
+timetable, assignments & deadlines sweep) are specific to that site.
 
 It runs either as a hosted service on Cloudflare Workers (with a web console) or as a local
-stdio process.
+stdio process. Unofficial; not affiliated with Waseda University.
+
+**Ask things like**
+
+- "What assignments are due this week? Which ones have I not submitted?"
+- "What classes do I have tomorrow, and in which rooms?"
+- "How is Introduction to Data Science graded?"
+- "What did teachers add to my courses since Monday?"
+
+## Screenshots
+
+| Overview | Assignments & deadlines |
+|---|---|
+| <img src="docs/images/en/overview.png" alt="Console overview: upcoming assignments, today's classes, course updates" width="400"> | <img src="docs/images/en/deadlines.png" alt="Assignments and deadlines grouped by date, submitted items struck through" width="400"> |
+| **My courses** | **Timetable** |
+| <img src="docs/images/en/course.png" alt="Per-course view: tasks, class time and syllabus grading" width="400"> | <img src="docs/images/en/timetable.png" alt="Weekly timetable with real start and end times and rooms" width="400"> |
+
+<sub>Screenshots use fictional demo data.</sub>
 
 ## Features
 
@@ -43,12 +74,17 @@ AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- REST -->
                                         D1 / KV (hosted)
 ```
 
-## Quick start (hosted instance)
+## Quick start
 
-1. Open the console (for example `https://wasemoodle.example.com`) and connect Moodle on the
-   **Connect** page using the bookmarklet, the browser extension, or by pasting the launch link.
+**Public instance** — operated by Konata, free:
+
+1. Open the [public instance](https://moodle.waseda-mcp.workers.dev) and connect Moodle with the
+   bookmarklet, the browser extension, or by pasting the launch link. Your password is never asked for.
 2. Optionally confirm this term's courses under **Settings → This term's courses**.
-3. Add the server to your AI client (see below). The MCP URL is `https://wasemoodle.example.com/mcp`.
+3. Copy the MCP URL from **Settings → AI clients** and add it to your AI client (see [Clients](#clients)).
+
+**Your own instance** — see [Self-hosting](#self-hosting). Below, `https://wasemoodle.example.com` stands
+for your instance URL.
 
 ## Console
 
