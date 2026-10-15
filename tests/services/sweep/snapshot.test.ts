@@ -163,14 +163,20 @@ describe('stampChanges on long texts', () => {
     expect(stampChanges(textOf(''), edited, { now: NOW_MS, updates: none }).x[0]?.s).toBe(NOW_MS);
   });
 
-  it('a stored date later than the latest new one may just have been cut off, so it is not a lost deadline', () => {
-    const old = textOf('');
-    const t = old.x[0];
-    if (t) {
-      t.h = undefined;
-      t.x = `${t.x.slice(0, 1990)}…`;
-      t.d?.push([Date.parse('2026-12-01T12:00:00+09:00'), 'Report due 12/1', '']);
-    }
-    expect(stampChanges(textOf(''), old, { now: NOW_MS, updates: none }).x[0]?.s).toBeUndefined();
+  it('a stored date later than the latest new one is only "cut off" when the new list is full', () => {
+    const many = [21, 22, 23, 24, 25, 26, 27].map((d) => ` Report due 10/${d}`).join(''); // 8 dates with 10/20
+    const withLater = (tail: string) => {
+      const old = textOf(tail);
+      const t = old.x[0];
+      if (t) {
+        t.h = undefined;
+        t.x = `${t.x.slice(0, 1990)}…`;
+        t.d?.push([Date.parse('2026-12-01T12:00:00+09:00'), 'Report due 12/1', '']);
+      }
+      return old;
+    };
+    expect(stampChanges(textOf(many), withLater(many), { now: NOW_MS, updates: none }).x[0]?.s).toBeUndefined();
+    // a short list cut nothing off: 12/1 really is gone
+    expect(stampChanges(textOf(''), withLater(''), { now: NOW_MS, updates: none }).x[0]?.s).toBe(NOW_MS);
   });
 });

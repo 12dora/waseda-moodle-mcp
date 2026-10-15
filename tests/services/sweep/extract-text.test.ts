@@ -113,6 +113,13 @@ describe('findDeadlines', () => {
     expect(findDeadlines(`${past}\nReport due 2026/8/1`, NOW_MS, { from: NOW_MS })).toEqual([]);
   });
 
+  it('examines the dates nearest to now first, so a newest-first log cannot crowd out the next deadline', () => {
+    const months = [1, 12, 11, 1]; // January (next year), December, November: all later than 10/16
+    const later = Array.from({ length: 90 }, (_, i) => `Report due ${months[Math.floor(i / 28)]}/${(i % 28) + 1}`);
+    expect(jst(`${later.join('\n')}\nReport due 10/16`)).toContain('2026-10-16T23:59');
+    expect(jst('Archive 2030/3/31 due')).toEqual([]); // explicit far-future year: outside the window
+  });
+
   it('looks at no more than 80 dates inside the window', () => {
     const schedule = (n: number) => `${'Week 10/20 intro. '.repeat(n)}${'x'.repeat(100)}`;
     expect(jst(`${schedule(79)} Report due 10/22`)).toEqual(['2026-10-22T23:59']);
@@ -127,7 +134,12 @@ describe('findDeadlines', () => {
     expect(jst('No.4:10/19 deadline')).toEqual(['2026-10-19T23:59']);
     expect(jst('#5:10/22 due')).toEqual(['2026-10-22T23:59']);
     expect(jst('第1回課題1:10/23まで')).toEqual(['2026-10-23T23:59']);
+    expect(jst('Assignment 1:10/21 (Mon)')).toEqual(['2026-10-21T23:59']);
+    expect(jst('Quiz 2:10/28 締切')).toEqual(['2026-10-28T23:59']);
+    expect(jst('HW1:10/21 due')).toEqual(['2026-10-21T23:59']);
+    expect(jst('小テスト1:10/21まで')).toEqual(['2026-10-21T23:59']);
     expect(jst('Due 12:10/13')).toEqual([]);
+    expect(jst('Due at 12:10/13')).toEqual([]);
     expect(jst('Due 10:30/11:00')).toEqual([]);
     expect(jst('提出 9:10/20')).toEqual([]);
     expect(jst('Due Piano1:10/21')).toEqual([]); // "no" inside a word is not a label

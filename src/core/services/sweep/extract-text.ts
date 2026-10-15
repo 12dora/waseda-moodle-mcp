@@ -49,8 +49,10 @@ interface DatePattern {
 const MONTH_NAME =
   'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
 const YEAR_TAIL = '(?:,?\\s+(20\\d\\d)(?!\\d))?';
-/** A label word right before a number: "課題1", "Q2", "Report 3", "No.4", "#5", "第6". */
-const LABEL = '(?:課題|レポート|宿題|第|#|(?<![a-z])(?:q|report|no\\.?))\\s?';
+/** A label word right before a number: "課題1", "Q2", "Quiz 2", "Assignment 1", "HW3", "No.4", "#5", "第6". */
+const LABEL =
+  '(?:課題|レポート|宿題|小テスト|テスト|演習|問題|第|#|' +
+  '(?<![a-z])(?:q|quiz|report|no\\.?|assign(?:ment)?|hw|homework|task|week|lesson|session|unit|part|ex(?:ercise)?))\\s?';
 /** "12:10/13" starts inside a clock time, but "課題1:10/21" is a label, a colon and a date. */
 const NOT_CLOCK = `(?<!(?<!${LABEL}\\d?)\\d:)`;
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -255,18 +257,22 @@ interface DeadlineWindow {
 }
 
 /**
- * Cheap pre-check on the date alone: false when no year puts it (at any time of day) between `from` and, for a date
- * without a year, [now - 30 d, now + 180 d]. Such a date is dropped by `inferDeadlineMs` / `from` anyway.
+ * How far (ms) the date's day lies from `now`, judged on the date alone; null when it cannot be a deadline in the window
+ * (before `from`, outside the year-inference window, or an explicit-year date beyond it so far-future dates cost nothing).
  */
-function dayInWindow(date: DateParts, win: DeadlineWindow): boolean {
+function dayDistance(date: DateParts, win: DeadlineWindow): number | null {
   const years = date.y === null ? [win.year - 1, win.year, win.year + 1] : [date.y];
-  return years.some((y) => {
-    if (!validDay(y, date.mo, date.d)) return false;
+  let best: number | null = null;
+  for (const y of years) {
+    if (!validDay(y, date.mo, date.d)) continue;
     const start = toMs(y, date, { h: 0, mi: 0 });
     const end = start + DAY_SPAN;
-    if (end < win.from) return false;
-    return date.y !== null || (end >= win.now - PAST_LIMIT && start <= win.now + FUTURE_LIMIT);
-  });
+    const tooOld = date.y === null && end < win.now - PAST_LIMIT; // an explicit year is never too old, only `from` cuts
+    if (end < win.from || tooOld || start > win.now + FUTURE_LIMIT) continue;
+    const dist = Math.max(0, start - win.now, win.now - end);
+    if (best === null || dist < best) best = dist;
+  }
+  return best;
 }
 
 /** The deadline of `hit` (its time is searched within `bounds`), or null when it is none or lies outside the window. */
@@ -282,29 +288,43 @@ function deadlineAt(
   return { ms, evidence: snippet(text, hit), lead: leadPhrase(text, hit) };
 }
 
+/** Indexes of the EXAMINED_MAX hits whose day is nearest to now (in-window only), nearest first. */
+function nearestHits(hits: DateHit[], win: DeadlineWindow): number[] {
+  const near = hits.flatMap((hit, i) => {
+    const dist = dayDistance(hit, win);
+    return dist === null ? [] : [{ i, dist }];
+  });
+  near.sort((a, b) => a.dist - b.dist || a.i - b.i);
+  return near.slice(0, EXAMINED_MAX).map((h) => h.i);
+}
+
 /**
  * Deadlines mentioned in `text`, in order of appearance; each with its snippet. `now` is unix ms.
  * Dates before `opts.from` (or outside the year-inference window) are skipped on the date alone, before anything is
- * counted, so past dates never take a slot nor cost a context check; at most EXAMINED_MAX remaining dates are looked
- * at. When more than `opts.max` deadlines remain, the ones closest to `now` are kept.
+ * counted, so past dates never take a slot nor cost a context check; only the EXAMINED_MAX dates nearest to `now`
+ * are looked at. When more than `opts.max` deadlines remain, the ones closest to `now` are kept.
  */
 export function findDeadlines(raw: string, now: number, opts: { max?: number; from?: number } = {}): TextDeadline[] {
   if (!mayHaveDate(raw)) return [];
   const text = raw.normalize('NFKC');
   const win = { now, from: opts.from ?? Number.NEGATIVE_INFINITY, year: jstParts(now).y };
   const hits = findDateHits(text);
-  const out: TextDeadline[] = [];
+  const out: Array<TextDeadline & { at: number }> = [];
   const seen = new Set<number>();
-  let examined = 0;
-  for (const [i, hit] of hits.entries()) {
-    if (out.length >= CANDIDATES_MAX || examined >= EXAMINED_MAX) break;
-    if (!dayInWindow(hit, win)) continue;
-    examined++;
+  for (const i of nearestHits(hits, win)) {
+    if (out.length >= CANDIDATES_MAX) break;
+    const hit = hits[i];
+    if (!hit) continue;
     const bounds = { lo: hits[i - 1]?.end ?? 0, hi: hits[i + 1]?.start ?? text.length };
     const found = deadlineAt(text, hit, bounds, win);
     if (!found || seen.has(found.ms)) continue;
     seen.add(found.ms);
-    out.push(found);
+    out.push({ ...found, at: i });
   }
-  return nearestTo(out, opts.max ?? DEFAULT_MAX, now);
+  out.sort((a, b) => a.at - b.at); // back to order of appearance
+  return nearestTo(
+    out.map(({ at: _, ...d }) => d),
+    opts.max ?? DEFAULT_MAX,
+    now,
+  );
 }

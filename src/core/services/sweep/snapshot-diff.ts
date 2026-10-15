@@ -1,6 +1,6 @@
 /** Stamps "first seen" / "updated" on a freshly built snapshot by comparing it with the previous one. */
 
-import { type CourseSnapshot, REFETCH_AREAS, type SnapModule, type SnapText } from './snapshot';
+import { type CourseSnapshot, MENTIONS_PER_TEXT, REFETCH_AREAS, type SnapModule, type SnapText } from './snapshot';
 
 export interface DiffEnv {
   now: number;
@@ -39,12 +39,13 @@ const DAY_MS = 86_400_000;
 
 /**
  * A deadline the old snapshot knew and that is still upcoming but gone from the new one. Only the nearest few dates of
- * a text are stored, so an old date beyond the latest new one may merely have been cut off and proves nothing.
+ * a text are stored, so when the new list is full an old date beyond its latest may merely have been cut off.
  */
 function lostDeadline(old: SnapText, cur: SnapText, now: number): boolean {
   const curDates = (cur.d ?? []).map((m) => m[0]);
   const kept = new Set(curDates);
-  const latest = Math.max(...curDates);
+  const full = curDates.length >= MENTIONS_PER_TEXT; // only a full list can have cut later dates off
+  const latest = full ? Math.max(...curDates) : Number.POSITIVE_INFINITY;
   return (old.d ?? []).some((m) => m[0] >= now - DAY_MS && m[0] <= latest && !kept.has(m[0]));
 }
 
