@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { listActions, logout } from '../api/endpoints';
 import { type MessageKey, useT } from '../i18n';
 import { errorText } from '../lib/errors';
+import { SOURCE_URL } from '../lib/links';
 import { PENDING_LIMIT, pendingCountText } from '../lib/pending';
 import { useSession } from '../session';
 import { Button } from './Button';
@@ -172,6 +173,9 @@ export function Layout() {
             ))}
           </ul>
         </nav>
+        <a className="source-link" href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
+          {t('app.source')}
+        </a>
         <div className="sidenav-foot">
           <div className="user-name" title={me.user.fullname}>
             {me.user.fullname}

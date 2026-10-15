@@ -2,6 +2,7 @@ import type { Dictionary } from './en';
 
 export const zhCN: Dictionary = {
   'app.name': 'Waseda Moodle MCP',
+  'app.source': '源代码',
 
   'common.loading': '加载中',
   'common.retry': '重试',

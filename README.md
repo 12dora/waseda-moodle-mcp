@@ -219,7 +219,7 @@ Layout: `src/core` (runtime-agnostic services, Moodle client, MCP tools), `src/w
 
 ## License
 
-MIT.
+[MIT](LICENSE).
 
 ## Disclaimer
 

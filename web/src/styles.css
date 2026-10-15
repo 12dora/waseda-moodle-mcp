@@ -279,6 +279,16 @@ a:hover {
   text-align: center;
 }
 
+.source-link {
+  padding: 4px 12px 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+.source-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
 .sidenav-foot {
   display: flex;
   align-items: center;
@@ -349,6 +359,14 @@ a:hover {
 }
 .public-main {
   padding: 24px 16px 48px;
+}
+.public-foot {
+  padding: 0 16px 32px;
+  text-align: center;
+  font-size: 13px;
+}
+.public-foot a {
+  color: var(--text-muted);
 }
 .narrow {
   max-width: 640px;

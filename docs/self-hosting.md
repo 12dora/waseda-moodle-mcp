@@ -8,7 +8,7 @@ only by the OAuth library. Everything fits the Workers Free plan for a small gro
 
 - A Cloudflare account (Free plan is enough) and a domain on Cloudflare if you want a custom domain.
 - Node.js 20+ and pnpm.
-- `pnpm install` in the repository root (installs `wrangler` locally; run it via `pnpm exec wrangler` or `npx wrangler`).
+- `git clone https://github.com/12dora/waseda-moodle-mcp && cd waseda-moodle-mcp`, then `pnpm install` in the repository root (installs `wrangler` locally; run it via `pnpm exec wrangler` or `npx wrangler`).
 - `wrangler login`.
 
 ## 1. Create D1 and KV

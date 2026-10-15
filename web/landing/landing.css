@@ -56,6 +56,8 @@ a:hover { text-decoration-thickness: 2px; }
 .lang a { display: block; padding: 2px 8px; color: var(--muted); text-decoration: none; border-radius: 4px; }
 .lang a[aria-current] { color: var(--ink); font-weight: 600; background: var(--paper-2); }
 .lang a:hover { color: var(--ink); }
+.gh { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: var(--muted); border-radius: 4px; }
+.gh:hover { color: var(--ink); background: var(--paper-2); }
 
 /* Buttons */
 .btn { display: inline-block; padding: 11px 24px; border-radius: 4px; font-weight: 600; text-decoration: none; border: 1px solid var(--enji); line-height: 1.4; }

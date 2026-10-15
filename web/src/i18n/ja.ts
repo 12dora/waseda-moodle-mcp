@@ -2,6 +2,7 @@ import type { Dictionary } from './en';
 
 export const ja: Dictionary = {
   'app.name': 'Waseda Moodle MCP',
+  'app.source': 'ソースコード',
 
   'common.loading': '読み込み中',
   'common.retry': '再試行',

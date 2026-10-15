@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect } from 'react';
 import { useT } from '../i18n';
+import { SOURCE_URL } from '../lib/links';
 import { LangSelect } from './LangSelect';
 
 /** Signed-out frame for /connect and /oauth/consent. */
@@ -22,6 +23,11 @@ export function PublicShell({ title, children }: { title: string; children: Reac
       <main id="main" className="public-main">
         {children}
       </main>
+      <footer className="public-foot">
+        <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
+          {t('app.source')}
+        </a>
+      </footer>
     </div>
   );
 }

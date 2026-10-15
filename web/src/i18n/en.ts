@@ -1,6 +1,7 @@
 /** English dictionary. Keys are the source of truth for ja / zh-CN (enforced by type and by test). */
 export const en = {
   'app.name': 'Waseda Moodle MCP',
+  'app.source': 'Source code',
 
   'common.loading': 'Loading',
   'common.retry': 'Retry',
