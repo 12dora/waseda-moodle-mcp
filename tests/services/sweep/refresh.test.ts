@@ -331,6 +331,15 @@ describe('refreshSnapshots: remembered scope', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it('reads D1 again after a refresh wrote a snapshot in the same context', async () => {
+    const f = makeFake({ [CONTENTS]: () => contents() });
+    const spy = vi.spyOn(f.ctx.store, 'getCourseSnapshots');
+    await refreshSnapshots(f.ctx, [course(100)], OPTS);
+    const stored = await loadStoredSnapshots(f.ctx, [course(100)]);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(stored.snapshots.has(100)).toBe(true);
+  });
+
   it('leaves the scope alone when the caller opts out (the cron, one-course calls)', async () => {
     const f = makeFake({ [CONTENTS]: () => contents() });
     await refreshSnapshots(f.ctx, [course(100)], { ...OPTS, rememberScope: false });

@@ -34,8 +34,9 @@ function checkLimit(v: number | undefined): number {
   return Math.max(0, Math.trunc(v));
 }
 
+/** The deadline, or the opening time of an item not open yet; an open item without a deadline is undated. */
 function deadlineMs(item: DueItem): number | null {
-  const at = item.dueAt ?? item.opensAt;
+  const at = item.dueAt ?? (item.notOpenYet ? item.opensAt : null);
   return at === null ? null : toMs(at);
 }
 

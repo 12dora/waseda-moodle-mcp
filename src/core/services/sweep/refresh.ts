@@ -114,6 +114,7 @@ class Refresher {
       fetchedAt,
       checkedAt: this.now,
     });
+    forgetSnapshotRows(this.ctx);
     entry.snap = snap;
     entry.checkedAt = this.now;
   }
@@ -196,6 +197,7 @@ class Refresher {
         return null;
       }
       await this.ctx.store.touchCourseSnapshot(this.ctx.user.id, entry.course.id, this.now);
+      forgetSnapshotRows(this.ctx);
       entry.checkedAt = this.now;
       return null;
     } catch (e) {
@@ -208,6 +210,11 @@ class Refresher {
 }
 
 const snapshotReads = new WeakMap<ServiceContext, Promise<CourseSnapshotRow[]>>();
+
+/** A write makes the shared read stale: the next reader of this context goes back to D1. */
+function forgetSnapshotRows(ctx: ServiceContext): void {
+  snapshotReads.delete(ctx);
+}
 
 /** One D1 read per request: the overview's stored snapshots and the cached due sweep share it. */
 function snapshotRowsOf(ctx: ServiceContext): Promise<CourseSnapshotRow[]> {

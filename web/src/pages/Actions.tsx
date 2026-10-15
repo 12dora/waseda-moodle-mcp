@@ -11,6 +11,7 @@ import { PageLoading } from '../components/Spinner';
 import { useToast } from '../components/Toast';
 import { useI18n } from '../i18n';
 import { errorText } from '../lib/errors';
+import { PENDING_LIMIT } from '../lib/pending';
 import { formatDateTime } from '../lib/time';
 import { useAsync } from '../lib/useAsync';
 
@@ -92,7 +93,7 @@ export function ActionsPage() {
   const toast = useToast();
   const [params] = useSearchParams();
   const focus = params.get('focus');
-  const pending = useAsync(() => listActions('pending', 50));
+  const pending = useAsync(() => listActions('pending', PENDING_LIMIT));
   const history = useAsync(() => listActions(undefined, 50));
   const [busy, setBusy] = useState<string | null>(null);
 

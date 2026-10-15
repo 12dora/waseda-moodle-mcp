@@ -276,6 +276,16 @@ describe('attachSubmissions', () => {
     expect(cmids).not.toContain(8039);
   });
 
+  it('ranks an open item without a deadline as undated, not by when it opened', async () => {
+    const items = [
+      item({ kind: 'questionnaire', cmid: 1, dueAt: null, opensAt: '2026-10-13T09:00:00+09:00', name: 'open log' }),
+      item({ kind: 'questionnaire', cmid: 2, dueAt: '2026-10-17T12:00:00+09:00', name: 'due in 3 days' }),
+    ];
+    const { ctx, api } = setup({ tool_mobile_get_content: questionnaireContent({}) });
+    await attachSubmissions(ctx, items, { maxSubmissionChecks: 1 });
+    expect(questionnaireCmids(api.calls[0]?.params)).toEqual([2]);
+  });
+
   it('honours maxSubmissionChecks and still prefers the nearest items', async () => {
     const items = [
       item({ kind: 'questionnaire', cmid: 1, dueAt: '2026-12-01T12:00:00+09:00', name: 'far upcoming' }),
