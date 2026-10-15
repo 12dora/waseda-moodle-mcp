@@ -14,6 +14,7 @@ import { ScopeBanner } from '../components/ScopeBanner';
 import { Spinner } from '../components/Spinner';
 import { type MessageKey, useI18n, useT } from '../i18n';
 import { notesText } from '../lib/dayNotes';
+import { outstandingItems } from '../lib/due';
 import { formatDateTime } from '../lib/time';
 import { todayJst } from '../lib/timetable';
 import { useAsync } from '../lib/useAsync';
@@ -68,14 +69,15 @@ function ConnectionCard({ me }: { me: Me }) {
 function UpcomingCard() {
   const t = useT();
   const due = useAsync(() => getDue(14));
+  const items = due.data ? outstandingItems(due.data.items) : [];
   return (
     <Card title={t('overview.due.title')} actions={<Link to="/due">{t('overview.due.viewAll')}</Link>}>
       {due.loading && <Spinner label={t('common.loading')} />}
       {due.error != null && <ErrorBox error={due.error} onRetry={due.reload} />}
-      {due.data?.items.length === 0 && <EmptyState>{t('due.empty')}</EmptyState>}
-      {due.data && due.data.items.length > 0 && (
+      {due.data && items.length === 0 && <EmptyState>{t('due.empty')}</EmptyState>}
+      {items.length > 0 && (
         <ul className="due-list">
-          {due.data.items.slice(0, 5).map((item) => (
+          {items.slice(0, 5).map((item) => (
             <DueRow key={`${item.source}-${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`} item={item} />
           ))}
         </ul>

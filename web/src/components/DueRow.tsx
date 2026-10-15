@@ -16,6 +16,19 @@ function Status({ item }: { item: DueItem }) {
   return null;
 }
 
+const SUBMISSION_BADGE: Partial<Record<NonNullable<DueItem['submission']>['status'], [MessageKey, string]>> = {
+  draft: ['due.sub.draft', 'badge badge-warn'],
+  'in-progress': ['due.sub.inProgress', 'badge badge-warn'],
+  reopened: ['due.sub.reopened', 'badge'],
+};
+
+function SubmissionBadge({ item }: { item: DueItem }) {
+  const { t } = useI18n();
+  const entry = item.submission ? SUBMISSION_BADGE[item.submission.status] : undefined;
+  if (!entry) return null;
+  return <span className={entry[1]}>{t(entry[0])}</span>;
+}
+
 function When({ item }: { item: DueItem }) {
   const { t, lang } = useI18n();
   if (item.dueAt) {
@@ -63,6 +76,7 @@ export function DueRow({ item, showCourse = true }: { item: DueItem; showCourse?
       </div>
       <div className="due-when">
         <When item={item} />
+        <SubmissionBadge item={item} />
         <Status item={item} />
       </div>
     </li>

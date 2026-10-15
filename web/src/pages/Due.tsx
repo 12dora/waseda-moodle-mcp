@@ -10,22 +10,9 @@ import { PageHeader } from '../components/Layout';
 import { ScopeBanner } from '../components/ScopeBanner';
 import { PageLoading } from '../components/Spinner';
 import { useI18n } from '../i18n';
-import { DUE_GROUPS, type DueGroup, dueGroup, formatDateTime } from '../lib/time';
+import { groupDue } from '../lib/due';
+import { formatDateTime } from '../lib/time';
 import { useAsync } from '../lib/useAsync';
-
-function groupItems(items: DueItem[], courseId: number | 'all'): Array<{ group: DueGroup; items: DueItem[] }> {
-  const now = Date.now();
-  const out = new Map<DueGroup, DueItem[]>();
-  for (const it of items) {
-    if (courseId !== 'all' && it.courseId !== courseId) continue;
-    const g = it.overdue ? 'overdue' : dueGroup(it.dueAt ?? it.opensAt, { now, deadline: it.dueAt !== null });
-    out.set(g, [...(out.get(g) ?? []), it]);
-  }
-  return DUE_GROUPS.flatMap((g) => {
-    const list = out.get(g);
-    return list ? [{ group: g, items: list }] : [];
-  });
-}
 
 function courseOptions(items: DueItem[]): Array<[number, string]> {
   const map = new Map<number, string>();
@@ -46,6 +33,49 @@ function OtherCourses({ items }: { items: DueItem[] }) {
         <ul className="due-list">
           {items.map((item) => (
             <DueRow key={`${item.source}-${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`} item={item} />
+          ))}
+        </ul>
+      </details>
+    </Card>
+  );
+}
+
+function SubmittedRow({ item, showCourse }: { item: DueItem; showCourse: boolean }) {
+  const { t, lang } = useI18n();
+  const at = item.submission?.submittedAt ?? null;
+  return (
+    <li className="due-row">
+      <div className="due-main">
+        <a href={item.url} target="_blank" rel="noopener noreferrer" className="due-name">
+          {item.name}
+        </a>
+        <div className="due-meta">
+          {showCourse && <span className="due-course">{item.courseName}</span>}
+          {item.submission?.canContinue && <span className="muted small">{t('due.sub.canEdit')}</span>}
+        </div>
+      </div>
+      <div className="due-when">
+        {at && <time dateTime={at}>{formatDateTime(at, lang)}</time>}
+        <span className="badge badge-ok">{t('due.sub.submitted')}</span>
+      </div>
+    </li>
+  );
+}
+
+function Submitted({ items, showCourse }: { items: DueItem[]; showCourse: boolean }) {
+  const { t } = useI18n();
+  if (items.length === 0) return null;
+  return (
+    <Card>
+      <details className="disclosure">
+        <summary>{t('due.submittedGroup', { count: items.length })}</summary>
+        <ul className="due-list">
+          {items.map((item) => (
+            <SubmittedRow
+              key={`${item.source}-${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`}
+              item={item}
+              showCourse={showCourse}
+            />
           ))}
         </ul>
       </details>
@@ -76,7 +106,10 @@ export function DuePage() {
   const filterId = useId();
 
   const courses = useMemo(() => courseOptions(due.data?.items ?? []), [due.data]);
-  const groups = useMemo(() => groupItems(due.data?.items ?? [], courseId), [due.data, courseId]);
+  const { groups, submitted } = useMemo(
+    () => groupDue(due.data?.items ?? [], courseId, Date.now()),
+    [due.data, courseId],
+  );
 
   return (
     <>
@@ -130,6 +163,7 @@ export function DuePage() {
               </Card>
             ))
           )}
+          <Submitted items={submitted} showCourse={courseId === 'all'} />
           <OtherCourses items={due.data.otherCourses} />
           <DueFooter list={due.data} />
         </>
