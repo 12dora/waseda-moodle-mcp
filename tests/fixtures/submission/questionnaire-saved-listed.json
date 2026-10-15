@@ -1,0 +1,11 @@
+{
+  "templates": [
+    {
+      "id": "main",
+      "html": "<div>\n    <core-course-module-description description=\"&lt;p&gt;Please answer the questions by the deadline.&lt;/p&gt;\"\n                                    component=\"mod_questionnaire\" componentId=\"5107\"\n                                    pagenum=\"1\"></core-course-module-description>\n    <ion-card>\n        <ion-card-content>\n            <ion-button expand=\"block\" core-site-plugins-new-content component=\"mod_questionnaire\"\n                    method=\"mobile_view_activity\" [args]=\"{cmid: 5107, action: 'resume'}\">\n                {{ 'plugin.mod_questionnaire.resumesurvey' | translate }}\n            </ion-button>\n        </ion-card-content>\n    </ion-card>\n    <ion-card>\n        <ion-card-content>\n            <ion-item button core-site-plugins-new-content component=\"mod_questionnaire\" method=\"mobile_view_activity\"\n                [args]=\"{cmid: 5107, action: 'review', submissionid: 9001}\">\n                <ion-label>\n                    {{ 'plugin.mod_questionnaire.submitted' | translate }} 2026年 10月 15日(木曜日) 11:58\n                </ion-label>\n            </ion-item>\n        </ion-card-content>\n    </ion-card>\n</div>"
+    }
+  ],
+  "javascript": "",
+  "otherdata": [],
+  "files": []
+}

@@ -71,6 +71,7 @@ export function parseSubmitTime(text: string): IsoJst | null {
 
 /** After the `submitted` key: its closing `}}` (translate filter), then the time text up to the next tag. */
 const SUBMITTED = /plugin\.mod_questionnaire\.submitted(?!\w)(?:[^}<]*\}\})?([^<]*)/;
+const SUBMITTED_ALL = /plugin\.mod_questionnaire\.submitted(?!\w)/g;
 const RESUME = /plugin\.mod_questionnaire\.resume\w*/;
 
 function templateHtml(content: unknown): string {
@@ -87,16 +88,21 @@ function state(
 }
 
 /**
- * `submitted` key -> answered (with its time); a `resume…` key -> saved draft; the "answer questions" button alone
- * -> not started; anything else (unknown template) -> null.
+ * A `resume…` key -> saved draft: the plugin lists every response of the user under `submitted`, the saved one
+ * (`complete = 'n'`) included, so the key alone does not mean handed in. Otherwise `submitted` -> answered (with
+ * its time); the "answer questions" button alone -> not started; anything else (unknown template) -> null.
  */
 export function parseQuestionnaire(content: unknown): DueSubmission | null {
   const html = templateHtml(content);
   if (!html.includes(KEY)) return null;
+  const listed = html.match(SUBMITTED_ALL)?.length ?? 0;
+  if (RESUME.test(html)) {
+    const draft = state('draft', true);
+    return listed > 1 ? { ...draft, note: `${listed - 1} earlier response(s) submitted` } : draft;
+  }
   const canAnswer = html.includes(ANSWER_KEY);
   const submitted = SUBMITTED.exec(html);
   // answering again is possible only when the "answer questions" button is shown next to the review link
   if (submitted) return state('submitted', canAnswer, parseSubmitTime(submitted[1] ?? ''));
-  if (RESUME.test(html)) return state('draft', true);
   return canAnswer ? state('none', true) : null;
 }

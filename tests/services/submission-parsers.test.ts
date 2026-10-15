@@ -13,6 +13,7 @@ import answeredEn from '../fixtures/submission/questionnaire-en-answered.json';
 import answered from '../fixtures/submission/questionnaire-ja-answered.json';
 import answeredEnded from '../fixtures/submission/questionnaire-ja-closed-answered.json';
 import open from '../fixtures/submission/questionnaire-open.json';
+import savedListed from '../fixtures/submission/questionnaire-saved-listed.json';
 import { makeFakeContext } from '../helpers/fake-context';
 
 const BATCH = 'tool_mobile_call_external_functions';
@@ -52,6 +53,22 @@ describe('parseQuestionnaire', () => {
 
   it('treats a resume key as a saved draft', () => {
     expect(parseQuestionnaire(draft)).toMatchObject({ status: 'draft', canContinue: true, submittedAt: null });
+  });
+
+  it('a saved response listed under "submitted" next to the resume button is still a draft', () => {
+    expect(parseQuestionnaire(savedListed)).toEqual({
+      status: 'draft',
+      canContinue: true,
+      submittedAt: null,
+      graded: false,
+      note: null,
+    });
+    const earlier = "{{ 'plugin.mod_questionnaire.submitted' | translate }} 2026年 10月 8日(木曜日) 11:11 <b></b>";
+    const html = `${earlier} ${earlier} {{ 'plugin.mod_questionnaire.resumesurvey' | translate }}`;
+    expect(parseQuestionnaire({ templates: [{ html }] })).toMatchObject({
+      status: 'draft',
+      note: '1 earlier response(s) submitted',
+    });
   });
 
   it('can still answer when the button is shown next to the review link', () => {
