@@ -28,54 +28,11 @@ function OtherCourses({ items }: { items: DueItem[] }) {
       <details className="disclosure">
         <summary>{t('due.otherGroup', { count: items.length })}</summary>
         <p className="muted small">
-          {t('due.otherHint')} <Link to="/courses">{t('due.manage')}</Link>
+          {t('due.otherHint')} <Link to="/settings/courses">{t('due.manage')}</Link>
         </p>
         <ul className="due-list">
           {items.map((item) => (
             <DueRow key={`${item.source}-${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`} item={item} />
-          ))}
-        </ul>
-      </details>
-    </Card>
-  );
-}
-
-function SubmittedRow({ item, showCourse }: { item: DueItem; showCourse: boolean }) {
-  const { t, lang } = useI18n();
-  const at = item.submission?.submittedAt ?? null;
-  return (
-    <li className="due-row">
-      <div className="due-main">
-        <a href={item.url} target="_blank" rel="noopener noreferrer" className="due-name">
-          {item.name}
-        </a>
-        <div className="due-meta">
-          {showCourse && <span className="due-course">{item.courseName}</span>}
-          {item.submission?.canContinue && <span className="muted small">{t('due.sub.canEdit')}</span>}
-        </div>
-      </div>
-      <div className="due-when">
-        {at && <time dateTime={at}>{formatDateTime(at, lang)}</time>}
-        <span className="badge badge-ok">{t('due.sub.submitted')}</span>
-      </div>
-    </li>
-  );
-}
-
-function Submitted({ items, showCourse }: { items: DueItem[]; showCourse: boolean }) {
-  const { t } = useI18n();
-  if (items.length === 0) return null;
-  return (
-    <Card>
-      <details className="disclosure">
-        <summary>{t('due.submittedGroup', { count: items.length })}</summary>
-        <ul className="due-list">
-          {items.map((item) => (
-            <SubmittedRow
-              key={`${item.source}-${item.kind}-${item.cmid ?? item.url}-${item.dueAt}`}
-              item={item}
-              showCourse={showCourse}
-            />
           ))}
         </ul>
       </details>
@@ -106,10 +63,7 @@ export function DuePage() {
   const filterId = useId();
 
   const courses = useMemo(() => courseOptions(due.data?.items ?? []), [due.data]);
-  const { groups, submitted } = useMemo(
-    () => groupDue(due.data?.items ?? [], courseId, Date.now()),
-    [due.data, courseId],
-  );
+  const { groups } = useMemo(() => groupDue(due.data?.items ?? [], courseId, Date.now()), [due.data, courseId]);
 
   return (
     <>
@@ -163,7 +117,6 @@ export function DuePage() {
               </Card>
             ))
           )}
-          <Submitted items={submitted} showCourse={courseId === 'all'} />
           <OtherCourses items={due.data.otherCourses} />
           <DueFooter list={due.data} />
         </>
