@@ -36,6 +36,14 @@ export function UserMark() {
 export function ClassLink({ c, date, onEdit }: { c: TimetableClass; date: string; onEdit?: OnEdit }) {
   const { t, lang } = useI18n();
   const time = `${c.start}–${c.end}`;
+  const place = [c.classroom, c.campus].filter(Boolean).join(' · ');
+  const label = [
+    t('timetable.classLabel', { day: formatDay(date, lang), time, course: c.courseName }),
+    place,
+    c.source === 'user' ? t('timetable.setByYou') : '',
+  ]
+    .filter(Boolean)
+    .join(lang === 'en' ? ', ' : ' ');
   return (
     <div className="tt-item">
       <a
@@ -43,14 +51,12 @@ export function ClassLink({ c, date, onEdit }: { c: TimetableClass; date: string
         target="_blank"
         rel="noopener noreferrer"
         className="tt-class"
-        aria-label={t('timetable.classLabel', { day: formatDay(date, lang), time, course: c.courseName })}
+        aria-label={label}
         title={c.source === 'moodle' ? t('timetable.fromMoodle') : undefined}
       >
         <span className="tt-time">{time}</span>
         <span className="tt-name">{c.courseName}</span>
-        {(c.classroom || c.campus) && (
-          <span className="tt-room">{[c.classroom, c.campus].filter(Boolean).join(' · ')}</span>
-        )}
+        {place && <span className="tt-room">{place}</span>}
         {c.source === 'user' && <UserMark />}
       </a>
       {onEdit && <EditTimeButton target={c} onEdit={onEdit} />}

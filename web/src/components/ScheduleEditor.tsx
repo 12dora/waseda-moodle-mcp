@@ -103,11 +103,21 @@ export function ScheduleEditor({
     >
       <ModePicker value={form.mode} onChange={(mode) => setForm({ ...form, mode })} />
       {form.mode === 'slots' && (
-        <ScheduleRows
-          rows={form.rows}
-          periods={timetable.periodTimes.standard}
-          onChange={(rows) => setForm({ ...form, rows })}
-        />
+        <>
+          <ScheduleRows
+            rows={form.rows}
+            periods={timetable.periodTimes}
+            onChange={(rows) => setForm({ ...form, rows })}
+          />
+          <label className="check-inline">
+            <input
+              type="checkbox"
+              checked={form.alsoOnDemand}
+              onChange={(e) => setForm({ ...form, alsoOnDemand: e.target.checked })}
+            />
+            <span>{t('timetable.edit.alsoOnDemand')}</span>
+          </label>
+        </>
       )}
       {error != null && <ErrorBox error={error} />}
     </Dialog>

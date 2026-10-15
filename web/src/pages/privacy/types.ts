@@ -11,4 +11,6 @@ export interface PrivacyDoc {
   effective: string;
   intro: string[];
   sections: PrivacySection[];
+  /** Last section; links VITE_CONTACT_URL when the instance sets it, else shows `fallback`. */
+  contact: { heading: string; label: string; fallback: string };
 }

@@ -35,7 +35,11 @@ export const en: PrivacyDoc = {
                 'Encrypted with AES-256-GCM using the instance’s master key. A hash and the last 4 characters are kept to recognise the token and display it as ••••abcd.',
               ],
               ['Moodle user id, full name, language', 'To identify your account', 'Read from Moodle when you connect.'],
-              ['Settings', 'Write mode, the courses you confirmed for this term, console language', ''],
+              [
+                'Settings',
+                'Write mode, the courses you confirmed for this term, class times you set, console language',
+                '',
+              ],
               [
                 'Console sessions',
                 'To keep you signed in',
@@ -72,6 +76,11 @@ export const en: PrivacyDoc = {
                 'Timetable',
                 'Parsed public Waseda syllabus pages (times, rooms, instructors). Public data, shared across users, not tied to you.',
               ],
+              [
+                'Class times from Moodle',
+                'Timetable',
+                'Weekly class times derived from the attendance sessions of your courses in Moodle, when the syllabus gives none. Kept per user and refreshed weekly.',
+              ],
               ['Rate-limit counters', 'Abuse protection', 'Keyed by IP address, user or token hash; short-lived.'],
             ],
           },
@@ -103,6 +112,7 @@ export const en: PrivacyDoc = {
               ['Pending actions', 'Expire after 30 minutes'],
               ['Revoked API keys', '90 days after revocation'],
               ['Course snapshots', '30 days after last check'],
+              ['Class times from Moodle', '30 days after last check'],
               [
                 'Sessions, connect handoffs, OAuth requests, upload drafts',
                 'Until they expire (sessions: 30 days of inactivity; handoffs: 2 minutes; upload links: 30 minutes)',
@@ -139,7 +149,7 @@ export const en: PrivacyDoc = {
           ul: [
             'Apps: revoke an MCP client’s OAuth access.',
             'API keys: revoke a key.',
-            'Settings → Delete account: revokes all OAuth grants and permanently deletes your user record, encrypted token, settings, sessions, API keys, actions, upload drafts, activity log and course snapshots. Your Moodle account is not affected.',
+            'Settings → Delete account: revokes all OAuth grants and permanently deletes your user record, encrypted token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots and class times from Moodle. Your Moodle account is not affected.',
           ],
         },
         {
@@ -163,7 +173,7 @@ export const en: PrivacyDoc = {
           ul: [
             'What it reads: only the Moodle mobile-app launch page on https://wsdmoodle.waseda.jp, using your existing Moodle sign-in, to obtain the launch link that contains the token. It does not read any other page or your browsing history.',
             'Where it sends data: only to the service URL you configure in its options (for which it asks for permission). Nothing is sent to the extension developer or anyone else.',
-            'What it stores: the service URL and the time and result of the last sync. The token is never stored in the extension.',
+            'What it stores: the service URL, when you agreed to send data to it, and the time and result of the last sync. The token is never stored in the extension.',
             'Background refresh: about every 12 hours it repeats the capture and sends the token to your service so that a changed token is picked up.',
             'Permissions: storage, alarms, host access to wsdmoodle.waseda.jp, and optional access to your service origin.',
           ],
@@ -179,9 +189,10 @@ export const en: PrivacyDoc = {
         { p: 'Material changes to this policy are made in the project repository and are visible in its history.' },
       ],
     },
-    {
-      heading: 'Contact',
-      blocks: [{ p: 'Open an issue in the project repository.' }],
-    },
   ],
+  contact: {
+    heading: 'Contact',
+    label: 'Contact',
+    fallback: 'Contact the operator of this instance.',
+  },
 };

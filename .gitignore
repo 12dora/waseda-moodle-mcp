@@ -8,3 +8,4 @@ web/node_modules/
 coverage/
 .DS_Store
 wrangler.local.jsonc
+web/.env.local

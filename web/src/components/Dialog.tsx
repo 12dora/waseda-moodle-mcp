@@ -22,11 +22,16 @@ export function Dialog({
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
+  // Opens modally while `open`; on close or unmount, closes first and hands focus back to the opener.
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
-    if (open && !el.open) el.showModal();
-    if (!open && el.open) el.close();
+    if (!el || !open) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!el.open) el.showModal();
+    return () => {
+      if (el.open) el.close();
+      if (opener?.isConnected) opener.focus();
+    };
   }, [open]);
 
   return (

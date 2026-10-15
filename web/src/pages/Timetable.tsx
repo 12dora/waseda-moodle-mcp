@@ -34,7 +34,7 @@ function WeekView({ data, today, onEdit }: { data: Timetable; today: string; onE
         hideBreaks={hideBreaks}
         onEdit={onEdit}
       />
-      <TimetableDayList days={data.days} today={today} hideBreaks={hideBreaks} onEdit={onEdit} />
+      <TimetableDayList days={days} today={today} hideBreaks={hideBreaks} onEdit={onEdit} />
     </Card>
   );
 }

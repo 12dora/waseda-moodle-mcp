@@ -58,6 +58,7 @@ Edit `wrangler.local.jsonc`:
 | `ALLOWED_MOODLE_USERIDS` | var | `""` | Moodle numeric user ids allowed to create an account in allowlist mode; separated by commas, spaces or semicolons. Existing users can always reconnect. |
 | `SYLLABUS_LOOKUP` | var | `on` | `off` disables fetching the public Waseda syllabus (the timetable then has no slots). |
 | `EXTENSION_URL` | var (optional) | unset | Install URL for the browser extension shown in the console. Unset hides the link. |
+| `VITE_CONTACT_URL` | console build env (optional) | unset | `https://` or `mailto:` link shown as the contact on the privacy page. Read when the console is built (`web/.env.local` or the build environment), not by the Worker. Unset shows "Contact the operator of this instance." |
 | `MASTER_KEY` | secret | required | 32 random bytes, base64. Encrypts Moodle tokens and short-lived handoff/OAuth blobs, and keys the HMAC for file links. Changing it makes stored tokens unreadable (users must reconnect). |
 
 Set the secret:

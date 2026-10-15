@@ -1,7 +1,7 @@
 import { PublicShell } from '../components/PublicShell';
 import { useI18n } from '../i18n';
 import { PRIVACY_DOCS, PRIVACY_EFFECTIVE_DATE, PRIVACY_LINK_LABEL } from './privacy/content';
-import type { PrivacyBlock } from './privacy/types';
+import type { PrivacyBlock, PrivacyDoc } from './privacy/types';
 import './privacy/privacy.css';
 
 /** Blocks have no id; their first text is unique within a section. */
@@ -49,6 +49,27 @@ function Block({ block }: { block: PrivacyBlock }) {
   );
 }
 
+/** Build-time operator contact; only web and mail links are rendered. */
+const CONTACT_URL = ((): string | null => {
+  const raw = import.meta.env.VITE_CONTACT_URL?.trim() ?? '';
+  return /^(https?:\/\/|mailto:)/i.test(raw) ? raw : null;
+})();
+
+function Contact({ contact }: { contact: PrivacyDoc['contact'] }) {
+  return (
+    <section>
+      <h2>{contact.heading}</h2>
+      {CONTACT_URL ? (
+        <p>
+          {contact.label}: <a href={CONTACT_URL}>{CONTACT_URL.replace(/^mailto:/i, '')}</a>
+        </p>
+      ) : (
+        <p>{contact.fallback}</p>
+      )}
+    </section>
+  );
+}
+
 /** Public privacy policy; rendered outside config loading, session and router. */
 export function PrivacyPage() {
   const { lang } = useI18n();
@@ -71,6 +92,7 @@ export function PrivacyPage() {
             ))}
           </section>
         ))}
+        <Contact contact={doc.contact} />
       </article>
     </PublicShell>
   );
