@@ -118,8 +118,15 @@ function closedSummary(closed: DueItem[]): string {
   return clip(`${plural(closed.length, 'closed item')} no longer accepted: ${names}`, 400);
 }
 
+/** Calendar items of enrolled courses outside the scope that are still open: upcoming ones first, then overdue. */
+function otherCourseItems(list: DueList): DueItem[] {
+  const open = list.otherCourses.filter((i) => !i.closed);
+  return [...open.filter((i) => !i.overdue), ...open.filter((i) => i.overdue)];
+}
+
 function dueFooter(list: DueList): string[] {
   const { scope, sweep } = list;
+  const otherCount = otherCourseItems(list).length;
   const lines = [
     scope.mode === 'auto'
       ? `Using suggested courses (${scope.courseIds.length}); not confirmed by the user yet. Ask which courses they attend, then confirm with set_my_courses.`
@@ -131,9 +138,9 @@ function dueFooter(list: DueList): string[] {
     const at = sweep.checkedAt ? `, last check ${fmt(sweep.checkedAt)}` : '';
     lines.push(`Course pages checked: ${sweep.checked}${stale}${at}.`);
   }
-  if (list.otherCourses.length > 0) {
+  if (otherCount > 0) {
     lines.push(
-      `${plural(list.otherCourses.length, 'calendar deadline')} in enrolled courses outside your selection ${list.otherCourses.length === 1 ? 'is' : 'are'} listed under "Other enrolled courses"; if one of those courses matters, add it with set_my_courses.`,
+      `${plural(otherCount, 'calendar deadline')} in enrolled courses outside your selection ${otherCount === 1 ? 'is' : 'are'} listed under "Other enrolled courses"; if one of those courses matters, add it with set_my_courses.`,
     );
   }
   if (scope.otherCount > 0) {
@@ -146,7 +153,7 @@ function dueFooter(list: DueList): string[] {
 
 /** Final group: calendar items of enrolled courses outside the scope (never dropped, but at most a few lines). */
 function otherCoursesSection(list: DueList): string[] {
-  const items = list.otherCourses.filter((i) => !i.closed);
+  const items = otherCourseItems(list);
   if (items.length === 0) return [];
   const shown = items.slice(0, MAX_OTHER_COURSE_LINES).map(dueLine);
   const more = items.length - shown.length;
@@ -160,7 +167,7 @@ export function renderDueList(list: DueList): string {
   const head = [
     'Due items. Times are JST; a deadline at 00:00 is shown as the previous day 24:00.',
     list.items.length === 0
-      ? `Nothing outstanding ${list.otherCourses.length > 0 ? 'in your courses ' : ''}between ${window}.`
+      ? `Nothing outstanding ${otherCourseItems(list).length > 0 ? 'in your courses ' : ''}between ${window}.`
       : `${plural(list.items.length, 'item')} between ${window}:`,
   ];
   const notes: string[] = [];

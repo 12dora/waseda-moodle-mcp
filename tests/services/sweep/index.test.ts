@@ -214,6 +214,15 @@ describe('collectSweepItems', () => {
     expect(f.calls).toEqual([]);
   });
 
+  it('remembers the scope by default, but not for a one-course call (rememberScope: false)', async () => {
+    const f = makeFake({ [CONTENTS]: () => sectionsFor(101), [FORUMS]: () => [] });
+    const sc = scopeOf(course(101, 'Valuation'));
+    await collectSweepItems(f.ctx, sc, [], { ...WINDOW, rememberScope: false });
+    expect(f.scopeWrites).toEqual([]);
+    await collectSweepItems(f.ctx, sc, [], WINDOW);
+    expect(f.scopeWrites).toEqual([[101]]);
+  });
+
   it('stays within 12 calls and 3 refetches with many courses', async () => {
     const cs = Array.from({ length: 9 }, (_, i) => course(100 + i));
     const f = makeFake({

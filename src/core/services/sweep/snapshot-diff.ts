@@ -37,10 +37,15 @@ function stampModule(cur: SnapModule, old: SnapModule | undefined, env: DiffEnv)
 
 const DAY_MS = 86_400_000;
 
-/** A deadline the old snapshot knew and that is still upcoming but gone from the new one. */
+/**
+ * A deadline the old snapshot knew and that is still upcoming but gone from the new one. Only the nearest few dates of
+ * a text are stored, so an old date beyond the latest new one may merely have been cut off and proves nothing.
+ */
 function lostDeadline(old: SnapText, cur: SnapText, now: number): boolean {
-  const kept = new Set((cur.d ?? []).map((m) => m[0]));
-  return (old.d ?? []).some((m) => m[0] >= now - DAY_MS && !kept.has(m[0]));
+  const curDates = (cur.d ?? []).map((m) => m[0]);
+  const kept = new Set(curDates);
+  const latest = Math.max(...curDates);
+  return (old.d ?? []).some((m) => m[0] >= now - DAY_MS && m[0] <= latest && !kept.has(m[0]));
 }
 
 /**

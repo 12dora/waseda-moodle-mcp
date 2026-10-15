@@ -106,6 +106,33 @@ describe('findDeadlines', () => {
     expect(kept).toEqual(['10-22', '10-16']);
   });
 
+  it('does not spend its examination budget on past dates', () => {
+    const past = Array.from({ length: 250 }, () => 'Report due 8/1').join('\n'); // 74 days back: out of the window
+    expect(jst(`${past}\nReport due 10/20`)).toEqual(['2026-10-20T23:59']);
+    expect(jst(`${past}\nReport due 2026/8/1`)).toEqual(['2026-08-01T23:59']); // an explicit year stays in play
+    expect(findDeadlines(`${past}\nReport due 2026/8/1`, NOW_MS, { from: NOW_MS })).toEqual([]);
+  });
+
+  it('looks at no more than 80 dates inside the window', () => {
+    const schedule = (n: number) => `${'Week 10/20 intro. '.repeat(n)}${'x'.repeat(100)}`;
+    expect(jst(`${schedule(79)} Report due 10/22`)).toEqual(['2026-10-22T23:59']);
+    expect(jst(`${schedule(80)} Report due 10/22`)).toEqual([]);
+  });
+
+  it('accepts a date after a label number and a colon, but not one inside a clock time', () => {
+    expect(jst('課題1:10/21締切')).toEqual(['2026-10-21T23:59']);
+    expect(jst('Q2:11/4 due')).toEqual(['2026-11-04T23:59']);
+    expect(jst('課題12:10/21 提出')).toEqual(['2026-10-21T23:59']);
+    expect(jst('Report 3:10/18 due')).toEqual(['2026-10-18T23:59']);
+    expect(jst('No.4:10/19 deadline')).toEqual(['2026-10-19T23:59']);
+    expect(jst('#5:10/22 due')).toEqual(['2026-10-22T23:59']);
+    expect(jst('第1回課題1:10/23まで')).toEqual(['2026-10-23T23:59']);
+    expect(jst('Due 12:10/13')).toEqual([]);
+    expect(jst('Due 10:30/11:00')).toEqual([]);
+    expect(jst('提出 9:10/20')).toEqual([]);
+    expect(jst('Due Piano1:10/21')).toEqual([]); // "no" inside a word is not a label
+  });
+
   it('handles 200 KB of text fast (no backtracking blow-up)', () => {
     const para = 'Week 1: 1/2 of the class, see 10/12 Introduction. Report due on 10/18 at 23:59. ３／４ 10月15日 ';
     const text = para.repeat(Math.ceil(200_000 / para.length));

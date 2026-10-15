@@ -162,4 +162,15 @@ describe('stampChanges on long texts', () => {
     if (t) t.x = `Other ${t.x}`;
     expect(stampChanges(textOf(''), edited, { now: NOW_MS, updates: none }).x[0]?.s).toBe(NOW_MS);
   });
+
+  it('a stored date later than the latest new one may just have been cut off, so it is not a lost deadline', () => {
+    const old = textOf('');
+    const t = old.x[0];
+    if (t) {
+      t.h = undefined;
+      t.x = `${t.x.slice(0, 1990)}…`;
+      t.d?.push([Date.parse('2026-12-01T12:00:00+09:00'), 'Report due 12/1', '']);
+    }
+    expect(stampChanges(textOf(''), old, { now: NOW_MS, updates: none }).x[0]?.s).toBeUndefined();
+  });
 });

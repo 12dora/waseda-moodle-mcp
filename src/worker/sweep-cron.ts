@@ -16,7 +16,10 @@ import type { Env } from './env';
 
 export const SWEEP_MAX_USERS = 20;
 const SWEEP_MAX_REFRESH = 2;
-/** Courses known to be large (> 100 KB raw) that ONE invocation may refetch: parsing one nears the Free CPU limit. */
+/**
+ * Courses known to be large (> 100 KB raw) that ONE invocation may refetch: parsing one nears the Free CPU limit.
+ * A course never fetched has an unknown size and counts as large, so it shares this allowance.
+ */
 const SWEEP_MAX_LARGE = 1;
 /** Moodle calls one invocation may spend (Free plan: 50 subrequests, the rest is D1/KV and bookkeeping). */
 export const SWEEP_CALL_BUDGET = 44;
@@ -63,6 +66,7 @@ async function sweepUser(
   allowance: Allowance,
 ): Promise<UserResult> {
   let client: MoodleApi | undefined;
+  const tally = { large: 0 }; // kept current by the refresh, so a throw after a large parse still charges the budget
   const spent = () => client?.callsMade ?? 0;
   try {
     const base = await buildServiceContext(
@@ -90,14 +94,17 @@ async function sweepUser(
       maxLarge: allowance.maxLarge,
       maxAgeMs: CRON_MAX_AGE_MS,
       rememberScope: false,
+      unknownIsLarge: true, // a never-fetched course may be large too: it takes the large slot
+      tally,
     });
     return { outcome: 'swept', calls: spent(), large };
   } catch (e) {
     const calls = spent();
-    if (e instanceof NeedsReconnect) return { outcome: 'skipped', calls, large: 0 };
-    if (e instanceof BudgetExceeded) return { outcome: 'budget', calls, large: 0 };
+    const large = tally.large;
+    if (e instanceof NeedsReconnect) return { outcome: 'skipped', calls, large };
+    if (e instanceof BudgetExceeded) return { outcome: 'budget', calls, large };
     console.error('sweep failed:', e instanceof Error ? e.name : 'unknown');
-    return { outcome: 'failed', calls, large: 0 };
+    return { outcome: 'failed', calls, large };
   }
 }
 

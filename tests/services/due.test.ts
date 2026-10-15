@@ -283,7 +283,11 @@ describe('getDueItems', () => {
     expect(sweepCtx).toBe(ctx);
     expect([...(scope?.mine ?? [])]).toEqual([101]);
     expect(calendar?.map((i) => i.name)).toEqual(['Report 0', 'Report 1', 'Quiz A']);
-    expect(window).toEqual({ fromMs: (NOW_SEC - 14 * DAY) * 1000, toMs: (NOW_SEC + 14 * DAY) * 1000 });
+    expect(window).toEqual({
+      fromMs: (NOW_SEC - 14 * DAY) * 1000,
+      toMs: (NOW_SEC + 14 * DAY) * 1000,
+      rememberScope: true,
+    });
   });
 
   it('lists the calendar items as the sweep returns them (a date found in module text is attached there)', async () => {
@@ -385,6 +389,8 @@ describe('getDueItems', () => {
     expect(list.items.map((i) => i.name)).toEqual(['Report 0', 'Report 1', 'Quiz A']);
     expect(list.scope).toEqual({ mode: 'mine', courseIds: [102], otherCount: 3 });
     expect([...(vi.mocked(collectSweepItems).mock.calls[0]?.[1].mine ?? [])]).toEqual([101]);
+    // a one-course call must not replace the scope the cron remembers
+    expect(vi.mocked(collectSweepItems).mock.calls[0]?.[3].rememberScope).toBe(false);
   });
 
   it('falls back to the global feed (filtered) when the per-course function is unavailable', async () => {

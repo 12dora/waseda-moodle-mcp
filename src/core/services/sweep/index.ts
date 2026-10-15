@@ -79,22 +79,29 @@ function timely(items: readonly DueItem[], win: TextWindow): DueItem[] {
  * pending activities without a deadline, and deadlines mentioned in course text / recent announcements.
  * Text items are limited to `window`; ≤ 12 Moodle calls and ≤ 3 full refetches.
  * `calendar` is the given calendar list, where an undated item may have received the date its own module text mentions.
+ * `rememberScope: false` (a one-course call) keeps the remembered cron scope untouched.
  */
 export async function collectSweepItems(
   ctx: ServiceContext,
   scope: CourseScope,
   calendar: readonly DueItem[],
-  window: { fromMs: number; toMs: number },
+  window: { fromMs: number; toMs: number; rememberScope?: boolean },
 ): Promise<{ items: DueItem[]; calendar: DueItem[]; stats: SweepStats }> {
   const targets = inScope(scope);
   if (targets.length === 0) return { items: [], calendar: [...calendar], stats: NO_STATS };
   const now = nowMs();
   const api = await ctx.moodle();
+  const { rememberScope, ...span } = window;
   const [refresh, announced] = await Promise.all([
-    refreshSnapshots(ctx, targets, { maxCalls: MAX_CALLS - ANNOUNCE_CALLS, maxFull: MAX_FULL, maxLarge: MAX_LARGE }),
+    refreshSnapshots(ctx, targets, {
+      maxCalls: MAX_CALLS - ANNOUNCE_CALLS,
+      maxFull: MAX_FULL,
+      maxLarge: MAX_LARGE,
+      rememberScope,
+    }),
     announcementItems(api, targets, { now, maxCalls: ANNOUNCE_CALLS }),
   ]);
-  const win = { now, ...window };
+  const win = { now, ...span };
   const found = extractAll(targets, refresh.snapshots, win);
   const calendarCmids = new Set(calendar.flatMap((i) => (i.cmid === null ? [] : [i.cmid])));
   const attached = attachTaskMentions({

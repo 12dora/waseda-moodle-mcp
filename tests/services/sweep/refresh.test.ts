@@ -254,6 +254,54 @@ describe('refreshSnapshots: large courses and aged snapshots', () => {
     expect(again.calls.filter((c) => c.fn === CONTENTS)).toEqual([]);
     expect(second.large).toBe(0);
   });
+
+  it('with unknownIsLarge, never-fetched courses share the large allowance: one fetch, the rest wait', async () => {
+    const f = makeFake({ [CONTENTS]: () => contents() });
+    const r = await refreshSnapshots(f.ctx, [course(100), course(101), course(102)], {
+      ...OPTS,
+      maxLarge: 1,
+      unknownIsLarge: true,
+    });
+    expect(f.calls.filter((c) => c.fn === CONTENTS)).toHaveLength(1);
+    expect(r.refreshed).toBe(1);
+    expect(r.large).toBe(1);
+    expect(r.snapshots.size).toBe(1);
+  });
+
+  it('with unknownIsLarge and no large slot left, a never-fetched course is not fetched at all', async () => {
+    const f = makeFake({ [CONTENTS]: () => contents() });
+    const r = await refreshSnapshots(f.ctx, [course(100)], { ...OPTS, maxLarge: 0, unknownIsLarge: true });
+    expect(f.calls).toEqual([]);
+    expect(r.refreshed).toBe(0);
+    expect(r.large).toBe(0);
+  });
+
+  it('with unknownIsLarge, a known small course still refetches without a large slot', async () => {
+    const f = makeFake({ [CONTENTS]: () => contents() }, [snapshotRow(100, json(), 0)]);
+    const r = await refreshSnapshots(f.ctx, [course(100)], {
+      ...OPTS,
+      maxLarge: 0,
+      unknownIsLarge: true,
+      maxAgeMs: 24 * 60 * MIN,
+    });
+    expect(r.refreshed).toBe(1);
+    expect(r.large).toBe(0);
+  });
+
+  it('keeps the tally current so a caller knows the large fetches when the refresh throws', async () => {
+    const big = [rawSection(1, [{ id: 1, modname: 'page', name: 'Big', description: 'x'.repeat(120_000) }])];
+    const f = makeFake({
+      [CONTENTS]: (p) => {
+        if (p.courseid === 101) throw new Error('boom');
+        return big;
+      },
+    });
+    const tally = { large: 0 };
+    await expect(
+      refreshSnapshots(f.ctx, [course(100), course(101)], { ...OPTS, maxLarge: 2, unknownIsLarge: true, tally }),
+    ).rejects.toThrow('boom');
+    expect(tally.large).toBe(2);
+  });
 });
 
 describe('refreshSnapshots: remembered scope', () => {

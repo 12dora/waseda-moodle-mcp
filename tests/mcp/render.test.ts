@@ -167,6 +167,25 @@ describe('renderDueList', () => {
     expect(renderDueList(dueList([due({})]))).not.toContain('Other enrolled courses');
   });
 
+  it('counts only the open items of other courses, and lists upcoming ones before overdue ones', () => {
+    const other = (name: string, over: Partial<DueItem>) => due({ courseId: 300, courseName: 'Other', name, ...over });
+    const overdue = [1, 2, 3, 4, 5].map((n) => other(`Late ${n}`, { overdue: true }));
+    const closed = other('Gone', { overdue: true, closed: true });
+    const upcoming = other('Soon', { dueAt: '2026-10-20T23:59:00+09:00' });
+    const t = renderDueList(dueList([due({})], { otherCourses: [closed, ...overdue, upcoming] }));
+    expect(t).toContain('## Other enrolled courses (6)');
+    expect(t).toContain('6 calendar deadlines in enrolled courses outside your selection are listed under');
+    expect(t.indexOf('Soon')).toBeLessThan(t.indexOf('Late 1'));
+    expect(t).toContain('Late 4');
+    expect(t).not.toContain('Late 5');
+    expect(t).toContain('… 1 more');
+
+    const onlyClosed = renderDueList(dueList([], { otherCourses: [closed] }));
+    expect(onlyClosed).toContain('Nothing outstanding between');
+    expect(onlyClosed).not.toContain('Other enrolled courses');
+    expect(onlyClosed).not.toContain('outside your selection');
+  });
+
   it('shows the evidence of a date a calendar item took from its own module text', () => {
     const t = renderDueList(
       dueList([due({ evidence: 'Deadline 18 October 2026', sourceUrl: 'https://moodle.example.edu/mod/x?id=1' })]),

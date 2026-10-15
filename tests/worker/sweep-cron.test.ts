@@ -81,7 +81,7 @@ beforeEach(() => {
   vi.mocked(resolveScope).mockReset().mockResolvedValue(autoScope(COURSE));
   vi.mocked(refreshSnapshots)
     .mockReset()
-    .mockImplementation(async (ctx) => {
+    .mockImplementation(async (ctx, _courses, opts) => {
       seen.push(ctx);
       const stamp = await env.DB.prepare('SELECT last_swept_at AS t FROM users WHERE id = ?')
         .bind(ctx.user.id)
@@ -89,7 +89,11 @@ beforeEach(() => {
       stampDuringRun.push(stamp?.t ?? null);
       const step = plan.get(ctx.user.moodleUserId) ?? 0;
       const api = await ctx.moodle();
-      if (step instanceof Error) throw step;
+      if (step instanceof Error) {
+        // large parses done before the throw
+        if (opts.tally) opts.tally.large = largePlan.get(ctx.user.moodleUserId) ?? 0;
+        throw step;
+      }
       // distinct params: the client memoises identical reads
       for (let i = 0; i < step; i++) await api.call('core_webservice_get_site_info', { i });
       return { snapshots: new Map(), stats: STATS, refreshed: 0, large: largePlan.get(ctx.user.moodleUserId) ?? 0 };
@@ -117,6 +121,8 @@ describe('runCourseSweep', () => {
       maxLarge: 1,
       maxAgeMs: CRON_MAX_AGE_MS,
       rememberScope: false,
+      unknownIsLarge: true,
+      tally: { large: 0 },
     });
   });
 
@@ -232,6 +238,16 @@ describe('runCourseSweep', () => {
     await runCourseSweep(env);
     const limits = vi.mocked(refreshSnapshots).mock.calls.map((c) => c[2].maxLarge);
     expect(limits).toEqual([1, 0, 0]);
+  });
+
+  it('charges the large budget even when the refresh throws after a large parse', async () => {
+    for (const id of [1001, 1002]) await addUser(id);
+    plan.set(1001, new Error('boom'));
+    largePlan.set(1001, 1);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await runCourseSweep(env);
+    err.mockRestore();
+    expect(vi.mocked(refreshSnapshots).mock.calls.map((c) => c[2].maxLarge)).toEqual([1, 0]);
   });
 
   it('keeps the large budget when a user refetched nothing large', async () => {

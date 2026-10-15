@@ -14,10 +14,12 @@ const LEAD_MAX = 30;
 const MAX_HITS_PER_PATTERN = 300;
 const DEFAULT_MAX = 12;
 const CANDIDATES_MAX = 40; // upcoming candidates examined per text before the nearest `max` are picked
+const EXAMINED_MAX = 80; // dates inside the window that get the (costlier) context / time checks, kept or not
 const DAY = 86_400_000;
 const JST_MS = 9 * 3_600_000;
 const PAST_LIMIT = 30 * DAY;
 const FUTURE_LIMIT = 180 * DAY;
+const DAY_SPAN = DAY + 3_600_000; // a date covers its whole day (24:59 at most)
 const DEFAULT_TIME = { h: 23, mi: 59 };
 
 export interface TextDeadline {
@@ -47,6 +49,10 @@ interface DatePattern {
 const MONTH_NAME =
   'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
 const YEAR_TAIL = '(?:,?\\s+(20\\d\\d)(?!\\d))?';
+/** A label word right before a number: "課題1", "Q2", "Report 3", "No.4", "#5", "第6". */
+const LABEL = '(?:課題|レポート|宿題|第|#|(?<![a-z])(?:q|report|no\\.?))\\s?';
+/** "12:10/13" starts inside a clock time, but "課題1:10/21" is a label, a colon and a date. */
+const NOT_CLOCK = `(?<!(?<!${LABEL}\\d?)\\d:)`;
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
 const monthNumber = (name: string | undefined) => MONTHS.indexOf((name ?? '').slice(0, 3).toLowerCase()) + 1;
@@ -58,11 +64,11 @@ const DATE_PATTERNS: DatePattern[] = [
     pick: (m) => ({ y: yearOf(m[1]), mo: Number(m[2]), d: Number(m[3]) }),
   },
   {
-    re: /(?<![\d/.-])(?<!\d:)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/g,
+    re: new RegExp(`(?<![\\d/.-])${NOT_CLOCK}(\\d{4})[-/.](\\d{1,2})[-/.](\\d{1,2})(?!\\d)`, 'gi'),
     pick: (m) => ({ y: yearOf(m[1]), mo: Number(m[2]), d: Number(m[3]) }),
   },
   {
-    re: /(?<![\d/.-])(?<!\d:)(\d{1,2})\/(\d{1,2})(?![\d/:])/g,
+    re: new RegExp(`(?<![\\d/.-])${NOT_CLOCK}(\\d{1,2})/(\\d{1,2})(?![\\d/:])`, 'gi'),
     pick: (m) => ({ y: null, mo: Number(m[1]), d: Number(m[2]) }),
   },
   {
@@ -71,7 +77,7 @@ const DATE_PATTERNS: DatePattern[] = [
   },
   {
     re: new RegExp(
-      `(?<![\\d/.-])(?<!\\d:)(\\d{1,2})(?:st|nd|rd|th)?[ \\t]+(?:of[ \\t]+)?(${MONTH_NAME})(?![a-z])${YEAR_TAIL}`,
+      `(?<![\\d/.-])${NOT_CLOCK}(\\d{1,2})(?:st|nd|rd|th)?[ \\t]+(?:of[ \\t]+)?(${MONTH_NAME})(?![a-z])${YEAR_TAIL}`,
       'gi',
     ),
     pick: (m) => ({ y: yearOf(m[3]), mo: monthNumber(m[2]), d: Number(m[1]) }),
@@ -242,26 +248,63 @@ function nearestTo(found: TextDeadline[], max: number, now: number): TextDeadlin
   return found.filter((d) => keep.has(d));
 }
 
+interface DeadlineWindow {
+  now: number;
+  from: number;
+  year: number; // JST year of `now`
+}
+
+/**
+ * Cheap pre-check on the date alone: false when no year puts it (at any time of day) between `from` and, for a date
+ * without a year, [now - 30 d, now + 180 d]. Such a date is dropped by `inferDeadlineMs` / `from` anyway.
+ */
+function dayInWindow(date: DateParts, win: DeadlineWindow): boolean {
+  const years = date.y === null ? [win.year - 1, win.year, win.year + 1] : [date.y];
+  return years.some((y) => {
+    if (!validDay(y, date.mo, date.d)) return false;
+    const start = toMs(y, date, { h: 0, mi: 0 });
+    const end = start + DAY_SPAN;
+    if (end < win.from) return false;
+    return date.y !== null || (end >= win.now - PAST_LIMIT && start <= win.now + FUTURE_LIMIT);
+  });
+}
+
+/** The deadline of `hit` (its time is searched within `bounds`), or null when it is none or lies outside the window. */
+function deadlineAt(
+  text: string,
+  hit: DateHit,
+  bounds: { lo: number; hi: number },
+  win: DeadlineWindow,
+): TextDeadline | null {
+  if (!isDeadlineContext(text, hit)) return null;
+  const ms = inferDeadlineMs(hit, nearestTime(text, hit, bounds), win.now);
+  if (ms === null || ms < win.from) return null;
+  return { ms, evidence: snippet(text, hit), lead: leadPhrase(text, hit) };
+}
+
 /**
  * Deadlines mentioned in `text`, in order of appearance; each with its snippet. `now` is unix ms.
- * Dates before `opts.from` are skipped before anything is counted (so past dates never take a slot); when more than
- * `opts.max` remain, the ones closest to `now` are kept.
+ * Dates before `opts.from` (or outside the year-inference window) are skipped on the date alone, before anything is
+ * counted, so past dates never take a slot nor cost a context check; at most EXAMINED_MAX remaining dates are looked
+ * at. When more than `opts.max` deadlines remain, the ones closest to `now` are kept.
  */
 export function findDeadlines(raw: string, now: number, opts: { max?: number; from?: number } = {}): TextDeadline[] {
   if (!mayHaveDate(raw)) return [];
   const text = raw.normalize('NFKC');
-  const from = opts.from ?? Number.NEGATIVE_INFINITY;
+  const win = { now, from: opts.from ?? Number.NEGATIVE_INFINITY, year: jstParts(now).y };
   const hits = findDateHits(text);
   const out: TextDeadline[] = [];
   const seen = new Set<number>();
-  for (let i = 0; i < hits.length && out.length < CANDIDATES_MAX; i++) {
-    const hit = hits[i];
-    if (!hit || !isDeadlineContext(text, hit)) continue;
+  let examined = 0;
+  for (const [i, hit] of hits.entries()) {
+    if (out.length >= CANDIDATES_MAX || examined >= EXAMINED_MAX) break;
+    if (!dayInWindow(hit, win)) continue;
+    examined++;
     const bounds = { lo: hits[i - 1]?.end ?? 0, hi: hits[i + 1]?.start ?? text.length };
-    const ms = inferDeadlineMs(hit, nearestTime(text, hit, bounds), now);
-    if (ms === null || ms < from || seen.has(ms)) continue;
-    seen.add(ms);
-    out.push({ ms, evidence: snippet(text, hit), lead: leadPhrase(text, hit) });
+    const found = deadlineAt(text, hit, bounds, win);
+    if (!found || seen.has(found.ms)) continue;
+    seen.add(found.ms);
+    out.push(found);
   }
   return nearestTo(out, opts.max ?? DEFAULT_MAX, now);
 }

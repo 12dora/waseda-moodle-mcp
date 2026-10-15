@@ -32,13 +32,17 @@ export interface RefreshOptions {
   maxAgeMs?: number; // refetch snapshots whose last full fetch is older (default 36 h)
   /** Remember `courses` as the interactive scope for the cron (default true; false for the cron, one-course calls). */
   rememberScope?: boolean;
+  /** Courses without a snapshot (size unknown) take a large-fetch slot like known large ones (the cron's guard). */
+  unknownIsLarge?: boolean;
+  /** Kept current while refreshing, so a caller still knows the large fetches done when the refresh throws. */
+  tally?: { large: number };
 }
 
 export interface RefreshResult {
   snapshots: Map<number, CourseSnapshot>; // every target course that has a snapshot (possibly stale)
   stats: SweepStats;
   refreshed: number; // full fetches done
-  large: number; // of those, fetches of large courses (known beforehand or measured on arrival)
+  large: number; // of those, fetches of large courses (known beforehand, unknown size when so configured, or measured)
 }
 
 interface Entry {
@@ -83,10 +87,11 @@ function readUpdates(
 
 class Refresher {
   refreshed = 0;
-  largeFetches = 0;
   private fullLeft: number;
   private largeLeft: number;
   private readonly budget: CallBudget;
+  private readonly unknownIsLarge: boolean;
+  readonly tally: { large: number };
 
   constructor(
     private readonly ctx: ServiceContext,
@@ -97,6 +102,8 @@ class Refresher {
     this.fullLeft = opts.maxFull;
     this.largeLeft = opts.maxLarge ?? opts.maxFull;
     this.budget = new CallBudget(opts.maxCalls);
+    this.unknownIsLarge = opts.unknownIsLarge ?? false;
+    this.tally = opts.tally ?? { large: 0 };
   }
 
   private async persist(entry: Entry, snap: CourseSnapshot, fetchedAt: number): Promise<void> {
@@ -113,15 +120,16 @@ class Refresher {
 
   private takeLarge(): void {
     this.largeLeft--;
-    this.largeFetches++;
+    this.tally.large++;
   }
 
   /**
-   * Claims a full fetch and, for a course known to be large, one of the few large-fetch slots; nothing is consumed
-   * unless the fetch can really happen. null when out of fetches, large slots or calls.
+   * Claims a full fetch and, for a course known to be large (or, when `unknownIsLarge`, never fetched), one of the few
+   * large-fetch slots; nothing is consumed unless the fetch can really happen. null when out of fetches, large slots
+   * or calls.
    */
   private reserve(entry: Entry): { large: boolean } | null {
-    const large = (entry.snap?.z ?? 0) > LARGE_COURSE_BYTES;
+    const large = entry.snap ? (entry.snap.z ?? 0) > LARGE_COURSE_BYTES : this.unknownIsLarge;
     if (this.fullLeft <= 0 || (large && this.largeLeft <= 0) || !this.budget.take()) return null;
     this.fullLeft--;
     if (large) this.takeLarge();
@@ -283,5 +291,5 @@ export async function refreshSnapshots(
     Promise.all(existing.map((e) => r.check(e))),
   ]);
   await Promise.all([...agedChecks, ...checks].flatMap((c) => (c ? [r.fetchFull(c.entry, c.updates)] : [])));
-  return { ...summarize(entries, now), refreshed: r.refreshed, large: r.largeFetches };
+  return { ...summarize(entries, now), refreshed: r.refreshed, large: r.tally.large };
 }

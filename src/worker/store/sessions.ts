@@ -74,7 +74,8 @@ export function sessionMethods(db: D1Database): SessionMethods {
         .prepare(
           `SELECT s.id_hash, s.user_id, s.created_at, s.expires_at, s.last_seen_at, s.user_agent,
                   u.id AS u_id, u.moodle_user_id AS u_moodle_user_id, u.fullname AS u_fullname, u.lang AS u_lang,
-                  u.settings AS u_settings, u.created_at AS u_created_at, u.last_seen_at AS u_last_seen_at
+                  u.settings AS u_settings, u.created_at AS u_created_at, u.last_seen_at AS u_last_seen_at,
+                  u.scope_course_ids AS u_scope_course_ids
            FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ?`,
         )
         .bind(idHash)
@@ -88,6 +89,7 @@ export function sessionMethods(db: D1Database): SessionMethods {
         settings: found.u_settings as string,
         created_at: found.u_created_at as number,
         last_seen_at: (found.u_last_seen_at as number | null) ?? null,
+        scope_course_ids: (found.u_scope_course_ids as string | null | undefined) ?? null,
       };
       return { session: toSession(found), user: toUser(user) };
     },

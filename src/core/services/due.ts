@@ -244,9 +244,13 @@ export async function getDueItems(
   const calendar = merged.filter(inScope);
   const otherCourses = merged.filter((i) => !inScope(i));
 
-  // an explicit course bypasses the scope, for the sweep too
+  // an explicit course bypasses the scope, for the sweep too; it must not replace the remembered scope
   const sweepScope = courseId === undefined ? scope : { ...scope, mine: new Set([courseId]) };
-  const sweep = await collectSweepItems(ctx, sweepScope, calendar, { fromMs: from * 1000, toMs: to * 1000 });
+  const sweep = await collectSweepItems(ctx, sweepScope, calendar, {
+    fromMs: from * 1000,
+    toMs: to * 1000,
+    rememberScope: courseId === undefined,
+  });
 
   return {
     generatedAt: isoJst(now * 1000),
