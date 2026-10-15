@@ -15,7 +15,7 @@ import { parseSchedule, type Schedule, type SyllabusSlot } from './syllabus-sche
 
 export type { SyllabusSlot };
 
-const DETAIL_URL = 'https://www.wsl.waseda.jp/syllabus/JAA104.php';
+export const DETAIL_URL = 'https://www.wsl.waseda.jp/syllabus/JAA104.php';
 const USER_AGENT = 'waseda-moodle-mcp/0.1 (+syllabus term lookup)';
 /** One deadline for every fetch of a lookup call, so a hanging site costs a request at most this much. */
 const LOOKUP_DEADLINE_MS = 5000;
@@ -284,6 +284,11 @@ function requestState(ctx: ServiceContext): RequestState {
     requests.set(ctx, state);
   }
   return state;
+}
+
+/** idnumber of a course the scope lookup of this request presented (syllabus-details builds the pKey from it). */
+export function seenIdnumber(ctx: ServiceContext, courseId: number): string | null {
+  return requests.get(ctx)?.seen.get(courseId)?.idnumber || null;
 }
 
 /** A failed fetch keeps the previous answer next to the marker: the hour of back-off must not wipe a usable row. */
