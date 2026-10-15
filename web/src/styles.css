@@ -834,6 +834,9 @@ fieldset {
   display: grid;
   gap: 12px;
 }
+.tab-panel[hidden] {
+  display: none; /* the class's display: grid would otherwise beat the hidden attribute */
+}
 
 /* Lists -------------------------------------------------------------------- */
 .due-list,
