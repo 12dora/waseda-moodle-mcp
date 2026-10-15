@@ -60,7 +60,7 @@ export function ToolsTable({ tools, fmt }: { tools: UsageStats['tools']; fmt: Fm
 
 export function ClientsTable({ clients, fmt }: { clients: UsageStats['clients']; fmt: Fmt }) {
   const { t } = useI18n();
-  if (clients.length === 0) return <EmptyState>{t('stats.tools.empty')}</EmptyState>;
+  if (clients.length === 0) return <EmptyState>{t('stats.clients.empty')}</EmptyState>;
   const max = peakOf(clients.map((r) => r.calls));
   return (
     <div className="table-wrap">

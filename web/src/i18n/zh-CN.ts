@@ -428,7 +428,7 @@ export const zhCN: Dictionary = {
   'stats.calls.aria': '每日工具调用，最近 {days} 天，共 {calls} 次，失败 {failed} 次',
   'stats.calls.total': '{calls} 次 · 失败 {failed} 次',
   'stats.calls.tip': '{day} · {calls} 次调用 · 失败 {failed} 次',
-  'stats.daily.show': '以表格显示',
+  'stats.daily.show': '每日数据',
   'stats.col.day': '日期',
   'stats.col.active': '活跃',
   'stats.col.calls': '调用',
@@ -441,6 +441,7 @@ export const zhCN: Dictionary = {
   'stats.tools.title': '工具',
   'stats.tools.empty': '此期间没有工具调用。',
   'stats.clients.title': 'AI 客户端',
+  'stats.clients.empty': '此期间无客户端调用。',
   'stats.client.apiKey': 'API 密钥',
   'stats.client.other': '其他',
 };

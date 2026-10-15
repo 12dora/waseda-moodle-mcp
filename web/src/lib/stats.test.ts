@@ -34,7 +34,9 @@ describe('parseStatsRange', () => {
 
   it('falls back to the default', () => {
     expect(DEFAULT_STATS_RANGE).toBe(30);
-    for (const v of [null, undefined, '', '14', 'abc', '7.5', '-7']) expect(parseStatsRange(v)).toBe(30);
+    for (const v of [null, undefined, '', '14', 'abc', '7.5', '-7', '07', '7.0', ' 7', '7 ', '1e1', '90x', '0x1e']) {
+      expect(parseStatsRange(v)).toBe(30);
+    }
   });
 });
 
@@ -122,10 +124,20 @@ describe('hasUsage', () => {
     expect(hasUsage(empty())).toBe(false);
   });
 
-  it('is true for any non-zero count', () => {
+  it('ignores user counts on their own (fresh instance)', () => {
     const a = empty();
-    a.users.total = 1;
+    a.users = { total: 3, newInRange: 3, activeToday: 0, activeWeek: 0, activeMonth: 0 };
+    a.daily[0] = { day: '2026-10-15', active: 0, calls: 0, errors: 0, newUsers: 3 };
+    expect(hasUsage(a)).toBe(false);
+  });
+
+  it('is true once any tool call or active user was recorded', () => {
+    const a = empty();
+    a.daily[0] = { day: '2026-10-15', active: 1, calls: 0, errors: 0, newUsers: 0 };
     expect(hasUsage(a)).toBe(true);
+    const t = empty();
+    t.tools.push({ name: 'list_courses', calls: 1, errors: 0 });
+    expect(hasUsage(t)).toBe(true);
     const b = empty();
     b.daily[0] = { day: '2026-10-15', active: 0, calls: 2, errors: 0, newUsers: 0 };
     expect(hasUsage(b)).toBe(true);

@@ -1,4 +1,4 @@
-import { type RefObject, useLayoutEffect, useRef, useState } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { type BarSlots, barPath, barSlots, niceScale, peakOf, shortDay, xTickIndexes } from '../../lib/stats';
 
 export interface BarDatum {
@@ -126,7 +126,7 @@ function Bars({
         const x = geo.gutter + i * slot + (slot - bar) / 2;
         const h = d.value > 0 ? Math.max(2, BASELINE - geo.y(d.value)) : 0;
         return (
-          <g key={d.day} onPointerEnter={() => onHover(i)}>
+          <g key={d.day} onPointerEnter={() => onHover(i)} onPointerDown={() => onHover(i)}>
             <rect className="chart-hit" x={geo.gutter + i * slot} y={TOP} width={slot} height={PLOT_H} />
             {h > 0 && (
               <path className={`chart-bar${active === i ? ' is-active' : ''}`} d={barPath(x, BASELINE, bar, h)} />
@@ -138,9 +138,39 @@ function Bars({
   );
 }
 
+/** Clears the active bar when the user taps or clicks anywhere outside the chart (touch has no pointerleave). */
+function useDismissOutside(ref: RefObject<HTMLElement | null>, active: boolean, clear: () => void) {
+  useEffect(() => {
+    if (!active) return;
+    const onDown = (e: globalThis.PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) clear();
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [ref, active, clear]);
+}
+
+/** Tooltip above the active bar, clamped horizontally so it never leaves the chart. */
+function Tooltip({ text, x, y, width }: { text: string; x: number; y: number; width: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [tipWidth, setTipWidth] = useState(0);
+  // Re-measure after every render (text changes); equal values bail out without re-rendering.
+  useLayoutEffect(() => {
+    const w = ref.current?.offsetWidth ?? 0;
+    if (w !== tipWidth) setTipWidth(w);
+  });
+  const half = tipWidth / 2;
+  const left = half * 2 >= width ? width / 2 : Math.min(Math.max(x, half), width - half);
+  return (
+    <div className="chart-tip" ref={ref} style={{ left, top: y }} aria-hidden="true">
+      {text}
+    </div>
+  );
+}
+
 /**
  * Single-series daily bar chart drawn as SVG in real pixels (re-measured on resize, so 12px text stays 12px).
- * Hover shows a tooltip; the page offers the same numbers as a table for keyboard and screen-reader users.
+ * Hover or tap shows a tooltip; the page offers the same numbers as a table for keyboard and screen-reader users.
  */
 export function BarChart({
   data,
@@ -158,16 +188,15 @@ export function BarChart({
   const [active, setActive] = useState<number | null>(null);
   const { scale, geo } = geometry(width, data, format);
   const cur = active === null ? undefined : data[active];
+  const clear = useCallback(() => setActive(null), []);
+  useDismissOutside(ref, active !== null, clear);
 
-  let tipClass = 'chart-tip';
-  if (active !== null && width > 0) {
-    const left = geo.xCenter(active);
-    if (left < width * 0.2) tipClass += ' chart-tip-start';
-    else if (left > width * 0.8) tipClass += ' chart-tip-end';
-  }
+  const onLeave = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse') clear();
+  };
 
   return (
-    <div className="chart" ref={ref} onPointerLeave={() => setActive(null)}>
+    <div className="chart" ref={ref} onPointerLeave={onLeave}>
       {width > 0 && (
         <svg role="img" aria-label={label} width={width} height={HEIGHT} viewBox={`0 0 ${width} ${HEIGHT}`}>
           <GridLines ticks={scale.ticks} geo={geo} width={width} format={format} />
@@ -176,9 +205,7 @@ export function BarChart({
         </svg>
       )}
       {active !== null && cur && (
-        <div className={tipClass} style={{ left: geo.xCenter(active), top: geo.y(cur.value) - 8 }} aria-hidden="true">
-          {tooltip(active)}
-        </div>
+        <Tooltip text={tooltip(active)} x={geo.xCenter(active)} y={geo.y(cur.value) - 8} width={width} />
       )}
     </div>
   );

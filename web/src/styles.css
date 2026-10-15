@@ -1790,12 +1790,6 @@ fieldset {
   white-space: nowrap;
   pointer-events: none;
 }
-.chart-tip-start {
-  transform: translate(-12px, -100%);
-}
-.chart-tip-end {
-  transform: translate(calc(-100% + 12px), -100%);
-}
 
 .stat-table th.num,
 .stat-table td.num {

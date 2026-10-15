@@ -9,8 +9,7 @@ export const DEFAULT_STATS_RANGE: StatsRange = 30;
 
 /** `?days=` value → a supported range; anything else falls back to the default. */
 export function parseStatsRange(value: string | null | undefined): StatsRange {
-  const n = Number(value);
-  return (STATS_RANGES as readonly number[]).includes(n) ? (n as StatsRange) : DEFAULT_STATS_RANGE;
+  return value && /^(7|30|90)$/.test(value) ? (Number(value) as StatsRange) : DEFAULT_STATS_RANGE;
 }
 
 export interface ChartScale {
@@ -72,11 +71,9 @@ export function sumOf(values: readonly number[]): number {
   return values.reduce((a, b) => a + b, 0);
 }
 
-/** False when every count in the response is zero (nothing to chart yet). */
+/** False until any tool call was recorded in the range (user counts alone do not make usage). */
 export function hasUsage(stats: UsageStats): boolean {
-  const u = stats.users;
-  if (u.total || u.newInRange || u.activeToday || u.activeWeek || u.activeMonth) return true;
-  if (stats.daily.some((d) => d.active || d.calls || d.errors || d.newUsers)) return true;
+  if (stats.daily.some((d) => d.active || d.calls)) return true;
   return stats.tools.some((t) => t.calls) || stats.clients.some((c) => c.calls || c.activeMonth);
 }
 

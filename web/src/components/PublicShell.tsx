@@ -19,7 +19,7 @@ const GITHUB_PATH =
  * Works without a router (/privacy renders outside it): plain anchors only.
  */
 export function PublicShell({ title, children }: { title: string; children: ReactNode }) {
-  const { lang, setUiLang, t } = useI18n();
+  const { lang, uiLang, setUiLang, t } = useI18n();
   useEffect(() => {
     document.title = `${title} · Waseda Moodle MCP`;
   }, [title]);
@@ -62,7 +62,7 @@ export function PublicShell({ title, children }: { title: string; children: Reac
         <div className="public-wrap public-foot-inner">
           <p>© 2026 Waseda Moodle MCP · {t('public.unofficial')}</p>
           <p>
-            <a href={`/privacy?lang=${lang}`}>{t('public.privacy')}</a> ·{' '}
+            <a href={uiLang === 'auto' ? '/privacy' : `/privacy?lang=${uiLang}`}>{t('public.privacy')}</a> ·{' '}
             <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
               {t('app.source')}
             </a>

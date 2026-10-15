@@ -431,7 +431,7 @@ export const en = {
   'stats.calls.aria': 'Tool calls per day, last {days} days, {calls} calls, {failed} failed',
   'stats.calls.total': '{calls} calls · {failed} failed',
   'stats.calls.tip': '{day} · {calls} calls · {failed} failed',
-  'stats.daily.show': 'Show table',
+  'stats.daily.show': 'Daily data',
   'stats.col.day': 'Day',
   'stats.col.active': 'Active',
   'stats.col.calls': 'Calls',
@@ -444,6 +444,7 @@ export const en = {
   'stats.tools.title': 'Tools',
   'stats.tools.empty': 'No tool calls in this range.',
   'stats.clients.title': 'AI clients',
+  'stats.clients.empty': 'No client activity in this range.',
   'stats.client.apiKey': 'API key',
   'stats.client.other': 'Other',
 } as const;
