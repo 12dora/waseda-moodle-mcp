@@ -38,8 +38,9 @@ const withRows = (mode: ScheduleMode, rows: SlotRow[], alsoOnDemand = false): Sc
 });
 
 /** The evening clock exists only on weekdays and only for periods 6–7. */
+/** A reversed range has its own error; it must not clear `night` while the user is still picking the periods. */
 export const nightAllowed = (row: SlotRow): boolean =>
-  row.weekday <= NIGHT_LAST_WEEKDAY && row.from >= NIGHT_FIRST_PERIOD && row.to >= row.from;
+  row.weekday <= NIGHT_LAST_WEEKDAY && row.from >= NIGHT_FIRST_PERIOD;
 
 /** Clears `night` once the row no longer allows the evening clock. */
 export const normalizeRow = (row: SlotRow): SlotRow =>

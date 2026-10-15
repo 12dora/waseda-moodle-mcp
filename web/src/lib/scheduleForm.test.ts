@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Timetable, TimetableClass } from '../api/types';
-import { formValid, initialForm, rowErrors, type ScheduleForm, type SlotRow, toOverride } from './scheduleForm';
+import {
+  formValid,
+  initialForm,
+  normalizeRow,
+  rowErrors,
+  type ScheduleForm,
+  type SlotRow,
+  toOverride,
+} from './scheduleForm';
 
 interface ClsOpts {
   periodFrom: number;
@@ -118,6 +126,13 @@ describe('formValid / toOverride', () => {
     expect(formValid(weekly([row(3, 2)]))).toBe(false);
     expect(formValid(weekly([row(2, 3)]))).toBe(true);
     expect(formValid({ mode: 'on-demand', rows: [row(3, 2)], alsoOnDemand: false })).toBe(true);
+  });
+
+  it('keeps the evening clock while the range is briefly reversed during editing', () => {
+    const row: SlotRow = { key: 'r', weekday: 1, from: 7, to: 6, night: true, room: '' };
+    expect(normalizeRow(row).night).toBe(true);
+    expect(normalizeRow({ ...row, weekday: 6 }).night).toBe(false); // Saturday has no evening clock
+    expect(normalizeRow({ ...row, from: 5 }).night).toBe(false);
   });
 
   it('flags overlapping and duplicate rows on the same weekday', () => {
