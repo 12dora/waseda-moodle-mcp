@@ -4,7 +4,7 @@ import type { MoodleApi, ServiceContext } from '../context';
 import { MoodleError, NotFound } from '../errors';
 import { decodeEntities, htmlToMarkdown } from '../html';
 import { fromTs } from '../time';
-import type { Conversation, ConversationSummary, Message, Notification } from '../types';
+import type { Conversation, ConversationSummary, Message } from '../types';
 import { clampInt } from './shared';
 
 // ------------------------------------------------------------------ raw Moodle shapes (loose)
@@ -42,21 +42,6 @@ export interface RawConversationMessages {
   messages?: RawMessage[] | null;
 }
 
-export interface RawNotification {
-  id: number;
-  useridfrom?: number | null;
-  subject?: string | null;
-  text?: string | null;
-  fullmessage?: string | null;
-  fullmessagehtml?: string | null;
-  smallmessage?: string | null;
-  contexturl?: string | null;
-  timecreated?: number | null;
-  read?: boolean | null;
-  component?: string | null;
-}
-
-const NOTIFICATION_MAX_CHARS = 600;
 const PREVIEW_MAX_CHARS = 200;
 
 const TYPES: Record<number, ConversationSummary['type']> = { 1: 'private', 2: 'group', 3: 'self' };
@@ -94,9 +79,11 @@ export function mapConversation(raw: RawConversation, selfMoodleId: number): Con
   };
 }
 
+const TYPE_CODES: Record<ConversationSummary['type'], number> = { private: 1, group: 2, self: 3 };
+
 export async function listConversations(
   ctx: ServiceContext,
-  opts: { unreadOnly?: boolean; limit?: number } = {},
+  opts: { unreadOnly?: boolean; limit?: number; offset?: number; type?: ConversationSummary['type'] } = {},
 ): Promise<ConversationSummary[]> {
   const limit = clampInt(opts.limit, 20, 1, 100);
   const api = await ctx.moodle();
@@ -104,8 +91,9 @@ export async function listConversations(
   // unread filtering is client-side, so read a wider window than the requested limit
   const res = await api.call<{ conversations?: RawConversation[] | null }>('core_message_get_conversations', {
     userid: selfId,
-    limitfrom: 0,
+    limitfrom: clampInt(opts.offset, 0, 0, 10_000),
     limitnum: opts.unreadOnly ? Math.max(limit, 50) : limit,
+    ...(opts.type ? { type: TYPE_CODES[opts.type] } : {}),
   });
   let list = (res?.conversations ?? []).map((c) => mapConversation(c, selfId));
   if (opts.unreadOnly) list = list.filter((c) => c.unread > 0);
@@ -134,8 +122,8 @@ function inferTypeCode(memberCount: number): number {
   return memberCount === 2 ? 1 : 2;
 }
 
-/** Conversation header from `core_message_get_conversation` (type, name, unread); null when that call fails. */
-async function fetchConversationInfo(
+/** Conversation header from `core_message_get_conversation` (type, name, unread, newest message); null on failure. */
+export async function fetchConversationInfo(
   api: MoodleApi,
   selfId: number,
   conversationId: number,
@@ -148,7 +136,7 @@ async function fetchConversationInfo(
       includeprivacyinfo: false,
       memberlimit: 0,
       memberoffset: 0,
-      messagelimit: 0,
+      messagelimit: 1,
       messageoffset: 0,
       newestmessagesfirst: true,
     })
@@ -172,99 +160,79 @@ function conversationSummary(
       type: info?.type ?? inferTypeCode(members.length),
       unreadcount: info?.unreadcount,
       members,
+      messages: info?.messages,
     },
     selfId,
   );
 }
 
-export async function getConversation(
-  ctx: ServiceContext,
-  conversationId: number,
-  opts: { limit?: number } = {},
-): Promise<Conversation> {
-  const limit = clampInt(opts.limit, 30, 1, 100);
-  const api = await ctx.moodle();
-  const selfId = ctx.user.moodleUserId;
-  const fetchMessages = api
+const MAX_MEMBERS = 50;
+
+export interface ConversationPage extends Conversation {
+  /** At most 50 members (the first ones Moodle lists). */
+  members: { id: number; name: string }[];
+  /** `offset` that fetches the next older page; null when the history is exhausted. */
+  nextOffset: number | null;
+}
+
+interface GetConversationOptions {
+  limit?: number;
+  /** Messages to skip, newest first. */
+  offset?: number;
+}
+
+function fetchRawMessages(
+  api: MoodleApi,
+  req: { selfId: number; conversationId: number; offset: number; limit: number },
+): Promise<RawConversationMessages> {
+  return api
     .call<RawConversationMessages>('core_message_get_conversation_messages', {
-      currentuserid: selfId,
-      convid: conversationId,
-      limitfrom: 0,
-      limitnum: limit,
+      currentuserid: req.selfId,
+      convid: req.conversationId,
+      limitfrom: req.offset,
+      limitnum: req.limit,
       newest: true,
     })
     .catch((e: unknown) => {
       if (e instanceof MoodleError && /conversation/i.test(`${e.errorcode} ${e.message}`)) {
-        throw new NotFound(`Conversation ${conversationId} was not found.`);
+        throw new NotFound(`Conversation ${req.conversationId} was not found.`);
       }
       throw e;
     });
-  const [res, info] = await Promise.all([fetchMessages, fetchConversationInfo(api, selfId, conversationId)]);
-  const messages = mapMessages(res ?? {}, { moodleUserId: selfId, fullname: ctx.user.fullname });
-  const last = messages[messages.length - 1];
-  const summary = conversationSummary(info, res ?? {}, selfId, conversationId);
-  return {
-    summary: {
-      ...summary,
-      lastMessage: last ? last.text.slice(0, PREVIEW_MAX_CHARS) || null : null,
-      lastAt: last?.sentAt || null,
-    },
-    messages,
-  };
 }
 
-// ------------------------------------------------------------------ notifications
-
-/** Notification mails wrap the message in a navbar/header; keep only the message itself. */
-function stripChrome(html: string): string {
-  return html
-    .replace(/<(header|nav)\b[\s\S]*?<\/\1>/gi, '')
-    .replace(/<div\b[^>]*\bclass="[^"]*\bnavbar\b[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+/**
+ * The conversation's last message comes from its header, so a page far back in the history does not
+ * pass an old message off as the latest one; without it only the newest page can tell.
+ */
+function withLatest(summary: ConversationSummary, messages: Message[], offset: number): ConversationSummary {
+  if (summary.lastAt) return summary;
+  const last = offset === 0 ? messages[messages.length - 1] : undefined;
+  if (!last) return summary;
+  return { ...summary, lastMessage: last.text.slice(0, PREVIEW_MAX_CHARS) || null, lastAt: last.sentAt || null };
 }
 
-/** smallmessage (short, HTML-escaped) first, then the plain-text fullmessage, then the HTML mail body. */
-function notificationText(raw: RawNotification): string {
-  if (raw.smallmessage) return htmlToMarkdown(raw.smallmessage, { maxChars: NOTIFICATION_MAX_CHARS });
-  const plain = raw.fullmessage?.trim();
-  if (plain) {
-    return plain.length > NOTIFICATION_MAX_CHARS ? `${plain.slice(0, NOTIFICATION_MAX_CHARS)}…` : plain;
-  }
-  return htmlToMarkdown(stripChrome(raw.fullmessagehtml || raw.text || ''), { maxChars: NOTIFICATION_MAX_CHARS });
-}
-
-export function mapNotification(raw: RawNotification): Notification {
-  return {
-    id: raw.id,
-    subject: decodeEntities(raw.subject ?? ''),
-    text: notificationText(raw),
-    sender: null, // the popup feed carries only the sender id
-    sentAt: fromTs(raw.timecreated) ?? '',
-    read: raw.read === true,
-    url: raw.contexturl || null,
-    component: raw.component || null,
-  };
-}
-
-export async function listNotifications(
+export async function getConversation(
   ctx: ServiceContext,
-  opts: { unreadOnly?: boolean; limit?: number } = {},
-): Promise<{ notifications: Notification[]; unreadCount: number }> {
-  const limit = clampInt(opts.limit, 20, 1, 100);
+  conversationId: number,
+  opts: GetConversationOptions = {},
+): Promise<ConversationPage> {
+  const limit = clampInt(opts.limit, 30, 1, 100);
   const api = await ctx.moodle();
-  // the popup feed has no unread filter, so read a wider window when only unread ones are wanted
-  const res = await api.call<{ notifications?: RawNotification[] | null; unreadcount?: number | null }>(
-    'message_popup_get_popup_notifications',
-    {
-      useridto: ctx.user.moodleUserId,
-      newestfirst: true,
-      limit: opts.unreadOnly ? Math.min(100, limit * 3) : limit,
-      offset: 0,
-    },
-  );
-  let list = (res?.notifications ?? []).map(mapNotification);
-  if (opts.unreadOnly) list = list.filter((n) => !n.read);
+  const selfId = ctx.user.moodleUserId;
+  const offset = clampInt(opts.offset, 0, 0, 10_000);
+  const [fetched, info] = await Promise.all([
+    fetchRawMessages(api, { selfId, conversationId, offset, limit }),
+    fetchConversationInfo(api, selfId, conversationId),
+  ]);
+  const res = fetched ?? {};
+  const messages = mapMessages(res, { moodleUserId: selfId, fullname: ctx.user.fullname });
+  const summary = conversationSummary(info, res, selfId, conversationId);
+  const members = (info?.members?.length ? info.members : (res.members ?? [])).slice(0, MAX_MEMBERS);
   return {
-    notifications: list.slice(0, limit),
-    unreadCount: res?.unreadcount ?? list.filter((n) => !n.read).length,
+    summary: withLatest({ ...summary, memberIds: summary.memberIds.slice(0, MAX_MEMBERS) }, messages, offset),
+    messages,
+    members: members.map((m) => ({ id: m.id, name: decodeEntities(m.fullname ?? '') })),
+    nextOffset: messages.length >= limit ? offset + messages.length : null,
   };
 }

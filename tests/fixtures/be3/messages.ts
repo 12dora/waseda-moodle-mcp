@@ -1,6 +1,7 @@
 /** Synthetic messaging fixtures (shapes of core_message_* / message_popup_* responses). */
 
-import type { RawConversation, RawConversationMessages, RawNotification } from '../../../src/core/services/messages';
+import type { RawConversation, RawConversationMessages } from '../../../src/core/services/messages';
+import type { RawNotification } from '../../../src/core/services/messages/notifications';
 
 export const conversations: { conversations: RawConversation[] } = {
   conversations: [

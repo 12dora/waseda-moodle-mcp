@@ -1,18 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { MoodleError, NotFound } from '../../src/core/errors';
-import {
-  getConversation,
-  listConversations,
-  listNotifications,
-  mapConversation,
-  mapNotification,
-} from '../../src/core/services/messages';
+import { getConversation, listConversations, mapConversation } from '../../src/core/services/messages';
+import { listNotifications, mapNotification } from '../../src/core/services/messages/notifications';
+import { fromTs } from '../../src/core/time';
 import {
   conversationInfoGroupOfTwo,
   conversationMessages,
   conversations,
   notifications,
 } from '../fixtures/be3/messages';
+import { manyMessages } from '../fixtures/r8/messaging';
 import { makeFakeContext } from '../helpers/fake-context-be3';
 
 describe('mapConversation', () => {
@@ -107,7 +104,7 @@ describe('getConversation', () => {
       includeprivacyinfo: false,
       memberlimit: 0,
       memberoffset: 0,
-      messagelimit: 0,
+      messagelimit: 1,
       messageoffset: 0,
       newestmessagesfirst: true,
     });
@@ -211,5 +208,100 @@ describe('notifications', () => {
     const r = await listNotifications(ctx, { unreadOnly: true, limit: 20 });
     expect(r.notifications.map((n) => n.id)).toEqual([1, 3]);
     expect(calls[0]?.params.limit).toBe(60);
+  });
+});
+
+describe('paging (round 8)', () => {
+  it('list_messages passes offset and a numeric type to Moodle', async () => {
+    const { ctx, calls } = makeFakeContext({ core_message_get_conversations: conversations });
+    await listConversations(ctx, { limit: 5, offset: 10, type: 'group' });
+    expect(calls[0]?.params).toEqual({ userid: 1001, limitfrom: 10, limitnum: 5, type: 2 });
+  });
+
+  it('get_conversation lists member ids and pages with offset', async () => {
+    const { ctx, calls } = makeFakeContext({ core_message_get_conversation_messages: manyMessages() });
+    const c = await getConversation(ctx, 11, { limit: 10, offset: 10 });
+    expect(calls[0]?.params).toMatchObject({ limitfrom: 10, limitnum: 10 });
+    expect(c.members).toEqual([
+      { id: 1001, name: 'Taro Yamada' },
+      { id: 2002, name: 'Hanako Suzuki' },
+    ]);
+    expect(c.messages).toHaveLength(10);
+    // a full page means there may be older messages: the next page starts after the ones shown
+    expect(c.nextOffset).toBe(20);
+  });
+
+  it('a short page ends the history', async () => {
+    const { ctx } = makeFakeContext({ core_message_get_conversation_messages: manyMessages() });
+    expect((await getConversation(ctx, 11, { limit: 30 })).nextOffset).toBeNull();
+  });
+
+  it('pages far back: every page asks Moodle for its own window', async () => {
+    const { ctx, calls } = makeFakeContext({
+      core_message_get_conversation_messages: (p: Record<string, unknown>) => {
+        const all = manyMessages();
+        const from = Number(p.limitfrom) % 10;
+        return { ...all, messages: all.messages?.slice(from, from + Number(p.limitnum)) };
+      },
+    });
+    const page = await getConversation(ctx, 11, { limit: 4, offset: 240 });
+    expect(calls[0]?.params).toMatchObject({ limitfrom: 240, limitnum: 4 });
+    expect(page.messages).toHaveLength(4);
+    expect(page.nextOffset).toBe(244);
+    expect(await getConversation(ctx, 11, { limit: 4, offset: 248 })).toMatchObject({ nextOffset: null });
+  });
+
+  it('takes the last message from the conversation info when paging, not from the page', async () => {
+    const info = {
+      ...conversationInfoGroupOfTwo,
+      messages: [{ id: 99, text: '<p>latest news</p>', timecreated: 1791950000 }],
+    };
+    const { ctx } = makeFakeContext({
+      core_message_get_conversation_messages: manyMessages(),
+      core_message_get_conversation: info,
+    });
+    const c = await getConversation(ctx, 15, { limit: 10, offset: 10 });
+    expect(c.summary.lastAt).toBe(fromTs(1791950000));
+    expect(c.summary.lastMessage).toBe('latest news');
+    // without the header, an old page must not pass for the latest message
+    const bare = makeFakeContext({ core_message_get_conversation_messages: manyMessages() });
+    const old = await getConversation(bare.ctx, 11, { limit: 10, offset: 10 });
+    expect(old.summary).toMatchObject({ lastMessage: null, lastAt: null });
+  });
+
+  it('caps the members in the result at 50', async () => {
+    const members = Array.from({ length: 60 }, (_, i) => ({ id: 3000 + i, fullname: `Member ${i}` }));
+    const { ctx } = makeFakeContext({
+      core_message_get_conversation_messages: manyMessages(),
+      core_message_get_conversation: { id: 11, name: 'Big', type: 2, unreadcount: 0, members, messages: [] },
+    });
+    const c = await getConversation(ctx, 11);
+    expect(c.members).toHaveLength(50);
+    expect(c.summary.memberIds).toHaveLength(50);
+  });
+});
+
+describe('notification paging (round 8)', () => {
+  it('passes offset and returns the next offset while the feed continues', async () => {
+    const { ctx, calls } = makeFakeContext({ message_popup_get_popup_notifications: notifications });
+    const r = await listNotifications(ctx, { limit: 2, offset: 4 });
+    expect(calls[0]?.params).toMatchObject({ limit: 2, offset: 4 });
+    expect(r.nextOffset).toBe(6);
+    expect(r.notifications[0]).toMatchObject({ id: 1, component: 'moodle' });
+  });
+
+  it('unreadOnly counts only the feed entries it consumed', async () => {
+    const { ctx } = makeFakeContext({ message_popup_get_popup_notifications: notifications });
+    // unread are ids 1 and 3 (positions 0 and 2): the second page starts after the third entry
+    const r = await listNotifications(ctx, { unreadOnly: true, limit: 2, offset: 10 });
+    expect(r.notifications.map((n) => n.id)).toEqual([1, 3]);
+    expect(r.nextOffset).toBe(13);
+  });
+
+  it('ends the feed when Moodle returns fewer entries than asked', async () => {
+    const { ctx } = makeFakeContext({ message_popup_get_popup_notifications: notifications });
+    const r = await listNotifications(ctx, { limit: 20 });
+    expect(r.notifications).toHaveLength(4);
+    expect(r.nextOffset).toBeNull();
   });
 });
