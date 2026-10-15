@@ -124,26 +124,38 @@ export function syllabusEntry(course: CourseRef, info: SyllabusInfo): TimetableE
 }
 
 /**
- * Last day the attendance-session slots apply: the last session seen, or, when that was in the past two weeks
- * (sessions are created week by week), the end of the term it was in (the Moodle end of the course, if sooner).
+ * Last day the attendance-session slots apply: the last session seen, or, when that is recent or still ahead
+ * (sessions created week by week, or a few weeks in advance), the end of the term it is in (the Moodle end of the
+ * course, if sooner). A last session outside every term ends there.
  */
 function sessionsEnd(course: Course, lastDate: string | null, now: number): string | null {
   if (lastDate === null) return null;
   const today = isoJst(now).slice(0, 10);
-  if (lastDate > today || lastDate < addDays(today, -RECENT_SESSION_DAYS)) return lastDate;
-  const ends = [termEndOn(calendarFor(lastDate), lastDate), jstDate(course.end)].filter((d): d is string => d !== null);
-  const end = ends.sort()[0];
-  return end !== undefined && end > lastDate ? end : lastDate;
+  if (lastDate < addDays(today, -RECENT_SESSION_DAYS)) return lastDate;
+  const termEnd = termEndOn(calendarFor(lastDate), lastDate);
+  if (termEnd === null) return lastDate;
+  const end = [termEnd, jstDate(course.end)].filter((d): d is string => d !== null).sort()[0] ?? termEnd;
+  return end > lastDate ? end : lastDate;
 }
 
-/** Attendance-session slots of a course; null when Moodle showed no weekly meeting. `now` is in ms. */
-export function inferredEntry(course: Course, inferred: InferredSchedule, now: number): TimetableEntry | null {
+/**
+ * Attendance-session slots of a course; null when Moodle showed no weekly meeting. `now` is in ms. A syllabus term,
+ * when known (its time was not understood), bounds them like the syllabus would; else the sessions' own dates do.
+ */
+export function inferredEntry(
+  course: Course,
+  inferred: InferredSchedule,
+  opts: { info: SyllabusInfo | null; now: number },
+): TimetableEntry | null {
   if (inferred.slots.length === 0) return null;
   return {
     course,
     source: 'moodle',
     slots: inferred.slots.map((s): EntrySlot => ({ ...s, campus: null })),
-    coverage: { kind: 'window', from: inferred.firstDate, to: sessionsEnd(course, inferred.lastDate, now) },
+    coverage:
+      opts.info && hasWeeklyTerm(opts.info.term)
+        ? termCoverage(opts.info)
+        : { kind: 'window', from: inferred.firstDate, to: sessionsEnd(course, inferred.lastDate, opts.now) },
     listing: null,
     alsoInClass: false,
   };

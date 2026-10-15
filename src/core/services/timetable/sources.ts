@@ -54,7 +54,7 @@ function missingReason(ctx: ServiceContext, c: Unresolved, checked: boolean): Ti
 function fallbackOutcome(ctx: ServiceContext, c: Unresolved, inference: Inference): Outcome {
   const { course, info } = c;
   const inferred = inference.found.get(course.id);
-  const fromMoodle = inferred ? inferredEntry(course, inferred, nowMs()) : null;
+  const fromMoodle = inferred ? inferredEntry(course, inferred, { info, now: nowMs() }) : null;
   if (fromMoodle) return entryOnly(fromMoodle);
   // a syllabus that says "no meeting" (無その他) is a course without fixed time, not an unknown one
   const understood = info !== null && !info.scheduleUnparsed;

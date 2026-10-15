@@ -782,28 +782,54 @@ describe('inferredEntry', () => {
   const hits = (e: TimetableEntry | null) => fridays.filter((d) => e && classesOn(d, [e]).classes.length > 0);
 
   it('has no entry when Moodle showed no weekly meeting', () => {
-    expect(inferredEntry(course(1, 'x'), inferred([], null, null), NOW_MS)).toBeNull();
+    expect(inferredEntry(course(1, 'x'), inferred([], null, null), { info: null, now: NOW_MS })).toBeNull();
   });
 
-  it('stops at the last session when it is old or already in the future', () => {
-    const old = inferredEntry(course(5, 'Seen'), inferred([friP1_2], '2026-09-18', '2026-09-25'), NOW_MS);
+  it('stops at an old last session; one still ahead (made in advance) runs to the term end', () => {
+    const old = inferredEntry(course(5, 'Seen'), inferred([friP1_2], '2026-09-18', '2026-09-25'), {
+      info: null,
+      now: NOW_MS,
+    });
     expect(old?.coverage).toEqual({ kind: 'window', from: '2026-09-18', to: '2026-09-25' });
-    const ahead = inferredEntry(course(5, 'Seen'), inferred([friP1_2], '2026-10-02', '2026-11-13'), NOW_MS);
-    expect(hits(ahead)).toEqual(['2026-10-16', '2026-11-13']);
+    const ahead = inferredEntry(course(5, 'Seen'), inferred([friP1_2], '2026-10-02', '2026-11-13'), {
+      info: null,
+      now: NOW_MS,
+    });
+    expect(hits(ahead)).toEqual(fridays.slice(0, 4));
+  });
+
+  it('ends at a recent last session that lies outside every term, and follows a known syllabus term', () => {
+    const summer = Date.parse('2026-08-05T03:00:00Z');
+    const makeUp = inferredEntry(course(5, 'Seen'), inferred([friP1_2], '2026-06-05', '2026-07-31'), {
+      info: null,
+      now: summer,
+    });
+    expect(makeUp?.coverage).toMatchObject({ to: '2026-07-31' });
+    const quarter = info('秋クォーター', [], { scheduleUnparsed: true });
+    const q = inferredEntry(course(5, 'Seen'), inferred([friP1_2], '2026-10-02', '2026-10-09'), {
+      info: quarter,
+      now: NOW_MS,
+    });
+    expect(q?.coverage).toMatchObject({ kind: 'term', term: '秋クォーター' });
+    expect(hits(q)).toEqual(['2026-10-16', '2026-11-13']); // 秋クォーター ends in late November
   });
 
   it('runs to the end of the term when the last session is from the past two weeks (made week by week)', () => {
     const recent = inferred([friP1_2], '2026-10-02', '2026-10-09');
-    expect(hits(inferredEntry(course(5, 'Seen'), recent, NOW_MS))).toEqual(fridays.slice(0, 4)); // term ends 2027-02-02
+    expect(hits(inferredEntry(course(5, 'Seen'), recent, { info: null, now: NOW_MS }))).toEqual(fridays.slice(0, 4)); // term ends 2027-02-02
     // the Moodle end of the course cuts it short
     const ends = course(5, 'Seen', { end: '2026-12-18T23:59:00+09:00' });
-    expect(hits(inferredEntry(ends, recent, NOW_MS))).toEqual(['2026-10-16', '2026-11-13', '2026-12-18']);
+    expect(hits(inferredEntry(ends, recent, { info: null, now: NOW_MS }))).toEqual([
+      '2026-10-16',
+      '2026-11-13',
+      '2026-12-18',
+    ]);
   });
 
   it('counts 14 days back as recent and 15 as old', () => {
     const on20th = Date.parse('2026-10-20T03:00:00Z');
     const sessions = (lastDate: string) => inferred([friP1_2], '2026-10-02', lastDate);
-    const at = (lastDate: string) => inferredEntry(course(5, 'Seen'), sessions(lastDate), on20th);
+    const at = (lastDate: string) => inferredEntry(course(5, 'Seen'), sessions(lastDate), { info: null, now: on20th });
     expect(at('2026-10-06')?.coverage).toMatchObject({ to: '2027-02-02' });
     expect(at('2026-10-05')?.coverage).toMatchObject({ to: '2026-10-05' });
   });
