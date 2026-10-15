@@ -196,21 +196,32 @@ export function registrationPolicy(env: Env): (moodleUserId: number) => boolean 
 
 // ------------------------------------------------------------------ rate limits
 
-const memoryCounters = new Map<string, { n: number; resetAt: number }>();
+type Counters = Map<string, { n: number; resetAt: number }>;
+
+const COUNTER_CAP = 2000;
+/** MCP per-user limiter state. Separate from `preCounters` so IP churn can never reset user counters. */
+const memoryCounters: Counters = new Map();
+/** `rateLimit` pre-check state: requests D1 allowed (or failed open on), per rule key. */
+const preCounters: Counters = new Map();
+
+/** Fixed-window increment in a bounded map; returns the new count. */
+function hitCounter(map: Counters, key: string, windowMs: number, now: number): number {
+  if (map.size > COUNTER_CAP) {
+    for (const [k, v] of map) if (v.resetAt <= now) map.delete(k);
+    if (map.size > COUNTER_CAP) map.clear();
+  }
+  const cur = map.get(key);
+  if (!cur || cur.resetAt <= now) {
+    map.set(key, { n: 1, resetAt: now + windowMs });
+    return 1;
+  }
+  cur.n += 1;
+  return cur.n;
+}
 
 /** Best-effort per-isolate limiter (no KV I/O) for cheap abuse damping. Throws RateLimited. */
 export function memoryRateLimit(key: string, limit: number, windowMs: number, now = Date.now()): void {
-  if (memoryCounters.size > 2000) {
-    for (const [k, v] of memoryCounters) if (v.resetAt <= now) memoryCounters.delete(k);
-    if (memoryCounters.size > 2000) memoryCounters.clear();
-  }
-  const cur = memoryCounters.get(key);
-  if (!cur || cur.resetAt <= now) {
-    memoryCounters.set(key, { n: 1, resetAt: now + windowMs });
-    return;
-  }
-  cur.n += 1;
-  if (cur.n > limit) throw new RateLimited();
+  if (hitCounter(memoryCounters, key, windowMs, now) > limit) throw new RateLimited();
 }
 
 export interface RateLimitRule {
@@ -228,19 +239,23 @@ export async function rateLimit(store: D1Store, rule: RateLimitRule, now = Date.
   // Keys this isolate already saw over the limit are refused without another D1 write (D1 Free: 100k writes/day).
   const blockedUntil = blockedKeys.get(rule.key);
   if (blockedUntil !== undefined && blockedUntil > now) throw new RateLimited();
-  memoryRateLimit(`pre:${rule.key}`, rule.limit * 2, rule.windowMs, now); // generous: D1 stays the source of truth
-  let hits: number;
+  // The pre-check only counts requests D1 allowed (any window of one length spans ≤2 D1 windows, so ≤2×limit), so it
+  // trips only while D1 is down and failing open, and never blocks longer than D1 would.
+  const pre = preCounters.get(rule.key);
+  if (pre && pre.resetAt > now && pre.n >= rule.limit * 2) throw new RateLimited();
+  let hits = 0;
   try {
     hits = await store.hitRateLimit(rule.key, rule.windowMs, now);
   } catch {
-    return;
+    // fail open: counted below as allowed
   }
   if (hits > rule.limit) {
-    if (blockedKeys.size > 2000) blockedKeys.clear();
+    if (blockedKeys.size > COUNTER_CAP) blockedKeys.clear();
     // D1 windows start at the first hit (unknown here), so only remember the block briefly.
     blockedKeys.set(rule.key, now + Math.min(rule.windowMs / 10, 60_000));
     throw new RateLimited();
   }
+  hitCounter(preCounters, rule.key, rule.windowMs, now);
 }
 
 const blockedKeys = new Map<string, number>();
@@ -249,6 +264,7 @@ const blockedKeys = new Map<string, number>();
 export function resetRateLimitMemory(): void {
   blockedKeys.clear();
   memoryCounters.clear();
+  preCounters.clear();
 }
 
 export function clientIp(request: Request): string {

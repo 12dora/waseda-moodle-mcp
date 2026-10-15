@@ -10,6 +10,7 @@ import {
   rateLimit,
   readSessionCookie,
   registrationPolicy,
+  resetRateLimitMemory,
   resolveApiKey,
   SESSION_COOKIE,
   SESSION_TOUCH_MS,
@@ -192,6 +193,72 @@ describe('rate limits', () => {
       },
     } as unknown as D1Store;
     await expect(rateLimit(broken, { key: 'x', limit: 0, windowMs: 1000 })).resolves.toBeUndefined();
+  });
+
+  describe('in-isolate pre-check', () => {
+    /** A store whose D1 counter is scripted per call; records how often D1 was hit. */
+    const scripted = (answer: (call: number) => number | Error) => {
+      const state = { calls: 0 };
+      const store = {
+        hitRateLimit: async () => {
+          const r = answer(++state.calls);
+          if (r instanceof Error) throw r;
+          return r;
+        },
+      } as unknown as D1Store;
+      return { store, state };
+    };
+    const rule = { key: 'pre-k', limit: 2, windowMs: 600_000 };
+
+    beforeEach(() => resetRateLimitMemory());
+
+    it('blockedKeys short-circuit refuses without calling D1, with the same 429 error', async () => {
+      const { store, state } = scripted(() => 3);
+      const first = await rateLimit(store, rule, 1_000).catch((e) => e);
+      expect(first).toBeInstanceOf(RateLimited);
+      expect(state.calls).toBe(1);
+      const second = await rateLimit(store, rule, 2_000).catch((e) => e);
+      expect(state.calls).toBe(1);
+      expect(second).toBeInstanceOf(RateLimited);
+      expect(second.code).toBe(first.code);
+      expect(second.message).toBe(first.message);
+    });
+
+    it('the 2×limit memory path refuses without calling D1 (D1 down, failing open)', async () => {
+      const { store, state } = scripted(() => new Error('D1 unavailable'));
+      for (let i = 0; i < 4; i++) await expect(rateLimit(store, rule, 1_000 + i)).resolves.toBeUndefined();
+      expect(state.calls).toBe(4);
+      const err = await rateLimit(store, rule, 1_010).catch((e) => e);
+      expect(err).toBeInstanceOf(RateLimited);
+      expect(err.code).toBe('rate_limited');
+      expect(state.calls).toBe(4);
+      await expect(rateLimit(store, rule, 1_000 + rule.windowMs)).resolves.toBeUndefined();
+      expect(state.calls).toBe(5);
+    });
+
+    it('does not count requests D1 rejected, so it never blocks after D1 allows again', async () => {
+      // D1 rejects 10 times in a row across blocked-key expiries, then its window resets.
+      const { store, state } = scripted((call) => (call <= 10 ? 3 : 1));
+      let now = 1_000;
+      for (let i = 0; i < 10; i++) {
+        await expect(rateLimit(store, rule, now)).rejects.toBeInstanceOf(RateLimited);
+        now += rule.windowMs / 10; // blockedKeys entry expires, D1 is asked again
+      }
+      expect(state.calls).toBe(10);
+      await expect(rateLimit(store, rule, now)).resolves.toBeUndefined();
+      await expect(rateLimit(store, rule, now + 1)).resolves.toBeUndefined();
+    });
+
+    it('rotating-IP churn does not reset the MCP per-user counters', async () => {
+      const { store } = scripted(() => 1);
+      const now = Date.now();
+      memoryRateLimit('mcp:user-1', 2, 60_000, now);
+      memoryRateLimit('mcp:user-1', 2, 60_000, now);
+      for (let i = 0; i < 2500; i++) {
+        await rateLimit(store, { key: `ext:ip:10.0.${i >> 8}.${i & 255}`, limit: 5, windowMs: 60_000 }, now);
+      }
+      expect(() => memoryRateLimit('mcp:user-1', 2, 60_000, now)).toThrow(RateLimited);
+    });
   });
 
   it('clientIp prefers CF-Connecting-IP', () => {
