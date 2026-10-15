@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#8C1C26">
+<title>用 AI 查早稻田 Moodle ─ 作业截止・课表・教学大纲 | Waseda Moodle MCP</title>
+<meta name="description" content="在 Claude、ChatGPT 等 AI 助手中使用早稻田 Moodle。全部课程的作业截止与提交状态、课表、教学大纲、成绩一处查看。无需密码，免费的非官方工具。">
+<link rel="canonical" href="__PUBLIC_URL__/zh/" vite-ignore>
+<link rel="alternate" hreflang="ja" href="__PUBLIC_URL__/" vite-ignore>
+<link rel="alternate" hreflang="en" href="__PUBLIC_URL__/en/" vite-ignore>
+<link rel="alternate" hreflang="zh-Hans" href="__PUBLIC_URL__/zh/" vite-ignore>
+<link rel="alternate" hreflang="x-default" href="__PUBLIC_URL__/" vite-ignore>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Waseda Moodle MCP">
+<meta property="og:title" content="用 AI 查早稻田 Moodle ─ 作业截止・课表・教学大纲">
+<meta property="og:description" content="全部课程的作业截止与提交状态、课表、教学大纲、成绩，问 AI 即可。无需密码，免费。">
+<meta property="og:url" content="__PUBLIC_URL__/zh/">
+<meta property="og:image" content="__PUBLIC_URL__/og.png" vite-ignore>
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="ja_JP">
+<meta property="og:locale:alternate" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="__PUBLIC_URL__/og.png" vite-ignore>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%238c1c26'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='15' font-weight='700' text-anchor='middle' fill='white'%3EW%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/landing/landing.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"WebApplication","name":"Waseda Moodle MCP","url":"__PUBLIC_URL__/zh/","applicationCategory":"EducationalApplication","operatingSystem":"Web","inLanguage":"zh-Hans","description":"将早稻田 Moodle 接入 Claude、ChatGPT 等 AI 助手的非官方工具：作业截止与提交状态、课表、教学大纲、成绩一处查看。","offers":{"@type":"Offer","price":"0","priceCurrency":"JPY"}},
+{"@type":"FAQPage","inLanguage":"zh-Hans","mainEntity":[
+{"@type":"Question","name":"免费吗？","acceptedAnswer":{"@type":"Answer","text":"是的，免费使用。"}},
+{"@type":"Question","name":"需要提供密码吗？","acceptedAnswer":{"@type":"Answer","text":"不需要。通过浏览器中已登录的 Moodle 会话连接，不会输入或保存你的密码。"}},
+{"@type":"Question","name":"这是早稻田大学的官方服务吗？","acceptedAnswer":{"@type":"Answer","text":"不是。这是非官方工具，与早稻田大学无关。"}},
+{"@type":"Question","name":"支持哪些 AI？","acceptedAnswer":{"@type":"Answer","text":"支持各类 MCP 客户端，包括 Claude（网页、桌面、移动端）、ChatGPT、Grok、Claude Code、Cursor、VS Code、Codex CLI、Gemini CLI。"}},
+{"@type":"Question","name":"可以删除我的数据吗？","acceptedAnswer":{"@type":"Answer","text":"可以，随时删除。详情请参阅隐私政策。"}}
+]}
+]}
+</script>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="/zh/" aria-label="Waseda Moodle MCP 首页"><i aria-hidden="true">W</i>Waseda Moodle MCP</a>
+    <nav class="nav" aria-label="主导航">
+      <ul class="lang" aria-label="语言">
+        <li><a href="/" hreflang="ja" lang="ja">日本語</a></li>
+        <li><a href="/en/" hreflang="en" lang="en">EN</a></li>
+        <li><a href="/zh/" hreflang="zh-Hans" lang="zh-Hans" aria-current="page">中文</a></li>
+      </ul>
+      <a class="btn ghost sm" href="/connect">控制台</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" aria-labelledby="h1">
+    <div class="wrap">
+      <p class="eyebrow">AI × Waseda Moodle</p>
+      <h1 id="h1"><span class="ib">早稻田 Moodle 的作业截止和课表，</span><span class="ib">问 AI 就好。</span></h1>
+      <p class="sub">在 Claude 或 ChatGPT 中查看全部课程的作业、课表、教学大纲和成绩。无需密码，免费。</p>
+      <div class="cta">
+        <a class="btn primary" href="/connect">开始使用</a>
+        <a class="btn ghost" href="#how">使用方法</a>
+      </div>
+      <p class="note">非官方工具 · 与早稻田大学无关</p>
+    </div>
+  </section>
+
+  <section class="sec" id="features" aria-labelledby="h-features">
+    <div class="wrap">
+      <h2 id="h-features">功能 ─ 用 AI 查 Moodle 作业截止、课表与教学大纲</h2>
+      <p class="lead">无需打开 Moodle，在对话中获取所需信息。</p>
+      <ul class="grid">
+        <li><h3>作业截止与提交状态</h3><p>汇总全部课程的作业，区分草稿与已提交，并找出课程页面中的任务。</p></li>
+        <li><h3>课表</h3><p>真实的上下课时间与教室，含调课日和节假日上课日。</p></li>
+        <li><h3>教学大纲</h3><p>查看授课计划、评分方式和教材，并可直接请 AI 辅助备考。</p></li>
+        <li><h3>成绩、动态与资料</h3><p>查看成绩和各课程的最新动态，课程文件由 AI 直接读取。</p></li>
+        <li><h3>论坛与消息搜索</h3><p>跨论坛、消息和通知统一搜索。</p></li>
+        <li><h3>测验回顾</h3><p>回顾已完成的测验。不会代替你作答。</p></li>
+        <li><h3>日历订阅</h3><p>将作业截止同步到 Google、Apple 或 Outlook 日历。</p></li>
+        <li><h3>先预览，后操作</h3><p>提交作业、发帖、发消息、标记完成等操作，均在你确认预览后才执行。</p></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec" id="how" aria-labelledby="h-how">
+    <div class="wrap">
+      <h2 id="h-how">使用方法 ─ 三步接入 Claude 或 ChatGPT</h2>
+      <p class="lead">几分钟即可完成，无需安装。</p>
+      <ol class="steps">
+        <li><div><h3>登录 Moodle 并连接</h3><p>在浏览器中登录 Waseda Moodle，然后在本站通过书签工具或浏览器扩展连接。无需输入密码。</p></div></li>
+        <li><div><h3>在 AI 客户端添加 URL</h3><p>添加以下 MCP URL，并通过 OAuth 登录。</p>
+          <pre class="url"><code>__PUBLIC_URL__/mcp</code></pre>
+          <p class="hint">点按即可全选复制。</p>
+          <ul class="clients" aria-label="支持的客户端">
+            <li>Claude（网页、桌面、移动端）</li><li>ChatGPT</li><li>Grok</li><li>Claude Code</li><li>Cursor</li><li>VS Code</li><li>Codex CLI</li><li>Gemini CLI</li><li>其他 MCP 客户端</li>
+          </ul></div></li>
+        <li><div><h3>直接提问</h3><p>用日常语言提问，AI 会从 Moodle 中整理答案。</p></div></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="sec" id="examples" aria-labelledby="h-examples">
+    <div class="wrap">
+      <h2 id="h-examples">比如，这样问</h2>
+      <p class="lead">AI 跨课程查询，只返回要点。</p>
+      <ul class="ask">
+        <li>「这周有哪些截止的作业？」</li>
+        <li>「明天的课表是什么？」</li>
+        <li>「市场营销课怎么评分？」</li>
+        <li>「只看未提交的作业」</li>
+        <li>「帮我准备考试」</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec" id="security" aria-labelledby="h-security">
+    <div class="wrap">
+      <h2 id="h-security">安全可靠的设计</h2>
+      <p class="lead">只处理必要的数据，并安全保管。</p>
+      <ul class="grid four">
+        <li><h3>无需密码</h3><p>不会输入或保存你的 Moodle 密码。</p></li>
+        <li><h3>加密存储</h3><p>连接令牌经加密后保存。</p></li>
+        <li><h3>文件不留存</h3><p>课程文件仅中转，不做保存。</p></li>
+        <li><h3>随时删除</h3><p>数据可随时删除。<a href="/privacy">隐私政策</a></p></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec faq" id="faq" aria-labelledby="h-faq">
+    <div class="wrap">
+      <h2 id="h-faq">常见问题</h2>
+      <p class="lead">关于用 AI 使用早稻田 Moodle。</p>
+      <details><summary>免费吗？</summary><p>是的，免费使用。</p></details>
+      <details><summary>需要提供密码吗？</summary><p>不需要。通过浏览器中已登录的 Moodle 会话连接，不会输入或保存你的密码。</p></details>
+      <details><summary>这是早稻田大学的官方服务吗？</summary><p>不是。这是非官方工具，与早稻田大学无关。</p></details>
+      <details><summary>支持哪些 AI？</summary><p>支持各类 MCP 客户端，包括 Claude（网页、桌面、移动端）、ChatGPT、Grok、Claude Code、Cursor、VS Code、Codex CLI、Gemini CLI。</p></details>
+      <details><summary>可以删除我的数据吗？</summary><p>可以，随时删除。详情请参阅<a href="/privacy">隐私政策</a>。</p></details>
+    </div>
+  </section>
+
+  <section class="band" aria-labelledby="h-cta">
+    <div class="wrap">
+      <h2 id="h-cta">把早稻田 Moodle 接入你的 AI。</h2>
+      <p>几分钟完成设置，免费使用。</p>
+      <a class="btn primary" href="/connect">开始使用</a>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <p>© 2026 Waseda Moodle MCP · 非官方工具 · 与早稻田大学无关</p>
+    <p><a href="/privacy">隐私政策</a></p>
+  </div>
+</footer>
+</body>
+</html>

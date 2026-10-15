@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <!-- OG artwork source; rendered to public/og.png (1200x630) with Noto Serif JP. No university logo or emblem. -->
+  <rect width="1200" height="630" fill="#FAF8F3"/>
+  <rect width="1200" height="14" fill="#8C1C26"/>
+  <rect x="0" y="470" width="1200" height="160" fill="#8C1C26"/>
+  <g font-family="Hiragino Mincho ProN, Yu Mincho, Noto Serif JP, Noto Serif CJK JP, serif">
+    <rect x="96" y="92" width="56" height="56" rx="12" fill="#8C1C26"/>
+    <text x="124" y="131" font-family="system-ui, -apple-system, Segoe UI, Noto Sans, sans-serif" font-size="30" font-weight="700" fill="#FFFFFF" text-anchor="middle">W</text>
+    <text x="172" y="133" font-size="40" font-weight="600" fill="#1A1816">Waseda Moodle MCP</text>
+    <rect x="96" y="196" width="48" height="4" fill="#8C1C26"/>
+    <text x="96" y="280" font-size="58" font-weight="600" fill="#1A1816">早稲田 Moodle の締切も時間割も、</text>
+    <text x="96" y="360" font-size="58" font-weight="600" fill="#1A1816">AI に聞くだけ。</text>
+    <text x="96" y="545" font-size="46" font-weight="600" fill="#FFFFFF" letter-spacing="2">AI × Waseda Moodle</text>
+  </g>
+  <text x="96" y="597" font-family="system-ui, -apple-system, Segoe UI, Noto Sans JP, Noto Sans, sans-serif" font-size="24" fill="#F3E6E4">Claude · ChatGPT · 締切 · 時間割 · シラバス</text>
+  <text x="1104" y="440" font-family="system-ui, -apple-system, Segoe UI, Noto Sans JP, Noto Sans, sans-serif" font-size="22" fill="#57524B" text-anchor="end">非公式 · Unofficial · not affiliated with Waseda University</text>
+</svg>

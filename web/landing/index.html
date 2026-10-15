@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#8C1C26">
+<title>早稲田 Moodle を AI で ─ 締切・時間割・シラバス | Waseda Moodle MCP</title>
+<meta name="description" content="早稲田の Moodle を Claude・ChatGPT などの AI から。全科目の締切と提出状況、時間割、シラバス、成績をまとめて確認。パスワード不要・無料の非公式ツール。">
+<link rel="canonical" href="__PUBLIC_URL__/" vite-ignore>
+<link rel="alternate" hreflang="ja" href="__PUBLIC_URL__/" vite-ignore>
+<link rel="alternate" hreflang="en" href="__PUBLIC_URL__/en/" vite-ignore>
+<link rel="alternate" hreflang="zh-Hans" href="__PUBLIC_URL__/zh/" vite-ignore>
+<link rel="alternate" hreflang="x-default" href="__PUBLIC_URL__/" vite-ignore>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Waseda Moodle MCP">
+<meta property="og:title" content="早稲田 Moodle を AI で ─ 締切・時間割・シラバス">
+<meta property="og:description" content="全科目の締切と提出状況、時間割、シラバス、成績を AI に聞くだけ。パスワード不要・無料。">
+<meta property="og:url" content="__PUBLIC_URL__/">
+<meta property="og:image" content="__PUBLIC_URL__/og.png" vite-ignore>
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:locale:alternate" content="zh_CN">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="__PUBLIC_URL__/og.png" vite-ignore>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%238c1c26'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='15' font-weight='700' text-anchor='middle' fill='white'%3EW%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/landing/landing.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"WebApplication","name":"Waseda Moodle MCP","url":"__PUBLIC_URL__/","applicationCategory":"EducationalApplication","operatingSystem":"Web","inLanguage":"ja","description":"早稲田の Moodle を Claude・ChatGPT などの AI アシスタントから使える非公式ツール。締切と提出状況、時間割、シラバス、成績をまとめて確認できます。","offers":{"@type":"Offer","price":"0","priceCurrency":"JPY"}},
+{"@type":"FAQPage","inLanguage":"ja","mainEntity":[
+{"@type":"Question","name":"無料ですか？","acceptedAnswer":{"@type":"Answer","text":"はい、無料です。"}},
+{"@type":"Question","name":"パスワードは必要ですか？","acceptedAnswer":{"@type":"Answer","text":"不要です。ブラウザでログイン済みの Moodle から接続するため、パスワードを入力・保存することはありません。"}},
+{"@type":"Question","name":"早稲田大学の公式サービスですか？","acceptedAnswer":{"@type":"Answer","text":"いいえ。非公式ツールで、早稲田大学とは関係ありません。"}},
+{"@type":"Question","name":"どの AI で使えますか？","acceptedAnswer":{"@type":"Answer","text":"Claude（Web・デスクトップ・モバイル）、ChatGPT、Grok、Claude Code、Cursor、VS Code、Codex CLI、Gemini CLI など、MCP に対応したクライアントで使えます。"}},
+{"@type":"Question","name":"データは削除できますか？","acceptedAnswer":{"@type":"Answer","text":"はい、いつでも削除できます。詳しくはプライバシーポリシーをご覧ください。"}}
+]}
+]}
+</script>
+</head>
+<body>
+<a class="skip" href="#main">本文へスキップ</a>
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="/" aria-label="Waseda Moodle MCP ホーム"><i aria-hidden="true">W</i>Waseda Moodle MCP</a>
+    <nav class="nav" aria-label="メイン">
+      <ul class="lang" aria-label="言語">
+        <li><a href="/" hreflang="ja" lang="ja" aria-current="page">日本語</a></li>
+        <li><a href="/en/" hreflang="en" lang="en">EN</a></li>
+        <li><a href="/zh/" hreflang="zh-Hans" lang="zh-Hans">中文</a></li>
+      </ul>
+      <a class="btn ghost sm" href="/connect">コンソール</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" aria-labelledby="h1">
+    <div class="wrap">
+      <p class="eyebrow">AI × Waseda Moodle</p>
+      <h1 id="h1"><span class="ib">早稲田 Moodle の締切も時間割も、</span><span class="ib">AI に聞くだけ。</span></h1>
+      <p class="sub">Claude や ChatGPT から、全科目の課題・時間割・シラバス・成績をまとめて確認。パスワード不要、無料。</p>
+      <div class="cta">
+        <a class="btn primary" href="/connect">はじめる</a>
+        <a class="btn ghost" href="#how">使い方を見る</a>
+      </div>
+      <p class="note">非公式ツール · 早稲田大学とは関係ありません</p>
+    </div>
+  </section>
+
+  <section class="sec" id="features" aria-labelledby="h-features">
+    <div class="wrap">
+      <h2 id="h-features">できること ─ 締切・時間割・シラバスを AI で</h2>
+      <p class="lead">Moodle を開かずに、必要な情報だけを会話で。</p>
+      <ul class="grid">
+        <li><h3>締切と提出状況</h3><p>全科目の課題を一覧。下書き・提出済みを区別し、コースページ内の課題も拾います。</p></li>
+        <li><h3>時間割</h3><p>実際の開始・終了時刻と教室。振替授業日・祝日授業日にも対応。</p></li>
+        <li><h3>シラバス</h3><p>授業計画・成績評価・教科書を確認。そのまま試験対策も依頼できます。</p></li>
+        <li><h3>成績・更新・資料</h3><p>成績と各コースの新着を確認。配布ファイルは AI が読み取ります。</p></li>
+        <li><h3>フォーラム・メッセージ検索</h3><p>フォーラム、メッセージ、通知を横断して検索。</p></li>
+        <li><h3>小テストの振り返り</h3><p>終了した受験を見直し。受験そのものは代行しません。</p></li>
+        <li><h3>カレンダー購読</h3><p>締切を Google・Apple・Outlook カレンダーに同期。</p></li>
+        <li><h3>確認してから操作</h3><p>課題提出・投稿・メッセージ送信・完了マークなどは、プレビューを確認した後にのみ実行。</p></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec" id="how" aria-labelledby="h-how">
+    <div class="wrap">
+      <h2 id="h-how">使い方 ─ 3 ステップで Claude・ChatGPT に接続</h2>
+      <p class="lead">数分で設定完了。インストールは不要です。</p>
+      <ol class="steps">
+        <li><div><h3>Moodle にログインして接続</h3><p>ブラウザで Waseda Moodle にログインし、このサイトでブックマークレットまたは拡張機能から接続。パスワードは入力しません。</p></div></li>
+        <li><div><h3>AI クライアントに URL を追加</h3><p>次の MCP URL を追加し、OAuth でサインインします。</p>
+          <pre class="url"><code>__PUBLIC_URL__/mcp</code></pre>
+          <p class="hint">タップで全選択してコピーできます。</p>
+          <ul class="clients" aria-label="対応クライアント">
+            <li>Claude（Web・デスクトップ・モバイル）</li><li>ChatGPT</li><li>Grok</li><li>Claude Code</li><li>Cursor</li><li>VS Code</li><li>Codex CLI</li><li>Gemini CLI</li><li>その他 MCP 対応クライアント</li>
+          </ul></div></li>
+        <li><div><h3>話しかける</h3><p>いつもの言葉で質問するだけ。AI が Moodle から答えを集めます。</p></div></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="sec" id="examples" aria-labelledby="h-examples">
+    <div class="wrap">
+      <h2 id="h-examples">例えば、こう聞くだけ</h2>
+      <p class="lead">AI が科目をまたいで調べ、要点だけを返します。</p>
+      <ul class="ask">
+        <li>「今週の締切を教えて」</li>
+        <li>「明日の時間割は？」</li>
+        <li>「マーケティングの成績評価は？」</li>
+        <li>「未提出の課題だけ」</li>
+        <li>「試験対策をして」</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec" id="security" aria-labelledby="h-security">
+    <div class="wrap">
+      <h2 id="h-security">安心して使える設計</h2>
+      <p class="lead">必要最小限のデータだけを、安全に扱います。</p>
+      <ul class="grid four">
+        <li><h3>パスワード不要</h3><p>Moodle のパスワードを入力・保存しません。</p></li>
+        <li><h3>暗号化して保存</h3><p>接続トークンは暗号化して保管します。</p></li>
+        <li><h3>ファイルは保存しない</h3><p>配布ファイルは中継するだけで保存しません。</p></li>
+        <li><h3>いつでも削除</h3><p>データはいつでも削除可能。<a href="/privacy">プライバシーポリシー</a></p></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec faq" id="faq" aria-labelledby="h-faq">
+    <div class="wrap">
+      <h2 id="h-faq">よくある質問</h2>
+      <p class="lead">早稲田 Moodle × AI の利用について。</p>
+      <details><summary>無料ですか？</summary><p>はい、無料です。</p></details>
+      <details><summary>パスワードは必要ですか？</summary><p>不要です。ブラウザでログイン済みの Moodle から接続するため、パスワードを入力・保存することはありません。</p></details>
+      <details><summary>早稲田大学の公式サービスですか？</summary><p>いいえ。非公式ツールで、早稲田大学とは関係ありません。</p></details>
+      <details><summary>どの AI で使えますか？</summary><p>Claude（Web・デスクトップ・モバイル）、ChatGPT、Grok、Claude Code、Cursor、VS Code、Codex CLI、Gemini CLI など、MCP に対応したクライアントで使えます。</p></details>
+      <details><summary>データは削除できますか？</summary><p>はい、いつでも削除できます。詳しくは<a href="/privacy">プライバシーポリシー</a>をご覧ください。</p></details>
+    </div>
+  </section>
+
+  <section class="band" aria-labelledby="h-cta">
+    <div class="wrap">
+      <h2 id="h-cta">早稲田 Moodle を、AI につなごう。</h2>
+      <p>設定は数分。無料で使えます。</p>
+      <a class="btn primary" href="/connect">はじめる</a>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <p>© 2026 Waseda Moodle MCP · 非公式ツール · 早稲田大学とは関係ありません</p>
+    <p><a href="/privacy">プライバシーポリシー</a></p>
+  </div>
+</footer>
+</body>
+</html>
