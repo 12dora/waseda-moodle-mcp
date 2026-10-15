@@ -24,7 +24,9 @@ export interface RawQuiz {
 }
 
 export interface RawQuizAttempt {
+  id?: number | null;
   attempt: number;
+  layout?: string | null; // "1,2,0,3,0": question slots, 0 ends a page
   state: string;
   timestart?: number | null;
   timefinish?: number | null;
@@ -101,6 +103,15 @@ export function mapQuiz(
   };
 }
 
+/** The user's attempts; identical calls are answered by the request memo, so callers may repeat it freely. */
+export function fetchUserAttempts(api: MoodleApi, quizId: number): Promise<AttemptList> {
+  const params = { quizid: quizId, status: 'all', includepreviews: false };
+  return api.call<AttemptList>('mod_quiz_get_user_quiz_attempts', params).catch((e: unknown) => {
+    if (!(e instanceof MoodleError)) throw e;
+    return api.call<AttemptList>('mod_quiz_get_user_attempts', params); // before Moodle 5.0
+  });
+}
+
 export async function loadQuiz(api: MoodleApi, cm: CourseModuleInfo, info: ActivityInfo): Promise<QuizDetail> {
   const res = await api.call<{ quizzes?: RawQuiz[] | null }>('mod_quiz_get_quizzes_by_courses', {
     courseids: [cm.courseId],
@@ -108,11 +119,7 @@ export async function loadQuiz(api: MoodleApi, cm: CourseModuleInfo, info: Activ
   const raw = (res?.quizzes ?? []).find((q) => q.coursemodule === cm.cmid);
   if (!raw) throw new NotFound(`Quiz ${cm.cmid} was not found or is not visible.`);
 
-  const params = { quizid: raw.id, status: 'all', includepreviews: false };
-  const attemptsP = api.call<AttemptList>('mod_quiz_get_user_quiz_attempts', params).catch((e: unknown) => {
-    if (!(e instanceof MoodleError)) throw e;
-    return api.call<AttemptList>('mod_quiz_get_user_attempts', params); // before Moodle 5.0
-  });
+  const attemptsP = fetchUserAttempts(api, raw.id);
   const bestP = api.call<RawBestGrade>('mod_quiz_get_user_best_grade', { quizid: raw.id }).catch((e: unknown) => {
     if (!(e instanceof MoodleError)) throw e;
     return null;
