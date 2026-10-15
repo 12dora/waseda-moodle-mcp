@@ -207,6 +207,7 @@ const dueList: DueList = {
       evidence: null,
       sourceUrl: null,
       isNew: false,
+      submission: null,
     },
   ],
   scope: { mode: 'mine', courseIds: [101], otherCount: 0 },

@@ -130,6 +130,25 @@ export interface DueItem {
   evidence: string | null; // text items: snippet around the date (≤160 chars)
   sourceUrl: string | null; // text items: where the mention was found
   isNew: boolean; // first seen by the sweep within the last 72 h
+  /** The user's own progress, read live from Moodle; null when not checked (other kinds, or the check failed). */
+  submission: DueSubmission | null;
+}
+
+/**
+ * Where the user stands on an assignment / quiz / questionnaire:
+ * - `none`: nothing saved yet; `reopened`: the teacher reopened it for another attempt (assignments);
+ * - `draft`: saved but NOT submitted (assignment draft, questionnaire saved to resume) — still has to be submitted;
+ * - `in-progress`: a quiz attempt is open and not submitted (in the grace period too) — must be finished;
+ * - `submitted`: handed in (assignment submitted, quiz attempt finished, questionnaire answered).
+ */
+export interface DueSubmission {
+  status: 'none' | 'draft' | 'in-progress' | 'submitted' | 'reopened';
+  /** Moodle still lets the user change it: edit the submission, continue the attempt, or attempt / answer again. */
+  canContinue: boolean;
+  submittedAt: IsoJst | null; // when it was handed in, if Moodle says
+  graded: boolean;
+  /** Short facts for the AI / UI, e.g. "attempt 1 of 2", "submit button not pressed". */
+  note: string | null;
 }
 
 export interface DueList {

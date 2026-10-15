@@ -8,6 +8,8 @@ const DAY_MS = 86_400_000;
 const MAX_NO_DEADLINE_LINES = 5;
 /** Calendar items of courses outside the user's selection: shown last and briefly. */
 const MAX_OTHER_COURSE_LINES = 5;
+/** The compact "Submitted" section lists this many items (newest first); the rest is counted. */
+const MAX_SUBMITTED_LINES = 8;
 
 type DueGroup = 'Overdue' | 'Today' | 'Tomorrow' | 'Next 7 days' | 'Later' | 'No deadline';
 /** Order on screen. */
@@ -51,13 +53,27 @@ function evidenceLine(i: DueItem): string {
   return quote || where ? `\n  evidence:${quote}${where}` : '';
 }
 
+const isSubmitted = (i: DueItem) => i.submission?.status === 'submitted';
+
+const SUBMISSION_TAGS: Partial<Record<NonNullable<DueItem['submission']>['status'], string>> = {
+  draft: 'draft saved — not submitted',
+  'in-progress': 'attempt in progress — not submitted',
+  reopened: 'reopened for resubmission',
+};
+
+/** Progress the user still has to act on; submitted items are listed apart, "none" needs no tag. */
+function submissionTag(i: DueItem): string {
+  const text = i.submission ? SUBMISSION_TAGS[i.submission.status] : undefined;
+  return text ? ` [${text}]` : '';
+}
+
 function dueLine(i: DueItem): string {
   const cm = i.cmid !== null ? ` (cmid ${i.cmid})` : '';
   const late = i.overdue ? ' — OVERDUE' : '';
   const fresh = i.isNew ? ' — NEW' : '';
   const verify = i.source === 'text' || i.evidence ? ' — mentioned in course text — verify' : '';
   const head = `- [${i.kind}] ${oneLine(i.name, 90)} — ${oneLine(i.courseName, 60)} — ${dueWhen(i)}`;
-  return `${head}${verify}${late}${fresh}${cm}${evidenceLine(i)}`;
+  return `${head}${verify}${late}${fresh}${submissionTag(i)}${cm}${evidenceLine(i)}`;
 }
 
 /** Newest first: NEW ones, then the higher cmid (added later). Stable otherwise. */
@@ -120,7 +136,7 @@ function closedSummary(closed: DueItem[]): string {
 
 /** Calendar items of enrolled courses outside the scope that are still open: upcoming ones first, then overdue. */
 function otherCourseItems(list: DueList): DueItem[] {
-  const open = list.otherCourses.filter((i) => !i.closed);
+  const open = list.otherCourses.filter((i) => !i.closed && !isSubmitted(i));
   return [...open.filter((i) => !i.overdue), ...open.filter((i) => i.overdue)];
 }
 
@@ -160,15 +176,34 @@ function otherCoursesSection(list: DueList): string[] {
   return ['', `## Other enrolled courses (${items.length})`, ...shown, ...(more > 0 ? [`… ${more} more`] : [])];
 }
 
+const submittedAtMs = (i: DueItem) => (i.submission?.submittedAt ? Date.parse(i.submission.submittedAt) : 0);
+
+function submittedLine(i: DueItem): string {
+  const at = i.submission?.submittedAt ? `submitted ${fmt(i.submission.submittedAt)}` : 'submitted';
+  const edit = i.submission?.canContinue ? ' — can still edit' : '';
+  return `- [${i.kind}] ${oneLine(i.name, 60)} — ${oneLine(i.courseName, 40)} — ${at}${edit}`;
+}
+
+/** Compact group after the outstanding ones: what the user already handed in (newest first). */
+function submittedSection(items: DueItem[]): string[] {
+  if (items.length === 0) return [];
+  const newest = [...items].sort((a, b) => submittedAtMs(b) - submittedAtMs(a));
+  const more = newest.length - MAX_SUBMITTED_LINES;
+  const lines = newest.slice(0, MAX_SUBMITTED_LINES).map(submittedLine);
+  return ['', `## Submitted (${items.length})`, ...lines, ...(more > 0 ? [`… ${more} more`] : [])];
+}
+
 export function renderDueList(list: DueList): string {
-  const open = list.items.filter((i) => !i.closed);
+  const submitted = list.items.filter(isSubmitted);
+  const open = list.items.filter((i) => !i.closed && !isSubmitted(i));
   const closed = list.items.filter((i) => i.closed);
+  const outstanding = list.items.length - submitted.length; // submitted items are done: never counted
   const window = `${list.windowFrom.slice(0, 10)} and ${list.windowTo.slice(0, 10)}`;
   const head = [
     'Due items. Times are JST; a deadline at 00:00 is shown as the previous day 24:00.',
-    list.items.length === 0
+    outstanding === 0
       ? `Nothing outstanding ${otherCourseItems(list).length > 0 ? 'in your courses ' : ''}between ${window}.`
-      : `${plural(list.items.length, 'item')} between ${window}:`,
+      : `${plural(outstanding, 'item')} between ${window}:`,
   ];
   const notes: string[] = [];
   if (list.truncated) notes.push('(More events exist than could be loaded; narrow with course_id or days_ahead.)');
@@ -182,7 +217,8 @@ export function renderDueList(list: DueList): string {
     groups.set(g, [...(groups.get(g) ?? []), item]);
   }
   const other = otherCoursesSection(list);
-  const reserved = [...head, ...notes, ...tail, ...other].join('\n').length + 160;
+  const done = submittedSection(submitted);
+  const reserved = [...head, ...notes, ...tail, ...other, ...done].join('\n').length + 160;
   const sections = fitSections(groups, MAX_TEXT_CHARS - reserved);
 
   const body: string[] = [];
@@ -193,5 +229,5 @@ export function renderDueList(list: DueList): string {
     if (s.dropped > 0) body.push(`… ${s.dropped} more (use course_id or a smaller days_ahead)`);
     if (s.capped > 0) body.push(`… ${s.capped} more without a deadline (see the console's Due page)`);
   }
-  return hardCap([...head, ...body, ...other, ...notes, ...tail].join('\n'));
+  return hardCap([...head, ...body, ...done, ...other, ...notes, ...tail].join('\n'));
 }

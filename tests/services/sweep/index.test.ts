@@ -60,6 +60,7 @@ function calendarItem(over: Partial<DueItem>): DueItem {
     evidence: null,
     sourceUrl: null,
     isNew: false,
+    submission: null,
     ...over,
   };
 }

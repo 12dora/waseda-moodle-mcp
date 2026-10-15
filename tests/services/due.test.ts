@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvalidInput, MoodleError } from '../../src/core/errors';
 import type { RawActionEvent } from '../../src/core/services/due';
 import { dueKind, getDueItems, mergeDueEvents, parseCmid } from '../../src/core/services/due';
+import { attachSubmissions } from '../../src/core/services/submission';
 import { collectSweepItems } from '../../src/core/services/sweep';
 import type { DueItem } from '../../src/core/types';
 import eventsFixture from '../fixtures/be2/action_events.json';
@@ -9,6 +10,7 @@ import timeline from '../fixtures/be2/timeline_courses.json';
 import { makeFakeContext } from '../helpers/fake-context';
 
 vi.mock('../../src/core/services/sweep', () => ({ collectSweepItems: vi.fn() }));
+vi.mock('../../src/core/services/submission', () => ({ attachSubmissions: vi.fn() }));
 
 const TIMELINE = 'core_course_get_enrolled_courses_by_timeline_classification';
 const ENROL = 'core_enrol_get_users_courses';
@@ -20,6 +22,9 @@ const NO_SWEEP: typeof collectSweepItems = async (_ctx, _scope, calendar) => ({
   stats: NO_STATS,
 });
 
+/** A submission look-up that finds nothing and hands the items back untouched. */
+const NO_CHECK: typeof attachSubmissions = async (_ctx, items) => items;
+
 const GLOBAL = 'core_calendar_get_action_events_by_timesort';
 const BY_COURSE = 'core_calendar_get_action_events_by_course';
 const NOW = new Date('2026-10-14T03:00:00Z'); // 2026-10-14 12:00 JST
@@ -30,6 +35,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
   vi.mocked(collectSweepItems).mockReset().mockImplementation(NO_SWEEP);
+  vi.mocked(attachSubmissions).mockReset().mockImplementation(NO_CHECK);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -100,6 +106,7 @@ describe('mergeDueEvents', () => {
       evidence: null,
       sourceUrl: null,
       isNew: false,
+      submission: null,
     });
   });
 
@@ -309,6 +316,35 @@ describe('getDueItems', () => {
       evidence: 'Deadline 30 October',
     });
     expect(list.items.at(-1)?.name).toBe('Quiz A');
+  });
+
+  it('attaches the submission state to the listed items and to the other-course items in one look-up', async () => {
+    const submitted = {
+      status: 'submitted',
+      canContinue: false,
+      submittedAt: null,
+      graded: false,
+      note: null,
+    } as const;
+    vi.mocked(attachSubmissions).mockImplementation(async (_c, items) =>
+      items.map((i) =>
+        i.name === 'Report 1' || i.name === 'Elective Essay' ? { ...i, overdue: false, submission: submitted } : i,
+      ),
+    );
+    const { ctx } = makeFakeContext({
+      responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES },
+      user: { settings: { myCourseIds: [101, 102, 104] } },
+    });
+    const list = await getDueItems(ctx);
+
+    expect(attachSubmissions).toHaveBeenCalledTimes(1);
+    const [passedCtx, passed] = vi.mocked(attachSubmissions).mock.calls[0] ?? [];
+    expect(passedCtx).toBe(ctx);
+    expect(passed).toHaveLength(ALL_NAMES.length);
+    expect(passed?.at(-1)?.name).toBe('Elective Essay'); // listed items first: they win when the look-up is capped
+    expect(list.items.find((i) => i.name === 'Report 1')).toMatchObject({ overdue: false, submission: submitted });
+    expect(list.items.map((i) => i.name)).toEqual(ALL_NAMES.filter((n) => n !== 'Elective Essay'));
+    expect(list.otherCourses.map((i) => [i.name, i.submission?.status])).toEqual([['Elective Essay', 'submitted']]);
   });
 
   it('uses a shared 30-day events call as the signal of the automatic suggestion; later events stay listed apart', async () => {

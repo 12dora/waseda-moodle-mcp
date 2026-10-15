@@ -207,6 +207,7 @@ describe('dropCoveredText', () => {
     evidence: null,
     sourceUrl: null,
     isNew: false,
+    submission: null,
   };
   const text = (over: Partial<DueItem>): DueItem => ({
     ...base,

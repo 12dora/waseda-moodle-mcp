@@ -1,0 +1,13 @@
+{
+  "templates": [
+    {
+      "id": "main",
+      "html": "<div>\n    <core-course-module-description description=\"&lt;p&gt;Please answer the questions by the deadline.&lt;/p&gt;\"\n                                    component=\"mod_questionnaire\" componentId=\"5101\"\n                                    pagenum=\"1\"></core-course-module-description>\n    <ion-card>\n        <ion-card-content>\n            アンケートは 2026年 10月 8日(木曜日) 13:00 に終了しました。ありがとうございます。\n        </ion-card-content>\n    </ion-card>\n    <ion-card>\n        <ion-card-content>\n            <ion-item button core-site-plugins-new-content component=\"mod_questionnaire\" method=\"mobile_view_activity\"\n                [args]=\"{cmid: 5101, action: 'review', submissionid: 9001}\">\n                <ion-label>\n                    {{ 'plugin.mod_questionnaire.submitted' | translate }} 2026年 10月 8日(木曜日) 11:11\n                </ion-label>\n            </ion-item>\n        </ion-card-content>\n    </ion-card>\n</div>"
+    }
+  ],
+  "javascript": "(function(t) {\n    t.toggleRatebox = function($event, $fieldkey) {\n    }\n})(this);",
+  "otherdata": [],
+  "files": [],
+  "restrict": [],
+  "disabled": false
+}

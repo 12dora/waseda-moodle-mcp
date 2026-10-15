@@ -15,7 +15,8 @@ const getDueItemsTool = defineTool({
   title: 'Due items',
   description:
     "Lists the user's outstanding assignments, quizzes, questionnaires and other deadlines, grouped as Overdue / Today / Tomorrow / Next 7 days / Later. " +
-    'Use this first for "what is due", "what should I work on" or "did I miss anything"; already submitted assignments no longer appear. ' +
+    'Use this first for "what is due", "what should I work on" or "did I miss anything". ' +
+    'Items already submitted are listed apart under Submitted; saved drafts, unfinished quiz attempts and reopened assignments are tagged as not submitted. ' +
     'It combines the Moodle calendar with tasks found by checking the course pages: activities without a deadline in Moodle, and deadlines written in course text (marked "verify"; confirm them with the quoted evidence). ' +
     "Covers the user's own courses; the footer says how many were checked. Times are JST, and a deadline at 00:00 means the previous day 24:00. Each line carries the cmid to pass to get_activity.",
   annotations: READ_HINTS,

@@ -20,6 +20,7 @@ const item = (over: Partial<DueItem>): DueItem => ({
   evidence: null,
   sourceUrl: null,
   isNew: false,
+  submission: null,
   ...over,
 });
 const mention = (over: Partial<DueItem>) =>

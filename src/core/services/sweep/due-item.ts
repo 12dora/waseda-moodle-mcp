@@ -53,5 +53,6 @@ export function buildSweepItem(i: SweepItemInput): DueItem {
     evidence: i.text?.evidence ?? null,
     sourceUrl: i.text?.sourceUrl ?? null,
     isNew: i.firstSeen !== undefined && i.now - i.firstSeen <= NEW_WINDOW_MS,
+    submission: null,
   };
 }

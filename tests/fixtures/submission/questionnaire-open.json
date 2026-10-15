@@ -1,0 +1,13 @@
+{
+  "templates": [
+    {
+      "id": "main",
+      "html": "<div>\n    <core-course-module-description description=\"&lt;p&gt;Please answer the questions by the deadline.&lt;/p&gt;\"\n                                    component=\"mod_questionnaire\" componentId=\"5103\"\n                                    pagenum=\"1\"></core-course-module-description>\n    <ion-card>\n        <ion-card-content>\n            <ion-button expand=\"block\" core-site-plugins-new-content component=\"mod_questionnaire\"\n                    method=\"mobile_view_activity\" [args]=\"{cmid: 5103, action: 'respond'}\">\n                {{ 'plugin.mod_questionnaire.answerquestions' | translate }}\n            </ion-button>\n        </ion-card-content>\n    </ion-card>\n</div>"
+    }
+  ],
+  "javascript": "(function(t) {\n    t.toggleRatebox = function($event, $fieldkey) {\n    }\n})(this);",
+  "otherdata": [],
+  "files": [],
+  "restrict": [],
+  "disabled": false
+}

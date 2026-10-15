@@ -6,6 +6,7 @@ import { decodeEntities } from '../html';
 import { isMidnight, isoJst, nowSec, toMs } from '../time';
 import type { DueItem, DueKind, DueList } from '../types';
 import { resolveScope } from './scope';
+import { attachSubmissions } from './submission';
 import { collectSweepItems } from './sweep';
 import { optionalPositiveInt } from './validate';
 
@@ -126,6 +127,7 @@ function buildRow(evs: RawActionEvent[], now: number): Row | null {
       evidence: null,
       sourceUrl: null,
       isNew: false,
+      submission: null,
     },
   };
 }
@@ -252,17 +254,21 @@ export async function getDueItems(
     rememberScope: courseId === undefined,
   });
 
+  // the user's own progress (submitted / draft / in progress): one batched look-up for every listed item
+  const listed = [...sweep.calendar, ...sweep.items];
+  const checked = await attachSubmissions(ctx, [...listed, ...otherCourses]);
+
   return {
     generatedAt: isoJst(now * 1000),
     windowFrom: isoJst(from * 1000),
     windowTo: isoJst(to * 1000),
-    items: [...sweep.calendar, ...sweep.items].sort(byDate), // sweep.calendar = calendar + dates found in module text
+    items: checked.slice(0, listed.length).sort(byDate), // sweep.calendar = calendar + dates found in module text
     scope: {
       mode: scope.mode,
       courseIds: [...scope.mine],
       otherCount: scope.courses.filter((c) => !scope.mine.has(c.id)).length,
     },
-    otherCourses,
+    otherCourses: checked.slice(listed.length),
     sweep: sweep.stats,
     truncated,
   };
