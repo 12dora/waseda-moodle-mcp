@@ -2,21 +2,21 @@
 
 import type { MoodleApi, ServiceContext } from '../context';
 import { InvalidInput, MoodleError, NotFound } from '../errors';
-import { decodeEntities } from '../html';
-import { fromTs, nowSec, toMs } from '../time';
+import { decodeEntities, htmlToMarkdown } from '../html';
+import { fromTs } from '../time';
 import type { Discussion, DiscussionSummary, IsoJst } from '../types';
-import { listCourses } from './courses';
 import { loadPosts, type MappedPosts } from './forums-posts';
-import { clampInt, courseNameMap, getCourseModule } from './shared';
+import { courseNameMap, getCourseModule, pickLang } from './shared';
 
 export type { RawForumPosts, RawHsuPosts } from './forums-posts';
 
 export type ForumType = 'forum' | 'hsuforum';
 
 /** Most forums read in one call (each costs one Moodle request). */
-const MAX_FORUMS_PER_CALL = 15;
-/** Discussions read per forum when several forums are listed together. */
-const PER_FORUM_WHEN_MANY = 10;
+export const MAX_FORUMS_PER_CALL = 15;
+/** Moodle `mod_forum_get_forum_discussions` sortorder: last post, newest first. */
+const LASTPOST_DESC = 1;
+const INTRO_MAX_CHARS = 600;
 
 // ------------------------------------------------------------------ raw Moodle shapes (loose)
 
@@ -28,6 +28,10 @@ export interface RawForum {
   name?: string | null;
   intro?: string | null;
   duedate?: number | null;
+  cutoffdate?: number | null;
+  cancreatediscussions?: boolean | null;
+  timemodified?: number | null;
+  anonymous?: boolean | number | null;
   numdiscussions?: number | null;
 }
 
@@ -49,6 +53,7 @@ export interface RawDiscussion {
 
 export interface RawDiscussionList {
   discussions?: RawDiscussion[] | null;
+  warnings?: { message?: string | null }[] | null;
 }
 
 // ------------------------------------------------------------------ forum lookup
@@ -62,6 +67,10 @@ export interface ForumRef {
   kind: string; // forum `type` (news, general, qanda, …)
   intro: string; // raw HTML
   dueAt: IsoJst | null;
+  cutoffAt: IsoJst | null;
+  canCreateDiscussions: boolean;
+  modifiedTs: number; // forum.timemodified, 0 if unknown
+  anonymous: boolean;
   numDiscussions: number | null;
 }
 
@@ -75,6 +84,10 @@ export function mapForumRef(raw: RawForum, forumType: ForumType): ForumRef {
     kind: raw.type ?? 'general',
     intro: raw.intro ?? '',
     dueAt: fromTs(raw.duedate),
+    cutoffAt: fromTs(raw.cutoffdate),
+    canCreateDiscussions: raw.cancreatediscussions === true,
+    modifiedTs: typeof raw.timemodified === 'number' ? raw.timemodified : 0,
+    anonymous: raw.anonymous === true || raw.anonymous === 1,
     numDiscussions: typeof raw.numdiscussions === 'number' ? raw.numdiscussions : null,
   };
 }
@@ -104,6 +117,17 @@ function toInt(v: number | string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function forumFields(
+  ref: ForumRef | null,
+): Pick<DiscussionSummary, 'forumKind' | 'canCreateDiscussions' | 'dueAt' | 'cutoffAt'> {
+  return {
+    forumKind: ref?.kind ?? 'general',
+    canCreateDiscussions: ref?.canCreateDiscussions === true,
+    dueAt: ref?.dueAt ?? null,
+    cutoffAt: ref?.cutoffAt ?? null,
+  };
+}
+
 export function mapDiscussion(raw: RawDiscussion, ref: ForumRef, courseName: string): DiscussionSummary {
   return {
     forumType: ref.forumType,
@@ -121,29 +145,67 @@ export function mapDiscussion(raw: RawDiscussion, ref: ForumRef, courseName: str
     replies: toInt(raw.numreplies),
     unread: typeof raw.numunread === 'number' ? raw.numunread : null,
     pinned: raw.pinned === true,
+    ...forumFields(ref),
   };
 }
 
+/** Paginated hsuforum returns [] + this warning for anonymous forums; the other function still lists them. */
+function hsuAnonymousWarning(res: RawDiscussionList | null | undefined): boolean {
+  return (res?.warnings ?? [])
+    .map((w) => w.message ?? '')
+    .join(' ')
+    .toLowerCase()
+    .includes('anonymous');
+}
+
+/** `mod_hsuforum_get_forum_discussions` accepts page/perpage (Open LMS externallib.php). */
+async function fetchHsuDiscussions(
+  api: MoodleApi,
+  ref: ForumRef,
+  limit: number,
+  page: number,
+): Promise<RawDiscussion[]> {
+  const res = await api.call<RawDiscussionList>('mod_hsuforum_get_forum_discussions', {
+    forumid: ref.forumId,
+    sortorder: LASTPOST_DESC,
+    page,
+    perpage: limit,
+  });
+  return res?.discussions ?? [];
+}
+
 /**
- * Latest raw discussions of one forum, one Moodle call. Moodle lists pinned discussions first, then by last post,
- * so a small `limit` can be filled by pinned ones; callers that merge forums re-sort by modification time.
+ * Latest raw discussions of one forum. Anonymous hsuforum uses `mod_hsuforum_get_forum_discussions`
+ * (paginated returns nothing); that function is paged server-side. Moodle lists pinned first, then by
+ * last post, so a small `limit` can be filled by pinned ones; callers that merge forums re-sort by
+ * modification time.
  */
-export async function fetchRawDiscussions(api: MoodleApi, ref: ForumRef, limit: number): Promise<RawDiscussion[]> {
-  const res =
-    ref.forumType === 'forum'
-      ? await api.call<RawDiscussionList>('mod_forum_get_forum_discussions', {
-          forumid: ref.forumId,
-          sortorder: -1,
-          page: 0,
-          perpage: limit,
-        })
-      : await api.call<RawDiscussionList>('mod_hsuforum_get_forum_discussions_paginated', {
-          forumid: ref.forumId,
-          sortby: 'timemodified',
-          sortdirection: 'DESC',
-          page: 0,
-          perpage: limit,
-        });
+export async function fetchRawDiscussions(
+  api: MoodleApi,
+  ref: ForumRef,
+  limit: number,
+  page = 0,
+): Promise<RawDiscussion[]> {
+  if (ref.forumType === 'forum') {
+    const res = await api.call<RawDiscussionList>('mod_forum_get_forum_discussions', {
+      forumid: ref.forumId,
+      sortorder: LASTPOST_DESC,
+      page,
+      perpage: limit,
+    });
+    return res?.discussions ?? [];
+  }
+  if (ref.anonymous) return fetchHsuDiscussions(api, ref, limit, page);
+  const res = await api.call<RawDiscussionList>('mod_hsuforum_get_forum_discussions_paginated', {
+    forumid: ref.forumId,
+    sortby: 'timemodified',
+    sortdirection: 'DESC',
+    page,
+    perpage: limit,
+  });
+  if ((res?.discussions ?? []).length === 0 && hsuAnonymousWarning(res)) {
+    return fetchHsuDiscussions(api, ref, limit, page);
+  }
   return res?.discussions ?? [];
 }
 
@@ -151,71 +213,11 @@ export async function fetchDiscussions(
   api: MoodleApi,
   ref: ForumRef,
   courseName: string,
-  limit: number,
+  opts: { limit: number; page?: number },
 ): Promise<DiscussionSummary[]> {
-  return (await fetchRawDiscussions(api, ref, limit)).map((d) => mapDiscussion(d, ref, courseName));
-}
-
-interface ForumSelection {
-  refs: ForumRef[];
-  names: Map<number, string>;
-}
-
-interface ListOptions {
-  courseId?: number;
-  forumCmid?: number;
-  sinceDays?: number;
-  limit?: number;
-}
-
-/** Course and forum type of a forum cmid; without a course hint the cmid is looked up. */
-async function locateForum(
-  api: MoodleApi,
-  cmid: number,
-  courseId?: number,
-): Promise<{ course: number; types: ForumType[] }> {
-  if (courseId != null) return { course: courseId, types: ['forum', 'hsuforum'] };
-  const cm = await getCourseModule(api, cmid);
-  if (cm.modname !== 'forum' && cm.modname !== 'hsuforum') throw new InvalidInput(`Activity ${cmid} is not a forum.`);
-  return { course: cm.courseId, types: [cm.modname] };
-}
-
-async function selectByCmid(
-  ctx: ServiceContext,
-  api: MoodleApi,
-  wanted: number,
-  courseId?: number,
-): Promise<ForumSelection> {
-  const [where, names] = await Promise.all([locateForum(api, wanted, courseId), courseNameMap(ctx)]);
-  const refs = (await fetchForumsOfTypes(api, where.types, [where.course])).filter((r) => r.cmid === wanted);
-  if (refs.length === 0) throw new NotFound(`Forum ${wanted} was not found in this course.`);
-  return { refs, names };
-}
-
-async function selectByCourse(ctx: ServiceContext, api: MoodleApi, courseId: number): Promise<ForumSelection> {
-  const [refs, names] = await Promise.all([
-    fetchForumsOfTypes(api, ['forum', 'hsuforum'], [courseId]),
-    courseNameMap(ctx),
-  ]);
-  // announcements first, so the per-call cap never drops them
-  return { refs: refs.sort((a, b) => Number(b.kind === 'news') - Number(a.kind === 'news')), names };
-}
-
-/** Announcement forums of the courses in the user's scope. */
-async function selectAnnouncements(ctx: ServiceContext, api: MoodleApi): Promise<ForumSelection> {
-  const courses = await listCourses(ctx);
-  const all = await fetchForumsOfTypes(
-    api,
-    ['forum', 'hsuforum'],
-    courses.map((c) => c.id),
+  return (await fetchRawDiscussions(api, ref, opts.limit, opts.page ?? 0)).map((d) =>
+    mapDiscussion(d, ref, courseName),
   );
-  return { refs: all.filter((r) => r.kind === 'news'), names: new Map(courses.map((c) => [c.id, c.name])) };
-}
-
-function selectForums(ctx: ServiceContext, api: MoodleApi, opts: ListOptions): Promise<ForumSelection> {
-  if (opts.forumCmid != null) return selectByCmid(ctx, api, opts.forumCmid, opts.courseId);
-  if (opts.courseId != null) return selectByCourse(ctx, api, opts.courseId);
-  return selectAnnouncements(ctx, api);
 }
 
 /** Forums worth a Moodle call: those known to be empty cost nothing. */
@@ -246,37 +248,6 @@ export async function readEach<T>(
   return { items: lists.flat(), skipped };
 }
 
-async function readForums(
-  api: MoodleApi,
-  selection: ForumSelection,
-  limit: number,
-): Promise<{ discussions: DiscussionSummary[]; skipped: number }> {
-  const perForum = nonEmptyForums(selection.refs).length > 1 ? Math.min(limit, PER_FORUM_WHEN_MANY) : limit;
-  const { items, skipped } = await readEach(selection.refs, (ref) =>
-    fetchDiscussions(api, ref, selection.names.get(ref.courseId) ?? `Course ${ref.courseId}`, perForum),
-  );
-  return { discussions: items, skipped };
-}
-
-const modifiedMs = (d: DiscussionSummary) => (d.modifiedAt ? toMs(d.modifiedAt) : 0);
-
-/**
- * Newest discussions across forums. Without ids: announcement forums of in-progress courses. With several forums
- * only the 10 most recent discussions of each are read (pinned ones first, as Moodle orders them).
- */
-export async function listDiscussions(
-  ctx: ServiceContext,
-  opts: ListOptions = {},
-): Promise<{ discussions: DiscussionSummary[]; skippedForums: number }> {
-  const limit = clampInt(opts.limit, 20, 1, 50);
-  const api = await ctx.moodle();
-  const { discussions, skipped } = await readForums(api, await selectForums(ctx, api, opts), limit);
-  const cutoff = opts.sinceDays != null && opts.sinceDays > 0 ? (nowSec() - opts.sinceDays * 86400) * 1000 : 0;
-  const recent = cutoff ? discussions.filter((d) => modifiedMs(d) >= cutoff) : discussions;
-  recent.sort((a, b) => modifiedMs(b) - modifiedMs(a));
-  return { discussions: recent.slice(0, limit), skippedForums: skipped };
-}
-
 /** Summary rebuilt from the posts; `ref` fills the forum and course fields when the forum could be resolved. */
 function summaryFromPosts(args: {
   discussionId: number;
@@ -304,21 +275,62 @@ function summaryFromPosts(args: {
     replies: Math.max(0, mapped.posts.length - 1),
     unread: mapped.unread,
     pinned: false,
+    ...forumFields(ref),
   };
 }
 
+async function discussionIdFromPost(api: MoodleApi, postId: number): Promise<number | null> {
+  try {
+    const res = await api.call<{ post?: { discussionid?: number | null } | null }>('mod_forum_get_discussion_post', {
+      postid: postId,
+    });
+    const id = res?.post?.discussionid;
+    return typeof id === 'number' && id > 0 ? id : null;
+  } catch (e) {
+    if (e instanceof MoodleError) return null;
+    throw e;
+  }
+}
+
+async function loadDiscussionPosts(
+  api: MoodleApi,
+  forumType: ForumType,
+  discussionId: number,
+): Promise<{ mapped: MappedPosts; forumId?: number; courseId?: number }> {
+  try {
+    return await loadPosts(api, forumType, discussionId);
+  } catch (e) {
+    if (!(e instanceof NotFound)) throw e;
+    if (forumType === 'forum') {
+      const real = await discussionIdFromPost(api, discussionId);
+      if (real != null && real !== discussionId) {
+        throw new InvalidInput(`${discussionId} is a post id. Use discussion_id ${real} from list_discussions.`);
+      }
+    }
+    throw e;
+  }
+}
+
+function postsForId(posts: MappedPosts['posts'], discussionId: number, postId?: number): MappedPosts['posts'] {
+  if (postId == null) return posts;
+  const target = posts.find((p) => p.id === postId);
+  if (!target) throw new NotFound(`Post ${postId} is not in discussion ${discussionId}.`);
+  const parent = target.parentId != null ? posts.find((p) => p.id === target.parentId) : undefined;
+  return parent && parent.id !== target.id ? [parent, target] : [target];
+}
+
 /**
- * All posts of one discussion, oldest first.
+ * All posts of one discussion, oldest first (or one post and its parent when `postId` is set).
  * mod_hsuforum returns neither forum nor course for a discussion; pass `forumCmid` (from list_discussions)
  * to fill the summary's forum/course fields, otherwise they stay 0 / "".
  */
 export async function getDiscussion(
   ctx: ServiceContext,
-  opts: { forumType: ForumType; discussionId: number; forumCmid?: number },
+  opts: { forumType: ForumType; discussionId: number; forumCmid?: number; postId?: number },
 ): Promise<Discussion> {
   const api = await ctx.moodle();
-  const { forumType, discussionId, forumCmid } = opts;
-  const { mapped, forumId, courseId: postCourseId } = await loadPosts(api, forumType, discussionId);
+  const { forumType, discussionId, forumCmid, postId } = opts;
+  const { mapped, forumId, courseId: postCourseId } = await loadDiscussionPosts(api, forumType, discussionId);
   if (mapped.posts.length === 0) throw new NotFound(`Discussion ${discussionId} has no readable posts.`);
 
   const courseId = postCourseId ?? (forumCmid != null ? (await getCourseModule(api, forumCmid)).courseId : undefined);
@@ -337,5 +349,8 @@ export async function getDiscussion(
     course: { id: courseId ?? 0, name: courseName },
     forumId: forumId ?? 0,
   });
-  return { summary, posts: mapped.posts, canReply: mapped.canReply };
+  const posts = postsForId(mapped.posts, discussionId, postId);
+  const canReply = postId != null ? (posts.at(-1)?.canReply ?? false) : mapped.canReply;
+  const forumIntro = ref ? htmlToMarkdown(pickLang(ref.intro, ctx.user.lang), { maxChars: INTRO_MAX_CHARS }) : '';
+  return { summary, posts, canReply, forumIntro };
 }

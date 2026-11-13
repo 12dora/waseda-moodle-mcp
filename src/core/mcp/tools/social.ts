@@ -1,5 +1,6 @@
 import * as z from 'zod';
-import { getDiscussion, listDiscussions } from '../../services/forums';
+import { getDiscussion } from '../../services/forums';
+import { listDiscussions } from '../../services/forums-list';
 import { getConversation, listConversations } from '../../services/messages';
 import { listNotifications } from '../../services/messages/notifications';
 import { searchPeople } from '../../services/messages/people';
@@ -22,9 +23,11 @@ const listDiscussionsTool = defineTool({
   name: 'list_discussions',
   title: 'Forum discussions',
   description:
-    "Lists recent forum discussions, newest first. With no filter it shows announcements from the user's current courses; " +
-    'pass course_id for all forums of a course, or forum_cmid for one forum. Use since_days to limit how far back to look. ' +
-    'Open a discussion with get_discussion using the forum_type and discussion_id on its line.',
+    "Lists recent forum discussions from the user's current courses, newest activity first, including announcements and " +
+    'discussion forums (general, blog, …). Each forum shows its kind, forum_id, cmid, and whether you can post. ' +
+    'Pass course_id for one course, forum_cmid for one forum. Page a forum with forum_cmid, page, and the same limit. ' +
+    'Open a thread with get_discussion using discussion_id (forum_type hsuforum for Advanced Forum). ' +
+    'To start a discussion, prepare_forum_post with forum_id.',
   annotations: READ_HINTS,
   input: z.object({
     course_id: id('Only forums of this course.').optional(),
@@ -37,6 +40,13 @@ const listDiscussionsTool = defineTool({
       .describe('Only discussions modified within this many days.')
       .optional(),
     limit: limit('Maximum discussions. Default 20.', 50).optional(),
+    page: z
+      .number()
+      .int()
+      .min(0)
+      .max(100)
+      .describe('Page of one forum (0 is the first). Requires forum_cmid; keep the same limit. Default 0.')
+      .optional(),
   }),
   output: discussionsOut,
   async run(ctx, a) {
@@ -45,6 +55,7 @@ const listDiscussionsTool = defineTool({
       forumCmid: a.forum_cmid,
       sinceDays: a.since_days,
       limit: a.limit,
+      page: a.page,
     });
     return { text: renderDiscussions(r), data: r };
   },
@@ -54,16 +65,16 @@ const getDiscussionTool = defineTool({
   name: 'get_discussion',
   title: 'Discussion posts',
   description:
-    'Reads all posts of one forum discussion, oldest first, and says whether the user may reply. ' +
-    'Use the forum_type and discussion_id (and forum_cmid for hsuforum) shown by list_discussions or get_activity. ' +
-    'To answer, use prepare_forum_post with the post_id you reply to.',
+    'Reads the posts of one forum discussion, oldest first, with per-post unread and reply flags. ' +
+    'Use discussion_id from list_discussions (not a post id); for Advanced Forum pass forum_type hsuforum and forum_cmid. ' +
+    'Optional post_id returns that post and its parent. To reply, prepare_forum_post with the post_id; ' +
+    'to start a discussion, prepare_forum_post with the forum_id.',
   annotations: READ_HINTS,
   input: z.object({
-    forum_type: z
-      .enum(['forum', 'hsuforum'])
-      .describe('Forum kind as shown by list_discussions: "forum" or "hsuforum" (Advanced Forum).'),
-    discussion_id: id('Discussion id from list_discussions.'),
+    forum_type: z.enum(['forum', 'hsuforum']).describe('forum, or hsuforum when the listing says Advanced Forum.'),
+    discussion_id: id('Discussion id from list_discussions (not the first-post id).'),
     forum_cmid: id('Forum cmid; fills in forum and course names for hsuforum discussions.').optional(),
+    post_id: id('Only this post and its parent, instead of the whole thread.').optional(),
   }),
   output: discussionOut,
   async run(ctx, a) {
@@ -71,6 +82,7 @@ const getDiscussionTool = defineTool({
       forumType: a.forum_type,
       discussionId: a.discussion_id,
       forumCmid: a.forum_cmid,
+      postId: a.post_id,
     });
     return { text: renderDiscussion(r), data: r };
   },

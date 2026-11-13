@@ -61,6 +61,7 @@ interface NormPost {
   message: string | null | undefined;
   attachments: RawFile[] | null | undefined;
   unread: boolean;
+  canReply: boolean;
 }
 
 export interface MappedPosts {
@@ -70,7 +71,7 @@ export interface MappedPosts {
   unread: number | null;
 }
 
-function buildPosts(list: NormPost[], canReply: boolean): MappedPosts {
+function buildPosts(list: NormPost[]): MappedPosts {
   const latest = Math.max(0, ...list.map((p) => Math.max(p.modified ?? 0, p.created ?? 0)));
   const posts = list.map(
     (p): Post => ({
@@ -81,45 +82,56 @@ function buildPosts(list: NormPost[], canReply: boolean): MappedPosts {
       subject: decodeEntities(p.subject ?? ''),
       message: htmlToMarkdown(p.message, { maxChars: POST_MAX_CHARS }),
       attachments: mapFiles(p.attachments),
+      unread: p.unread,
+      canReply: p.canReply,
     }),
   );
-  return { posts, canReply, modified: fromTs(latest), unread: list.filter((p) => p.unread).length };
+  return {
+    posts,
+    canReply: posts.some((p) => p.canReply),
+    modified: fromTs(latest),
+    unread: list.filter((p) => p.unread).length,
+  };
 }
 
 function mapForumPosts(raw: RawForumPosts): MappedPosts {
   const list = raw.posts ?? [];
-  const norm = list.map(
-    (p): NormPost => ({
-      id: p.id,
-      parentId: p.hasparent === false ? null : (p.parentid ?? null),
-      author: p.author?.fullname,
-      created: p.timecreated,
-      modified: p.timemodified,
-      subject: p.subject,
-      message: p.message,
-      attachments: p.attachments,
-      unread: p.unread === true,
-    }),
+  return buildPosts(
+    list.map(
+      (p): NormPost => ({
+        id: p.id,
+        parentId: p.hasparent === false ? null : (p.parentid ?? null),
+        author: p.author?.fullname,
+        created: p.timecreated,
+        modified: p.timemodified,
+        subject: p.subject,
+        message: p.message,
+        attachments: p.attachments,
+        unread: p.unread === true,
+        canReply: p.capabilities?.reply === true,
+      }),
+    ),
   );
-  return buildPosts(norm, list[0]?.capabilities?.reply === true);
 }
 
 function mapHsuforumPosts(raw: RawHsuPosts): MappedPosts {
   const list = [...(raw.posts ?? [])].sort((a, b) => (a.created ?? 0) - (b.created ?? 0) || a.id - b.id);
-  const norm = list.map(
-    (p): NormPost => ({
-      id: p.id,
-      parentId: p.parent ? p.parent : null,
-      author: p.userfullname,
-      created: p.created,
-      modified: p.modified,
-      subject: p.subject,
-      message: p.message,
-      attachments: p.attachments,
-      unread: p.postread === false,
-    }),
+  return buildPosts(
+    list.map(
+      (p): NormPost => ({
+        id: p.id,
+        parentId: p.parent ? p.parent : null,
+        author: p.userfullname,
+        created: p.created,
+        modified: p.modified,
+        subject: p.subject,
+        message: p.message,
+        attachments: p.attachments,
+        unread: p.postread === false,
+        canReply: p.canreply === true,
+      }),
+    ),
   );
-  return buildPosts(norm, list[0]?.canreply === true);
 }
 
 interface LoadedPosts {
@@ -146,7 +158,9 @@ export async function loadPosts(api: MoodleApi, forumType: ForumType, discussion
     return { mapped: mapHsuforumPosts(res ?? {}) };
   } catch (e) {
     if (e instanceof MoodleError) {
-      throw new NotFound(`Discussion ${discussionId} was not found or is not accessible (${e.message}).`);
+      throw new NotFound(
+        `Discussion ${discussionId} was not found or is not accessible. Use discussion_id from list_discussions, not a post id.`,
+      );
     }
     throw e;
   }

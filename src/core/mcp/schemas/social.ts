@@ -4,18 +4,35 @@ import { list } from './common';
 const discussionSummary = {
   forumType: z.string(),
   forumId: z.number(),
+  forumKind: z.string(),
   courseId: z.number(),
   courseName: z.string(),
   discussionId: z.number(),
   subject: z.string(),
+  canCreateDiscussions: z.boolean(),
 };
 
-export const discussionsOut = z.looseObject({ discussions: list(discussionSummary), skippedForums: z.number() });
+export const discussionsOut = z.looseObject({
+  forums: list({ forumId: z.number(), forumKind: z.string(), canCreateDiscussions: z.boolean() }),
+  discussions: list(discussionSummary),
+  skippedForums: z.number(),
+  truncatedForums: list({ forumId: z.number(), nextPage: z.number(), pageSize: z.number() }),
+});
 
 export const discussionOut = z.looseObject({
   summary: z.looseObject(discussionSummary),
-  posts: list({ id: z.number(), parentId: z.number().nullable(), author: z.string(), message: z.string() }),
+  posts: list({
+    id: z.number(),
+    parentId: z.number().nullable(),
+    author: z.string(),
+    message: z.string(),
+    createdAt: z.string().nullable(),
+    unread: z.boolean(),
+    canReply: z.boolean(),
+    attachments: list({ name: z.string(), url: z.string() }),
+  }),
   canReply: z.boolean(),
+  forumIntro: z.string(),
 });
 
 const conversationSummary = { id: z.number(), name: z.string(), type: z.string() };

@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { renderDiscussion, renderForumSearch } from '../../src/core/mcp/render/forums';
+import { renderDiscussion, renderDiscussions, renderForumSearch } from '../../src/core/mcp/render/forums';
 import type { ForumSearchResult } from '../../src/core/services/forums-search';
-import type { Discussion, DiscussionSummary } from '../../src/core/types';
+import type { Discussion, DiscussionSummary, ForumListEntry } from '../../src/core/types';
 
 const summary = (over: Partial<DiscussionSummary> = {}): DiscussionSummary => ({
   forumType: 'forum',
   forumId: 3001,
   forumCmid: 7010,
   forumName: 'Announcements',
+  forumKind: 'news',
   courseId: 9001,
   courseName: 'Corporate Finance Basics',
   discussionId: 701,
@@ -19,6 +20,24 @@ const summary = (over: Partial<DiscussionSummary> = {}): DiscussionSummary => ({
   replies: 1,
   unread: null,
   pinned: false,
+  canCreateDiscussions: false,
+  dueAt: null,
+  cutoffAt: null,
+  ...over,
+});
+
+const forumEntry = (over: Partial<ForumListEntry> = {}): ForumListEntry => ({
+  forumType: 'forum',
+  forumId: 3001,
+  forumCmid: 7010,
+  forumName: 'Q&A',
+  forumKind: 'general',
+  courseId: 9001,
+  courseName: 'Corporate Finance Basics',
+  canCreateDiscussions: true,
+  dueAt: null,
+  cutoffAt: null,
+  numDiscussions: 0,
   ...over,
 });
 
@@ -36,7 +55,9 @@ describe('renderForumSearch', () => {
   it('prints each hit with the ids needed for get_discussion and a snippet', () => {
     const t = renderForumSearch(result());
     expect(t).toContain('1 discussion matching "midterm exam"');
-    expect(t).toContain('forum_type forum, discussion_id 701, forum_cmid 7010');
+    expect(t).toContain('forum_id 3001, discussion_id 701, cmid 7010');
+    expect(t).toContain('Announcements (announcements) / Corporate Finance Basics');
+    expect(t).not.toContain('forum_type forum');
     expect(t).toContain('  > The exam will be held in Room 301.');
     expect(t).not.toContain('Messages');
   });
@@ -87,25 +108,221 @@ describe('renderForumSearch', () => {
 
 describe('renderDiscussion post ids', () => {
   const posts = [
-    { id: 10, parentId: null, author: 'A', createdAt: null, subject: 'S', message: 'root', attachments: [] },
-    { id: 11, parentId: 10, author: 'B', createdAt: null, subject: 'Re: S', message: 'reply', attachments: [] },
-    { id: 12, parentId: 11, author: 'C', createdAt: null, subject: 'Re: S', message: 'nested', attachments: [] },
+    {
+      id: 10,
+      parentId: null,
+      author: 'A',
+      createdAt: null,
+      subject: 'S',
+      message: 'root',
+      attachments: [],
+      unread: false,
+      canReply: true,
+    },
+    {
+      id: 11,
+      parentId: 10,
+      author: 'B',
+      createdAt: null,
+      subject: 'Re: S',
+      message: 'reply',
+      attachments: [],
+      unread: true,
+      canReply: true,
+    },
+    {
+      id: 12,
+      parentId: 11,
+      author: 'C',
+      createdAt: null,
+      subject: 'Re: S',
+      message: 'nested',
+      attachments: [],
+      unread: false,
+      canReply: false,
+    },
   ];
   const discussion = (type: 'forum' | 'hsuforum'): Discussion => ({
-    summary: summary({ forumType: type, subject: 'S', discussionId: 77 }),
+    summary: summary({
+      forumType: type,
+      subject: 'S',
+      discussionId: 77,
+      forumKind: 'general',
+      canCreateDiscussions: true,
+    }),
     posts,
     canReply: true,
+    forumIntro: 'Please post in this thread.',
   });
 
   it('shows the parent of nested replies', () => {
     const t = renderDiscussion(discussion('forum'));
-    expect(t).toContain('(post_id 10)');
-    expect(t).toContain('(post_id 11, parent_id 10)');
-    expect(t).toContain('(post_id 12, parent_id 11)');
-    expect(t).toContain('prepare_forum_post with reply_to_post_id set to the post_id.');
+    expect(t).toContain('(post_id 10, can reply)');
+    expect(t).toContain('(post_id 11, parent_id 10, unread, can reply)');
+    expect(t).toContain('(post_id 12, parent_id 11, cannot reply)');
+    expect(t).toContain('You can reply to post_id 10, 11: prepare_forum_post with reply_to_post_id.');
+    expect(t).not.toContain('set to the post_id.');
+    expect(t).toContain('Please post in this thread.');
+    expect(t).toContain('general discussion 77');
+    expect(t).not.toContain('forum_type forum');
+    expect(t).not.toContain('Advanced Forum');
+    expect(t).toContain('forum_id 3001, cmid 7010');
+    expect(t).toContain('prepare_forum_post with forum_id 3001');
   });
 
   it('tells hsuforum replies to pass the discussion id', () => {
-    expect(renderDiscussion(discussion('hsuforum'))).toContain('set to the post_id and discussion_id 77.');
+    const t = renderDiscussion(discussion('hsuforum'));
+    expect(t).toContain(
+      'You can reply to post_id 10, 11: prepare_forum_post with reply_to_post_id and discussion_id 77.',
+    );
+    expect(t).toContain('general Advanced Forum discussion 77');
+  });
+
+  it('names the replyable post when it is omitted from the text', () => {
+    const later = Array.from({ length: 12 }, (_, i) => ({
+      id: 2 + i,
+      parentId: 1,
+      author: 'B',
+      createdAt: null,
+      subject: 'Re: S',
+      message: `later ${i} ${'word '.repeat(80)}`,
+      attachments: [],
+      unread: false,
+      canReply: false,
+    }));
+    const t = renderDiscussion({
+      summary: summary({ subject: 'S', discussionId: 77, forumKind: 'general' }),
+      posts: [
+        {
+          id: 1,
+          parentId: null,
+          author: 'A',
+          createdAt: null,
+          subject: 'S',
+          message: 'root',
+          attachments: [],
+          unread: false,
+          canReply: true,
+        },
+        ...later,
+      ],
+      canReply: true,
+      forumIntro: '',
+    });
+    expect(t).toMatch(/… \d+ earlier posts omitted/);
+    expect(t).not.toContain('(post_id 1,');
+    expect(t).toContain('cannot reply');
+    expect(t).toContain('You can reply to post_id 1:');
+    expect(t).not.toContain('set to the post_id.');
+  });
+});
+
+describe('renderDiscussions grouping', () => {
+  it('prints forum_id, type, posting flag, due date and a paging hint', () => {
+    const t = renderDiscussions({
+      forums: [],
+      discussions: [
+        summary({
+          forumKind: 'general',
+          canCreateDiscussions: true,
+          dueAt: '2026-11-03T18:43:00+09:00',
+        }),
+      ],
+      skippedForums: 0,
+      truncatedForums: [
+        { forumId: 3001, forumCmid: 7010, forumName: 'Announcements', remaining: 21, nextPage: 1, pageSize: 10 },
+      ],
+    });
+    expect(t).toContain(
+      'Announcements — Corporate Finance Basics, general, can post, due 2026-11-03 Tue 18:43 (forum_id 3001, cmid 7010)',
+    );
+    expect(t).toContain('To start a discussion, prepare_forum_post with forum_id.');
+    expect(t).not.toContain('prepare_forum_post with forum_id)');
+    expect(t).not.toContain('forum_type forum');
+    const disc = t.split('\n').find((line) => line.startsWith('- Midterm'));
+    expect(disc).toBe('- Midterm exam room — Hanako Suzuki, 2026-10-14 Wed 10:00 — 1 reply (discussion_id 701)');
+    expect(t).toContain('21 more; pass forum_cmid 7010, page 1, limit 10');
+  });
+
+  it('names Advanced Forum only for hsuforum and does not repeat the header on discussion lines', () => {
+    const t = renderDiscussions({
+      forums: [],
+      discussions: [
+        summary({ forumType: 'hsuforum', forumKind: 'blog', forumName: 'Weekly', canCreateDiscussions: true }),
+        summary({
+          forumType: 'hsuforum',
+          forumKind: 'blog',
+          forumName: 'Weekly',
+          discussionId: 702,
+          subject: 'Week 2',
+          canCreateDiscussions: true,
+        }),
+      ],
+      skippedForums: 0,
+      truncatedForums: [],
+    });
+    expect(t).toContain('Weekly — Corporate Finance Basics, blog, Advanced Forum, can post (forum_id 3001, cmid 7010)');
+    expect(t.split('Advanced Forum').length - 1).toBe(1);
+    expect(t).toContain('(discussion_id 701)');
+    expect(t).toContain('(discussion_id 702)');
+    expect(t).not.toContain('forum_id 3001, discussion_id');
+  });
+
+  it('lists an empty postable forum without a second empty-state sentence', () => {
+    const t = renderDiscussions({
+      forums: [forumEntry()],
+      discussions: [],
+      skippedForums: 0,
+      truncatedForums: [],
+    });
+    expect(t).toContain('Q&A — Corporate Finance Basics, general, can post (forum_id 3001, cmid 7010)');
+    expect(t).toContain('No discussions yet.');
+    expect(t).toContain('To start a discussion, prepare_forum_post with forum_id.');
+    expect(t).not.toContain('No discussions found.');
+  });
+
+  it('says no discussions match when a nonempty forum is filtered or paged to empty', () => {
+    const filtered = renderDiscussions({
+      forums: [forumEntry({ numDiscussions: 5 })],
+      discussions: [],
+      skippedForums: 0,
+      truncatedForums: [],
+    });
+    expect(filtered).toContain('No discussions match this page or filter.');
+    expect(filtered).not.toContain('No discussions yet.');
+    const paged = renderDiscussions({
+      forums: [forumEntry({ forumName: 'Busy', numDiscussions: 31 })],
+      discussions: [],
+      skippedForums: 0,
+      truncatedForums: [],
+    });
+    expect(paged).toContain('No discussions match this page or filter.');
+    expect(paged).not.toContain('No discussions yet.');
+  });
+
+  it('says the forum could not be read when a single forum was skipped', () => {
+    const t = renderDiscussions({
+      forums: [forumEntry({ numDiscussions: 4 })],
+      discussions: [],
+      skippedForums: 1,
+      truncatedForums: [],
+    });
+    expect(t).toContain('This forum could not be read.');
+    expect(t).not.toContain('No discussions yet.');
+  });
+
+  it('prints a continuation for a forum omitted by the global limit', () => {
+    const t = renderDiscussions({
+      forums: [
+        forumEntry({ forumName: 'A', numDiscussions: 10 }),
+        forumEntry({ forumId: 3002, forumCmid: 7011, forumName: 'B', numDiscussions: 5 }),
+      ],
+      discussions: [summary({ forumKind: 'general', forumName: 'A', canCreateDiscussions: true })],
+      skippedForums: 0,
+      truncatedForums: [{ forumId: 3002, forumCmid: 7011, forumName: 'B', remaining: 5, nextPage: 0, pageSize: 10 }],
+    });
+    expect(t).toContain('A — Corporate Finance Basics, general, can post (forum_id 3001, cmid 7010)');
+    expect(t).toContain('B — Corporate Finance Basics, general, can post (forum_id 3002, cmid 7011)');
+    expect(t).toContain('5 more; pass forum_cmid 7011, page 0, limit 10');
   });
 });

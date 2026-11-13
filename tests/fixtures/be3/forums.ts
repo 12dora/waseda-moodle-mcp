@@ -13,13 +13,38 @@ export const forumsC1: RawForum[] = [
     name: 'Announcements',
     intro: '<p>News &amp; updates</p>',
     duedate: 0,
+    cutoffdate: 0,
+    cancreatediscussions: false,
+    timemodified: 1791860400,
     numdiscussions: 2,
   },
-  { id: 3002, course: 9001, cmid: 7011, type: 'general', name: 'Q&amp;A', intro: '', duedate: 0, numdiscussions: 0 },
+  {
+    id: 3002,
+    course: 9001,
+    cmid: 7011,
+    type: 'general',
+    name: 'Q&amp;A',
+    intro: '',
+    duedate: 0,
+    cancreatediscussions: true,
+    timemodified: 1791800000,
+    numdiscussions: 0,
+  },
 ];
 
 export const forumsC2: RawForum[] = [
-  { id: 3003, course: 9002, cmid: 7012, type: 'news', name: 'Announcements', intro: '', duedate: 0, numdiscussions: 1 },
+  {
+    id: 3003,
+    course: 9002,
+    cmid: 7012,
+    type: 'news',
+    name: 'Announcements',
+    intro: '',
+    duedate: 0,
+    cancreatediscussions: false,
+    timemodified: 1791940000,
+    numdiscussions: 1,
+  },
 ];
 
 export const hsuForumsC1: RawForum[] = [
@@ -31,9 +56,43 @@ export const hsuForumsC1: RawForum[] = [
     name: 'Advanced Forum',
     intro: '<p>Group talk</p>',
     duedate: 1792508340,
+    cutoffdate: 0,
+    cancreatediscussions: true,
+    timemodified: 1791943200,
+    anonymous: 0,
     numdiscussions: 1,
   },
 ];
+
+/** Anonymous Advanced Forum: paginated WS is empty; non-paginated still lists the thread. */
+export const hsuAnonForum: RawForum = {
+  id: 4002,
+  course: 9001,
+  cmid: 7021,
+  type: 'news',
+  name: 'Anonymous board',
+  intro: '',
+  cancreatediscussions: false,
+  anonymous: 1,
+  numdiscussions: 1,
+};
+
+export const hsuAnonDiscussions: RawDiscussionList = {
+  discussions: [
+    {
+      id: 5567,
+      discussion: 5369,
+      name: 'Quiet note',
+      subject: 'Quiet note',
+      userfullname: 'Hidden User',
+      created: 1791860400,
+      timemodified: 1791860400,
+      numreplies: 0,
+      numunread: 0,
+      pinned: false,
+    },
+  ],
+};
 
 export const forumDiscussions: RawDiscussionList = {
   discussions: [
