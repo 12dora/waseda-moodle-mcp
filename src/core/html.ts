@@ -53,16 +53,18 @@ export function decodeEntities(s: string): string {
   });
 }
 
-// The lookahead pins the end of the tag name so the attribute part cannot re-split it (no backtracking blow-up).
-const TAG_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)(?![a-zA-Z0-9:-])([^<>]*)>/g;
-const HREF_RE = /(?:^|\s)href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
-const SRC_RE = /(?:^|\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
-const ALT_RE = /(?:^|\s)alt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
+const ATTR_ESC = /[.*+?^${}()|[\]\\]/g;
 
-function attr(re: RegExp, attrs: string): string {
-  const m = re.exec(attrs);
+/** First `name="…"` / `'…'` / unquoted value in an attribute string; entities decoded. Linear. */
+export function tagAttr(attrs: string, name: string): string {
+  if (!attrs || !name) return '';
+  const n = name.replace(ATTR_ESC, '\\$&');
+  const m = new RegExp(`(?:^|\\s)${n}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`, 'i').exec(attrs);
   return m ? decodeEntities(m[1] ?? m[2] ?? m[3] ?? '').trim() : '';
 }
+
+// The lookahead pins the end of the tag name so the attribute part cannot re-split it (no backtracking blow-up).
+const TAG_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)(?![a-zA-Z0-9:-])([^<>]*)>/g;
 
 const urlSafe = (u: string) => u.replace(/\s/g, '%20').replace(/\(/g, '%28').replace(/\)/g, '%29');
 
@@ -174,16 +176,16 @@ function handleAnchor(s: Md, closing: boolean, attrs: string): void {
     }
     return;
   }
-  const href = attr(HREF_RE, attrs);
+  const href = tagAttr(attrs, 'href');
   const usable = href && !href.startsWith('#') && !/^(javascript|data):/i.test(href);
   s.links.push(usable ? href : null);
   if (usable) inline(s, '[', true);
 }
 
 function handleImg(s: Md, closing: boolean, attrs: string): void {
-  const src = attr(SRC_RE, attrs);
+  const src = tagAttr(attrs, 'src');
   if (closing || !src || /^data:/i.test(src)) return;
-  inline(s, `![${attr(ALT_RE, attrs).replace(/[[\]]/g, '')}](${urlSafe(src)})`);
+  inline(s, `![${tagAttr(attrs, 'alt').replace(/[[\]]/g, '')}](${urlSafe(src)})`);
 }
 
 function handleItem(s: Md, closing: boolean): void {
@@ -302,6 +304,14 @@ function truncate(md: string, max: number): string {
   const c = md.charCodeAt(cut - 1);
   if (c >= 0xd800 && c <= 0xdbff) cut--;
   return `${md.slice(0, cut).trimEnd()}…`;
+}
+
+/** Tags and comments dropped, entities decoded, whitespace collapsed. For labels and cell values, not prose. */
+export function htmlToText(html: string | null | undefined): string {
+  if (!html) return '';
+  return decodeEntities(stripComments(html).replace(/<[^>]*>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function htmlToMarkdown(html: string | null | undefined, opts?: { maxChars?: number }): string {

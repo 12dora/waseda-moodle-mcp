@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeEntities, htmlToMarkdown } from '../../src/core/html';
+import { decodeEntities, htmlToMarkdown, htmlToText, tagAttr } from '../../src/core/html';
 
 describe('decodeEntities', () => {
   it('decodes named and numeric entities once', () => {
@@ -19,6 +19,24 @@ describe('decodeEntities', () => {
   });
   it('turns nbsp into a space', () => {
     expect(decodeEntities('a&nbsp;b&#160;c')).toBe('a b c');
+  });
+});
+
+describe('tagAttr', () => {
+  it('reads double, single and unquoted values and decodes entities', () => {
+    expect(tagAttr('description="A &amp; B"', 'description')).toBe('A & B');
+    expect(tagAttr("href='https://ex.test/a'", 'href')).toBe('https://ex.test/a');
+    expect(tagAttr('src=foo.png alt=x', 'src')).toBe('foo.png');
+    expect(tagAttr('class="x"', 'href')).toBe('');
+    expect(tagAttr('', 'href')).toBe('');
+  });
+});
+
+describe('htmlToText', () => {
+  it('drops tags and comments and collapses whitespace', () => {
+    expect(htmlToText('<p>Hello&nbsp;<b>world</b></p>')).toBe('Hello world');
+    expect(htmlToText('a<!-- hide --><span>b</span>')).toBe('a b');
+    expect(htmlToText(null)).toBe('');
   });
 });
 
