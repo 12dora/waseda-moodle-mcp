@@ -39,7 +39,7 @@ function usePendingCount(): number {
     if (!force && now - lastFetch.current < BADGE_REFRESH_MS) return;
     lastFetch.current = now;
     const mine = ++seq.current;
-    listActions('pending', PENDING_LIMIT).then(
+    listActions('pending', PENDING_LIMIT, true).then(
       (list) => {
         if (mine === seq.current) setCount(list.length);
       },

@@ -122,7 +122,7 @@ export function DailyTable({ daily, fmt }: { daily: UsageStats['daily']; fmt: Fm
               <td className="num-day">
                 <time dateTime={d.day}>{shortDay(d.day)}</time>
               </td>
-              <td className="num">{fmt(d.active)}</td>
+              <td className="num">{fmt(d.activeAll)}</td>
               <td className="num">{fmt(d.calls)}</td>
               <td className="num">{fmt(d.errors)}</td>
               <td className="num">{fmt(d.newUsers)}</td>

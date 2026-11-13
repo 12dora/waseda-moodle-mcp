@@ -1,5 +1,6 @@
 /**
  * Fetch wrapper for the console API: same-origin cookies, `X-WMM: 1` on state-changing requests,
+ * `X-WMM-Background: 1` on automatic refreshes,
  * `{error:{code,message}}` → ApiError, 401 → /connect?return=… (unless the caller opts out).
  */
 
@@ -48,6 +49,8 @@ interface RequestOptions {
   query?: Record<string, string | number | undefined | null>;
   /** Default true. Set false where a 401 is an expected answer (connect / consent pages). */
   redirectOn401?: boolean;
+  /** Automatic refresh the user did not ask for: marked so the server does not count it as use. */
+  background?: boolean;
 }
 
 type CallOptions = Omit<RequestOptions, 'method' | 'body'>;
@@ -62,9 +65,14 @@ function buildPath(path: string, query?: RequestOptions['query']): string {
   return s ? `${path}?${s}` : path;
 }
 
-function buildInit(method: NonNullable<RequestOptions['method']>, body: unknown): RequestInit {
+function buildInit(
+  method: NonNullable<RequestOptions['method']>,
+  body: unknown,
+  background: boolean | undefined,
+): RequestInit {
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (method !== 'GET') headers['X-WMM'] = '1';
+  if (background) headers['X-WMM-Background'] = '1';
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   return {
     method,
@@ -106,7 +114,7 @@ async function send(path: string, init: RequestInit): Promise<Response> {
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const res = await send(buildPath(path, opts.query), buildInit(opts.method ?? 'GET', opts.body));
+  const res = await send(buildPath(path, opts.query), buildInit(opts.method ?? 'GET', opts.body, opts.background));
   const blocked = edgeBlock(res);
   if (blocked) {
     onPaused?.(blocked);

@@ -14,7 +14,7 @@ export const en: PrivacyDoc = {
         {
           ul: [
             'We never ask for or see your Moodle password.',
-            'Your Moodle token is stored encrypted and is used only to act on Moodle at your request (and for a background deadline sweep).',
+            'Your Moodle token is stored encrypted and is used only to act on Moodle at your request (and for a background deadline sweep). When Moodle gives a private token, the service also keeps a Moodle sign-in session so the weekly-expiring token is renewed automatically.',
             'File contents are passed through, never stored.',
             'Your data is not sold, shared, used for advertising, or used to train AI models.',
             'You can delete everything from the console at any time.',
@@ -33,6 +33,11 @@ export const en: PrivacyDoc = {
                 'Moodle web-service token (and the optional private token)',
                 'To call Moodle on your behalf',
                 'Encrypted with AES-256-GCM using the instance’s master key. A hash and the last 4 characters are kept to recognise the token and display it as ••••abcd.',
+              ],
+              [
+                'Moodle sign-in session (only when a private token was received)',
+                'To renew the token automatically when Moodle replaces it, so you do not reconnect every week',
+                'The session cookie, encrypted like the token, opened once with the private token and refreshed by the service about hourly; sent only to Moodle. Also kept: when the session was last confirmed and when the token was last renewed. Removed when Moodle ends the session or you delete your account.',
               ],
               ['Moodle user id, full name, language', 'To identify your account', 'Read from Moodle when you connect.'],
               [
@@ -90,7 +95,7 @@ export const en: PrivacyDoc = {
               [
                 'Usage statistics',
                 'To see how the service is used',
-                'Counts per day (tool calls and failures per tool, calls per AI client type) and the number of active users per day, week and month (plus per AI client type per month). The counts carry no user identifiers and are not linked to any account, so they remain after account deletion. Active users are de-duplicated with keys that are deleted at the first daily cleanup after the day, week or month ends. Visible to the operator only.',
+                'Aggregate counts per day only: tool calls per tool with their failure class and response-time bucket, calls per AI client type and per hour of day, console page use, calendar feed fetches, Moodle token renewal outcomes and connection methods, and write actions per type by outcome. Also the number of active users per day, week and month, overall and by channel (AI clients, console), and how many users who signed up in a given week are still active 1, 2 and 4 weeks later (signup weeks are grouped so that each group has at least 3 users; smaller groups are not shown). The counts carry no user identifiers and are not linked to any account, so they remain after account deletion. Active users are de-duplicated within the same day, week or month using salted keys that are deleted at the first daily cleanup after that period ends. Visible to the operator only.',
               ],
               [
                 'Landing page visits',
@@ -109,7 +114,7 @@ export const en: PrivacyDoc = {
           ul: [
             'Your Moodle password. Sign-in happens on Moodle; the service receives only the mobile-app token.',
             'File contents. Downloads and uploads are streamed between Moodle and your client. When a client asks for a small file inline (up to 1 MiB), it is included in that one response only.',
-            'Moodle tokens in logs. Server logs contain only error names, not request bodies or tokens.',
+            'Moodle tokens or session cookies in logs. Server logs contain only error names, not request bodies, tokens or cookies.',
           ],
         },
       ],
@@ -166,7 +171,7 @@ export const en: PrivacyDoc = {
           ul: [
             'Apps: revoke an MCP client’s OAuth access.',
             'API keys: revoke a key.',
-            'Settings → Delete account: revokes all OAuth grants and permanently deletes your user record, encrypted token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.',
+            'Settings → Delete account: revokes all OAuth grants and permanently deletes your user record, encrypted token and Moodle sign-in session, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.',
           ],
         },
         {

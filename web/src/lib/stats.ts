@@ -1,6 +1,6 @@
 /** Pure helpers for the operator usage page (range parsing, chart scaling, number formatting). */
 
-import type { UsageStats } from '../api/types';
+import type { FailureClass, LatencyBucket, UsageStats } from '../api/types';
 import type { Lang } from './time';
 
 export const STATS_RANGES = [7, 30, 90] as const;
@@ -71,10 +71,43 @@ export function sumOf(values: readonly number[]): number {
   return values.reduce((a, b) => a + b, 0);
 }
 
-/** False until any tool call was recorded in the range (user counts alone do not make usage). */
+/** False until any tool call or console request was recorded (user counts alone do not make usage). */
 export function hasUsage(stats: UsageStats): boolean {
-  if (stats.daily.some((d) => d.active || d.calls)) return true;
+  if (stats.daily.some((d) => d.active || d.activeAll || d.calls || d.webRequests)) return true;
   return stats.tools.some((t) => t.calls) || stats.clients.some((c) => c.calls || c.activeMonth);
+}
+
+/** Display order of the failure classes and latency buckets (the server sends them as records). */
+export const FAILURE_CLASSES: readonly FailureClass[] = [
+  'needs_reconnect',
+  'moodle_unavailable',
+  'invalid_input',
+  'forbidden',
+  'budget',
+  'other',
+];
+export const LATENCY_BUCKETS: readonly LatencyBucket[] = ['lt1s', '1to3s', '3to10s', 'gt10s'];
+
+/** Tools with at least one count in `pick(tool)`, keeping the server order. */
+export function withCounts<T>(tools: readonly T[], pick: (tool: T) => Record<string, number>): T[] {
+  return tools.filter((tool) => sumOf(Object.values(pick(tool))) > 0);
+}
+
+/** 24 hour-of-day bars ('00'…'23'); short or missing input is padded with zeros. */
+export function hourBars(values: readonly number[]): { day: string; value: number }[] {
+  return Array.from({ length: 24 }, (_, h) => ({ day: String(h).padStart(2, '0'), value: values[h] ?? 0 }));
+}
+
+/** Signup week range as '10/6–10/20'; a single week shows once. */
+export function weekRange(from: string, to: string): string {
+  return from === to ? shortDay(from) : `${shortDay(from)}–${shortDay(to)}`;
+}
+
+/** Retained users as '3 (60%)'; '–' when the group has not reached that week yet. */
+export function formatRetained(count: number | null, users: number, lang: Lang): string {
+  if (count === null) return '–';
+  const pct = new Intl.NumberFormat(lang, { style: 'percent', maximumFractionDigits: 0 }).format(count / users);
+  return `${count} (${pct})`;
 }
 
 export interface BarSlots {

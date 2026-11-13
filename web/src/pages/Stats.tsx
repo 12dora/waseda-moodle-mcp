@@ -8,8 +8,28 @@ import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/Layout';
 import { BarChart } from '../components/stats/BarChart';
 import { ClientsTable, DailyTable, ToolsTable } from '../components/stats/StatsTables';
+import {
+  ActionsTable,
+  ChannelsTable,
+  ConnectsTable,
+  CredentialsTable,
+  FailuresTable,
+  LatencyTable,
+  PagesTable,
+  RenewalFailuresTable,
+  RetentionTable,
+} from '../components/stats/UsageTables';
 import { useI18n } from '../i18n';
-import { hasUsage, parseStatsRange, peakOf, STATS_RANGES, type StatsRange, shortDay, sumOf } from '../lib/stats';
+import {
+  hasUsage,
+  hourBars,
+  parseStatsRange,
+  peakOf,
+  STATS_RANGES,
+  type StatsRange,
+  shortDay,
+  sumOf,
+} from '../lib/stats';
 import { useAsync } from '../lib/useAsync';
 import { useSession } from '../session';
 
@@ -32,13 +52,13 @@ function RangePicker({ value, onChange }: { value: StatsRange; onChange: (days: 
 
 function KpiTiles({ stats, fmt }: { stats: UsageStats; fmt: Fmt }) {
   const { t } = useI18n();
-  const u = stats.users;
+  const { users, channels } = stats;
   const tiles: Array<[string, number]> = [
-    [t('stats.kpi.total'), u.total],
-    [t('stats.kpi.new', { days: stats.days }), u.newInRange],
-    [t('stats.kpi.today'), u.activeToday],
-    [t('stats.kpi.week'), u.activeWeek],
-    [t('stats.kpi.month'), u.activeMonth],
+    [t('stats.kpi.total'), users.total],
+    [t('stats.kpi.new', { days: stats.days }), users.newInRange],
+    [t('stats.kpi.today'), channels.today.total],
+    [t('stats.kpi.week'), channels.week.total],
+    [t('stats.kpi.month'), channels.month.total],
   ];
   return (
     <dl className="kpi-grid">
@@ -55,7 +75,7 @@ function KpiTiles({ stats, fmt }: { stats: UsageStats; fmt: Fmt }) {
 function DailyCharts({ stats, fmt }: { stats: UsageStats; fmt: Fmt }) {
   const { t } = useI18n();
   const { daily, days } = stats;
-  const peak = peakOf(daily.map((d) => d.active));
+  const peak = peakOf(daily.map((d) => d.activeAll));
   const calls = sumOf(daily.map((d) => d.calls));
   const failed = sumOf(daily.map((d) => d.errors));
   const callsSummary = { calls: fmt(calls), failed: fmt(failed) };
@@ -66,12 +86,12 @@ function DailyCharts({ stats, fmt }: { stats: UsageStats; fmt: Fmt }) {
         actions={<span className="muted small">{t('stats.dau.peak', { count: fmt(peak) })}</span>}
       >
         <BarChart
-          data={daily.map((d) => ({ day: d.day, value: d.active }))}
+          data={daily.map((d) => ({ day: d.day, value: d.activeAll }))}
           label={t('stats.dau.aria', { days, peak: fmt(peak) })}
           format={fmt}
           tooltip={(i) => {
             const d = daily[i];
-            return d ? t('stats.dau.tip', { day: shortDay(d.day), count: fmt(d.active) }) : '';
+            return d ? t('stats.dau.tip', { day: shortDay(d.day), count: fmt(d.activeAll) }) : '';
           }}
         />
       </Card>
@@ -97,6 +117,86 @@ function DailyCharts({ stats, fmt }: { stats: UsageStats; fmt: Fmt }) {
   );
 }
 
+function HoursCard({ title, values, fmt }: { title: string; values: number[]; fmt: Fmt }) {
+  const { t } = useI18n();
+  const bars = hourBars(values);
+  const peak = peakOf(bars.map((b) => b.value));
+  return (
+    <Card title={title}>
+      <BarChart
+        data={bars}
+        label={t('stats.hours.aria', { title, peak: fmt(peak) })}
+        format={fmt}
+        tooltip={(i) => t('stats.hours.tip', { hour: bars[i]?.day ?? '', count: fmt(bars[i]?.value ?? 0) })}
+      />
+    </Card>
+  );
+}
+
+function CalendarCard({ stats, fmt }: { stats: UsageStats; fmt: Fmt }) {
+  const { t } = useI18n();
+  const { daily, days } = stats;
+  const fetches = fmt(sumOf(daily.map((d) => d.icsFetches)));
+  return (
+    <Card
+      title={t('stats.calendar.title')}
+      actions={<span className="muted small">{t('stats.calendar.total', { fetches })}</span>}
+    >
+      <BarChart
+        data={daily.map((d) => ({ day: d.day, value: d.icsFetches }))}
+        label={t('stats.calendar.aria', { days, fetches })}
+        format={fmt}
+        tooltip={(i) => {
+          const d = daily[i];
+          if (!d) return '';
+          return t('stats.calendar.tip', { day: shortDay(d.day), fetches: fmt(d.icsFetches), feeds: fmt(d.icsFeeds) });
+        }}
+      />
+    </Card>
+  );
+}
+
+function ToolBreakdowns({ stats, fmt }: { stats: UsageStats; fmt: Fmt }) {
+  const { t } = useI18n();
+  return (
+    <>
+      <Card title={t('stats.failures.title')}>
+        <FailuresTable tools={stats.tools} fmt={fmt} />
+      </Card>
+      <Card title={t('stats.latency.title')}>
+        <LatencyTable tools={stats.tools} fmt={fmt} />
+      </Card>
+    </>
+  );
+}
+
+function OperationsCards({ stats, fmt }: { stats: UsageStats; fmt: Fmt }) {
+  const { t } = useI18n();
+  const { credentials } = stats;
+  return (
+    <>
+      <Card title={t('stats.actions.title')}>
+        <ActionsTable actions={stats.actions} fmt={fmt} />
+      </Card>
+      <div className="grid-2">
+        <Card title={t('stats.credentials.title')}>
+          <CredentialsTable stats={stats} fmt={fmt} />
+        </Card>
+        <Card title={t('stats.connects.title')}>
+          <ConnectsTable connects={credentials.connects} fmt={fmt} />
+        </Card>
+        <Card title={t('stats.renewFailures.title')}>
+          <RenewalFailuresTable failures={credentials.failures} fmt={fmt} />
+        </Card>
+        <CalendarCard stats={stats} fmt={fmt} />
+      </div>
+      <Card title={t('stats.retention.title')}>
+        <RetentionTable retention={stats.retention} fmt={fmt} />
+      </Card>
+    </>
+  );
+}
+
 function StatsBody({ stats }: { stats: UsageStats }) {
   const { t, lang } = useI18n();
   const fmt = useMemo(() => {
@@ -116,6 +216,12 @@ function StatsBody({ stats }: { stats: UsageStats }) {
       <KpiTiles stats={stats} fmt={fmt} />
       <DailyCharts stats={stats} fmt={fmt} />
       <div className="grid-2">
+        <Card title={t('stats.channels.title')}>
+          <ChannelsTable channels={stats.channels} fmt={fmt} />
+        </Card>
+        <Card title={t('stats.pages.title')}>
+          <PagesTable pages={stats.pages} fmt={fmt} />
+        </Card>
         <Card title={t('stats.tools.title')}>
           <ToolsTable tools={stats.tools} fmt={fmt} />
         </Card>
@@ -123,6 +229,12 @@ function StatsBody({ stats }: { stats: UsageStats }) {
           <ClientsTable clients={stats.clients} fmt={fmt} />
         </Card>
       </div>
+      <ToolBreakdowns stats={stats} fmt={fmt} />
+      <div className="grid-2">
+        <HoursCard title={t('stats.hours.mcp')} values={stats.hours.mcp} fmt={fmt} />
+        <HoursCard title={t('stats.hours.web')} values={stats.hours.web} fmt={fmt} />
+      </div>
+      <OperationsCards stats={stats} fmt={fmt} />
     </>
   );
 }

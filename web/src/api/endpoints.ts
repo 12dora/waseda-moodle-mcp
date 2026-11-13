@@ -60,8 +60,8 @@ export const deleteCalendar = () => api.del<unknown>('/api/calendar');
 export const listApps = () => api.get<AppGrant[]>('/api/apps');
 export const revokeApp = (grantId: string) => api.del<unknown>(`/api/apps/${id(grantId)}`);
 
-export const listActions = (status?: ActionStatus, limit?: number) =>
-  api.get<ActionRecord[]>('/api/actions', { query: { status, limit } });
+export const listActions = (status?: ActionStatus, limit?: number, background = false) =>
+  api.get<ActionRecord[]>('/api/actions', { query: { status, limit }, background });
 export const approveAction = (actionId: string) => api.post<ActionResult>(`/api/actions/${id(actionId)}/approve`);
 export const cancelAction = (actionId: string) => api.post<unknown>(`/api/actions/${id(actionId)}/cancel`);
 

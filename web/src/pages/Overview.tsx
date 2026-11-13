@@ -47,6 +47,17 @@ function ConnectionCard({ me }: { me: Me }) {
             <dd>{cred.lastOkAt ? formatDateTime(cred.lastOkAt, lang) : t('common.never')}</dd>
             <dt>{t('overview.conn.token')}</dt>
             <dd className="mono">••••{cred.tokenHint}</dd>
+            <dt>{t('overview.conn.autoRenew')}</dt>
+            <dd>
+              {cred.autoRenew ? t('overview.conn.autoRenewOn') : t('overview.conn.autoRenewOff')}
+              {cred.autoRenew && cred.renewedAt && (
+                <span className="muted">
+                  {' · '}
+                  {t('overview.conn.autoRenewLast', { time: formatDateTime(cred.renewedAt, lang) })}
+                </span>
+              )}
+              {!cred.autoRenew && active && <div className="muted small">{t('overview.conn.autoRenewHint')}</div>}
+            </dd>
           </>
         )}
       </dl>
