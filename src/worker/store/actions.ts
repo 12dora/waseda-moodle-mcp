@@ -1,6 +1,7 @@
 import type { ActionRow, Store, UploadDraftRow } from '../../core/context';
-import type { UploadedDraftFile } from '../../core/types';
-import { changes, parseJson, toJson, updateColumns } from './rows';
+import { ACTION_STATUS_FROM, type ActionStatus, type UploadedDraftFile } from '../../core/types';
+import { usagePeriods } from '../../core/usage';
+import { changes, parseJson, toJson, updateStatement } from './rows';
 
 interface ActionRaw {
   id: string;
@@ -62,10 +63,51 @@ const toUpload = (r: UploadRaw): UploadDraftRow => ({
 
 type ActionMethods = Pick<Store, 'createAction' | 'getAction' | 'claimAction' | 'updateAction' | 'listActions'>;
 
+/** Final statuses of the write funnel (operator statistics: `action_<status>` per kind, with `action_prepared`). */
+const FUNNEL_STATUSES: ReadonlySet<ActionStatus> = new Set(['executed', 'failed', 'cancelled', 'expired']);
+
+/** +1 on `action_<event>` for the action's kind, only if the statement right before (same batch) changed a row. */
+const countAfter = (db: D1Database, id: string, event: string, now: number): D1PreparedStatement =>
+  db
+    .prepare(
+      `INSERT INTO usage_counts (period, metric, dim, value)
+       SELECT ?, ?, kind, 1 FROM actions WHERE id = ? AND changes() = 1
+       ON CONFLICT(period, metric, dim) DO UPDATE SET value = value + 1`,
+    )
+    .bind(usagePeriods(now).day, `action_${event}`, id);
+
+/**
+ * Pending actions past their expiry become `expired`, counted per kind in the same batch (so exactly once, whether the
+ * purge or a read gets there first). Two statements however many rows; `userId` limits it to one user's actions.
+ */
+function expireStatements(db: D1Database, now: number, userId?: number): D1PreparedStatement[] {
+  const mine = userId === undefined ? '' : ' AND user_id = ?';
+  const args = userId === undefined ? [now] : [now, userId];
+  return [
+    db
+      .prepare(
+        `INSERT INTO usage_counts (period, metric, dim, value)
+         SELECT ?, 'action_expired', kind, COUNT(*) FROM actions
+         WHERE status = 'pending' AND expires_at <= ?${mine} GROUP BY kind
+         ON CONFLICT(period, metric, dim) DO UPDATE SET value = value + excluded.value`,
+      )
+      .bind(usagePeriods(now).day, ...args),
+    db
+      .prepare(`UPDATE actions SET status = 'expired' WHERE status = 'pending' AND expires_at <= ?${mine}`)
+      .bind(...args),
+  ];
+}
+
+/** The daily purge's share: every user's expired pending actions. */
+export async function expirePendingActions(db: D1Database, now: number): Promise<number> {
+  const [, expired] = await db.batch(expireStatements(db, now));
+  return expired?.meta?.changes ?? 0;
+}
+
 export function actionMethods(db: D1Database): ActionMethods {
   return {
     async createAction(row) {
-      await db
+      const insert = db
         .prepare(
           `INSERT INTO actions (id, user_id, kind, status, approval, title, details, warnings, payload, source,
              created_at, expires_at, executed_at, result, error)
@@ -87,8 +129,8 @@ export function actionMethods(db: D1Database): ActionMethods {
           row.executedAt ?? null,
           row.result ?? null,
           row.error ?? null,
-        )
-        .run();
+        );
+      await db.batch([insert, countAfter(db, row.id, 'prepared', row.createdAt)]);
     },
 
     async getAction(id) {
@@ -109,11 +151,21 @@ export function actionMethods(db: D1Database): ActionMethods {
     },
 
     async updateAction(id, patch) {
-      await updateColumns(
-        db,
-        { table: 'actions', keyColumn: 'id', key: id },
-        { status: patch.status, executed_at: patch.executedAt, result: patch.result, error: patch.error },
-      );
+      const from = patch.status === undefined ? undefined : ACTION_STATUS_FROM[patch.status];
+      if (patch.status !== undefined && from === undefined) return false;
+      const columns = {
+        status: patch.status,
+        executed_at: patch.executedAt,
+        result: patch.result,
+        error: patch.error,
+      };
+      const guard = from === undefined ? undefined : { sql: 'status = ?', args: [from] };
+      const update = updateStatement(db, { table: 'actions', keyColumn: 'id', key: id }, columns, guard);
+      if (!update) return false;
+      if (!patch.status || !FUNNEL_STATUSES.has(patch.status)) return (await changes(update)) === 1;
+      // the funnel counts the transition in the same batch, only if it won
+      const [res] = await db.batch([update, countAfter(db, id, patch.status, Date.now())]);
+      return (res?.meta?.changes ?? 0) === 1;
     },
 
     async listActions(userId, opts) {
@@ -127,11 +179,14 @@ export function actionMethods(db: D1Database): ActionMethods {
         where.push('created_at < ?');
         args.push(opts.before);
       }
-      const { results } = await db
-        .prepare(`SELECT * FROM actions WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`)
-        .bind(...args, Math.max(1, Math.floor(opts.limit)))
-        .all<ActionRaw>();
-      return results.map(toAction);
+      // expired pending rows are settled (and counted) first, so the read and its status filter see them as expired
+      const res = await db.batch([
+        ...expireStatements(db, Date.now(), userId),
+        db
+          .prepare(`SELECT * FROM actions WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`)
+          .bind(...args, Math.max(1, Math.floor(opts.limit))),
+      ]);
+      return ((res[2]?.results ?? []) as ActionRaw[]).map(toAction);
     },
   };
 }

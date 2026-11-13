@@ -2,6 +2,7 @@ import type { CallToolResult, McpServer, StandardSchemaWithJSON } from '@modelco
 import type * as z from 'zod';
 import type { ServiceContext } from '../../context';
 import { NeedsReconnect, WmmError } from '../../errors';
+import { type FailureClass, failureClass } from '../../usage';
 import { RECONNECT_STDIO } from '../wording';
 import type { ToolDef } from './define';
 
@@ -54,9 +55,9 @@ export function audit(ctx: ServiceContext, action: string, args: unknown, error?
 }
 
 /** Operator statistics: aggregate only, never allowed to affect the tool result. */
-function countCall(ctx: ServiceContext, tool: string, ok: boolean): void {
+function countCall(ctx: ServiceContext, tool: string, started: number, failure: FailureClass | null): void {
   try {
-    ctx.usage?.toolCall(tool, ok);
+    ctx.usage?.toolCall({ tool, ms: Date.now() - started, failure });
   } catch {
     /* best effort */
   }
@@ -89,17 +90,18 @@ export function registerTool(server: McpServer, ctx: ServiceContext, def: ToolDe
     },
     async (raw: unknown): Promise<CallToolResult> => {
       const args = raw ?? {};
+      const started = Date.now();
       try {
         const out = await def.run(callScoped(ctx), args);
         audit(ctx, `tool:${def.name}`, args);
-        countCall(ctx, def.name, true);
+        countCall(ctx, def.name, started, null);
         return {
           content: [{ type: 'text', text: out.text }, ...(out.extra ?? [])],
           structuredContent: out.data as Record<string, unknown>,
         };
       } catch (e) {
         audit(ctx, `tool:${def.name}`, args, e);
-        countCall(ctx, def.name, false);
+        countCall(ctx, def.name, started, failureClass(e));
         throw toToolError(ctx, e);
       }
     },

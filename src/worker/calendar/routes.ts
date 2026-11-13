@@ -8,7 +8,7 @@ import { b64urlEncode, sha256Hex } from '../../core/crypto';
 import { NotFound, RateLimited, WmmError } from '../../core/errors';
 import { isoJst } from '../../core/time';
 import { auditConsole, session, storeOf } from '../api/shared';
-import { type AppEnv, clientIp, memoryRateLimit, rateLimit } from '../auth';
+import { type AppEnv, clientIp, deferOn, memoryRateLimit, rateLimit } from '../auth';
 import { tryExecutionContext } from '../context';
 import { publicUrlOf } from '../env';
 import { errorPayload } from '../http-errors';
@@ -127,6 +127,7 @@ export function calendarRoutes(): Hono<AppEnv> {
     }
     try {
       const ics = await loadFeed(c.env, { store, execCtx }, { feed, plan, now });
+      deferOn(c, store.recordFeedFetch({ ownerId: feed.userId, now })); // operator statistics only, never activity
       return new Response(ics, {
         headers: {
           'Content-Type': 'text/calendar; charset=utf-8',

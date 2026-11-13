@@ -33,8 +33,14 @@ interface Body {
   days: number;
   users: { total: number; newInRange: number; activeToday: number; activeWeek: number; activeMonth: number };
   daily: Day[];
-  tools: { name: string; calls: number; errors: number }[];
+  tools: ReturnType<typeof tool>[];
   clients: { name: string; calls: number; activeMonth: number }[];
+  channels: Record<'today' | 'week' | 'month', { mcp: number; web: number; total: number }>;
+  pages: { name: string; requests: number }[];
+  hours: { mcp: number[]; web: number[] };
+  credentials: Record<string, unknown>;
+  actions: unknown[];
+  retention: { from: string; to: string; users: number; w1: number | null; w2: number | null; w4: number | null }[];
 }
 
 function makeEnv(): Env {
@@ -62,6 +68,15 @@ async function call(path: string, cookie?: string): Promise<Response> {
 /** JST calendar day 'YYYY-MM-DD' of an instant (fixed +09:00). */
 const jst = (ms: number) => new Date(ms + JST_OFFSET_MS).toISOString().slice(0, 10);
 const dayAgo = (n: number) => jst(Date.now() - n * DAY_MS);
+
+/** A tool row without failure-class or latency counters (those are zero-filled). */
+const tool = (name: string, calls: number, errors: number) => ({
+  name,
+  calls,
+  errors,
+  failures: { needs_reconnect: 0, moodle_unavailable: 0, invalid_input: 0, forbidden: 0, budget: 0, other: 0 },
+  latency: { lt1s: 0, '1to3s': 0, '3to10s': 0, gt10s: 0 },
+});
 
 function count(period: string, metric: string, dim: string, value: number) {
   testD1.sqlite
@@ -141,6 +156,25 @@ describe('GET /api/admin/stats data', () => {
     expect(body.tools).toEqual([]);
     expect(body.clients).toEqual([]);
     expect(body.users).toMatchObject({ total: 2, activeToday: 0, activeWeek: 0, activeMonth: 0 });
+    // the finer sections are always present, zero-filled
+    for (const d of body.daily) expect(d).toMatchObject({ activeWeb: 0, activeAll: 0, webRequests: 0, icsFetches: 0 });
+    const none = { mcp: 0, web: 0, total: 0 };
+    expect(body.channels).toEqual({ today: none, week: none, month: none });
+    expect(body.pages).toEqual([]);
+    expect(body.hours).toEqual({ mcp: Array(24).fill(0), web: Array(24).fill(0) });
+    expect(body.credentials).toEqual({
+      active: 0,
+      invalid: 0,
+      autoRenew: 0,
+      renewed: 0,
+      kept: 0,
+      failed: 0,
+      failures: [],
+      connects: [],
+    });
+    expect(body.actions).toEqual([]);
+    // both accounts signed up this week: a group of 2 is not reported at all
+    expect(body.retention).toEqual([]);
   });
 
   it('sums per day, per tool and per client, sorted by calls then name', async () => {
@@ -161,11 +195,7 @@ describe('GET /api/admin/stats data', () => {
     const seven = (await (await call('/api/admin/stats?days=7', adminCookie)).json()) as Body;
     expect(seven.daily.at(-1)).toMatchObject({ day: today, active: 4, calls: 7, errors: 1 });
     expect(seven.daily.at(-2)).toMatchObject({ day: yesterday, active: 6, calls: 6, errors: 2 });
-    expect(seven.tools).toEqual([
-      { name: 'get_due_items', calls: 8, errors: 2 },
-      { name: 'get_grades', calls: 3, errors: 0 },
-      { name: 'list_courses', calls: 2, errors: 1 },
-    ]);
+    expect(seven.tools).toEqual([tool('get_due_items', 8, 2), tool('get_grades', 3, 0), tool('list_courses', 2, 1)]);
     expect(seven.clients).toEqual([
       { name: 'Claude', calls: 6, activeMonth: 0 },
       { name: 'ChatGPT', calls: 3, activeMonth: 0 },
@@ -173,7 +203,7 @@ describe('GET /api/admin/stats data', () => {
 
     // the 30 day range also sees the older day
     const thirty = (await (await call('/api/admin/stats?days=30', adminCookie)).json()) as Body;
-    expect(thirty.tools[0]).toEqual({ name: 'get_due_items', calls: 108, errors: 2 });
+    expect(thirty.tools[0]).toEqual(tool('get_due_items', 108, 2));
   });
 
   it('breaks calls ties by name', async () => {

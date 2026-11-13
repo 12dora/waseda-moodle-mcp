@@ -18,7 +18,7 @@ import type {
 } from '../../src/core/context';
 import { MoodleError } from '../../src/core/errors';
 import type { InferredSchedule, Scope, UserSettings } from '../../src/core/types';
-import { DEFAULT_SETTINGS } from '../../src/core/types';
+import { ACTION_STATUS_FROM, DEFAULT_SETTINGS } from '../../src/core/types';
 
 // ------------------------------------------------------------------ fake Moodle
 
@@ -175,7 +175,9 @@ function makeFakeStore(): FakeStore {
     getAction: async (id) => state.actions.get(id) ?? null,
     updateAction: async (id, patch) => {
       const cur = state.actions.get(id);
-      if (cur) state.actions.set(id, { ...cur, ...patch });
+      if (!cur || (patch.status !== undefined && cur.status !== ACTION_STATUS_FROM[patch.status])) return false;
+      state.actions.set(id, { ...cur, ...patch });
+      return true;
     },
     claimAction: async (id, userId, now) => {
       const cur = state.actions.get(id);

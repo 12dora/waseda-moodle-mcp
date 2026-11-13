@@ -33,19 +33,37 @@ export function parseJson<T>(text: string | null | undefined, fallback: T): T {
 
 export const toJson = (v: unknown): string => JSON.stringify(v);
 
-/** UPDATE the given columns of one row; `undefined` values are skipped, `null` is written as NULL. */
+interface RowTarget {
+  table: string;
+  keyColumn: string;
+  key: string | number;
+}
+
+/**
+ * UPDATE of the given columns of one row; `undefined` values are skipped, `null` is written as NULL. `guard` is an
+ * extra condition (`column != ?` style, with its arguments). null when there is nothing to set.
+ */
+export function updateStatement(
+  db: D1Database,
+  target: RowTarget,
+  columns: Record<string, unknown>,
+  guard?: { sql: string; args: unknown[] },
+): D1PreparedStatement | null {
+  const entries = Object.entries(columns).filter(([, v]) => v !== undefined);
+  if (entries.length === 0) return null;
+  const sets = entries.map(([col]) => `${col} = ?`).join(', ');
+  const extra = guard ? ` AND ${guard.sql}` : '';
+  return db
+    .prepare(`UPDATE ${target.table} SET ${sets} WHERE ${target.keyColumn} = ?${extra}`)
+    .bind(...entries.map(([, v]) => v), target.key, ...(guard?.args ?? []));
+}
+
 export async function updateColumns(
   db: D1Database,
-  target: { table: string; keyColumn: string; key: string | number },
+  target: RowTarget,
   columns: Record<string, unknown>,
 ): Promise<void> {
-  const entries = Object.entries(columns).filter(([, v]) => v !== undefined);
-  if (entries.length === 0) return;
-  const sets = entries.map(([col]) => `${col} = ?`).join(', ');
-  await db
-    .prepare(`UPDATE ${target.table} SET ${sets} WHERE ${target.keyColumn} = ?`)
-    .bind(...entries.map(([, v]) => v), target.key)
-    .run();
+  await updateStatement(db, target, columns)?.run();
 }
 
 export async function changes(stmt: D1PreparedStatement): Promise<number> {

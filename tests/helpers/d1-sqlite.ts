@@ -42,15 +42,24 @@ class Stmt {
   }
 
   async all<T = Record<string, unknown>>(): Promise<{ results: T[]; success: true; meta: Record<string, unknown> }> {
-    const rows = this.prepared()
-      .all(...this.params)
-      .map(plain) as T[];
-    return { results: rows, success: true, meta: { changes: 0, rows_read: rows.length } };
+    return this.allSync<T>();
   }
 
   async run(): Promise<{ results: never[]; success: true; meta: { changes: number; last_row_id: number } }> {
+    return this.runSync();
+  }
+
+  allSync<T = Record<string, unknown>>() {
+    const rows = this.prepared()
+      .all(...this.params)
+      .map(plain) as T[];
+    return { results: rows, success: true as const, meta: { changes: 0, rows_read: rows.length } };
+  }
+
+  runSync() {
     const r = this.prepared().run(...this.params);
-    return { results: [], success: true, meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } };
+    const meta = { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) };
+    return { results: [] as never[], success: true as const, meta };
   }
 
   async raw<T = unknown[]>(): Promise<T[]> {
@@ -82,13 +91,11 @@ export function createTestD1(applyMigrations = true): TestD1 {
 
   const db = {
     prepare: (sql: string) => new Stmt(sqlite, sql),
+    // synchronous inside: concurrent (deferred) batches can never interleave in one transaction
     async batch(stmts: Stmt[]) {
       sqlite.exec('BEGIN');
       try {
-        const out = [];
-        for (const s of stmts) {
-          out.push(/^\s*(select|with|pragma)/i.test(s.sql) ? await s.all() : await s.run());
-        }
+        const out = stmts.map((s) => (/^\s*(select|with|pragma)/i.test(s.sql) ? s.allSync() : s.runSync()));
         sqlite.exec('COMMIT');
         return out;
       } catch (e) {

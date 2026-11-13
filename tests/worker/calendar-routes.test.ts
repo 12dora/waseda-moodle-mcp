@@ -7,6 +7,7 @@ import { buildFeed } from '../../src/worker/calendar/feed';
 import { resetCalendarMisses } from '../../src/worker/calendar/routes';
 import { FEED_CACHE_MS, MAX_STALE_MS } from '../../src/worker/calendar/serve';
 import type { Env } from '../../src/worker/env';
+import { resetUsageMemory } from '../../src/worker/store/usage';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
 import { createTestD1, type TestD1 } from '../helpers/d1-sqlite';
 import { MemoryKV } from '../helpers/memory-kv';
@@ -405,6 +406,27 @@ describe('bookkeeping writes', () => {
     fetchAt(null);
     await call(path);
     expect(feedRow().last_fetch_at).not.toBeNull();
+  });
+
+  it('counts served fetches and distinct feeds in the operator statistics, never as user activity', async () => {
+    resetUsageMemory(); // fresh database: forget the de-dup keys earlier tests left in this isolate
+    const counters = () =>
+      testD1.sqlite
+        .prepare('SELECT metric, dim, SUM(value) AS value FROM usage_counts GROUP BY metric, dim ORDER BY metric, dim')
+        .all();
+    const res = await call('/api/calendar', { method: 'POST', cookie, defer: true });
+    const path = new URL(((await res.json()) as { url: string }).url).pathname;
+    await settled();
+    expect(counters()).toEqual(expect.arrayContaining([{ metric: 'page', dim: 'calendar', value: 1 }])); // the console
+    testD1.sqlite.prepare('DELETE FROM usage_counts').run();
+
+    expect((await call(path, { defer: true })).status).toBe(200);
+    expect((await call(path, { defer: true })).status).toBe(200);
+    await settled();
+    expect(counters()).toEqual([
+      { metric: 'ics_feeds', dim: '', value: 1 },
+      { metric: 'ics_fetches', dim: '', value: 2 },
+    ]);
   });
 
   it('runs the stamp after the response when it can', async () => {

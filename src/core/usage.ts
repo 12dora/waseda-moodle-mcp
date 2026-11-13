@@ -1,5 +1,9 @@
-/** Usage-statistics vocabulary shared by the recorder (write path) and the operator report: JST periods and client labels. Pure. */
+/**
+ * Usage-statistics vocabulary shared by the recorder (write path) and the operator report: JST periods, client
+ * labels and the fixed dimensions of the finer counters. Pure.
+ */
 
+import { MoodleError, WmmError } from './errors';
 import { jstParts } from './time';
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -72,4 +76,79 @@ export function clientLabel(source: string): string {
   const s = source.trim().toLowerCase();
   const rule = CLIENT_RULES.find((r) => r.needles.some((n) => (r.prefix ? s.startsWith(n) : s.includes(n))));
   return rule?.label ?? CLIENT_OTHER;
+}
+
+// ------------------------------------------------------------------ fixed vocabularies of the finer statistics
+
+/** Why a tool call failed, from the error class (single source: failureClass). */
+export const FAILURE_CLASSES = [
+  'needs_reconnect',
+  'moodle_unavailable',
+  'invalid_input',
+  'forbidden',
+  'budget',
+  'other',
+] as const;
+export type FailureClass = (typeof FAILURE_CLASSES)[number];
+
+/** Error code (src/core/errors.ts) -> class. forbidden covers not_found; budget the call budget and rate limits. */
+const FAILURE_BY_CODE: ReadonlyMap<string, FailureClass> = new Map<string, FailureClass>([
+  ['needs_reconnect', 'needs_reconnect'],
+  ['moodle_unavailable', 'moodle_unavailable'], // includes request timeouts
+  ['invalid_input', 'invalid_input'],
+  ['forbidden', 'forbidden'],
+  ['not_found', 'forbidden'],
+  ['budget_exceeded', 'budget'],
+  ['rate_limited', 'budget'],
+]);
+
+/** Moodle's own error codes (MoodleError) and unexpected errors are `other`. */
+export function failureClass(e: unknown): FailureClass {
+  if (!(e instanceof WmmError) || e instanceof MoodleError) return 'other';
+  return FAILURE_BY_CODE.get(e.code) ?? 'other';
+}
+
+/** Wall-time buckets of a tool handler: < 1 s, 1–3 s, 3–10 s, > 10 s. */
+export const LATENCY_BUCKETS = ['lt1s', '1to3s', '3to10s', 'gt10s'] as const;
+export type LatencyBucket = (typeof LATENCY_BUCKETS)[number];
+
+export function latencyBucket(ms: number): LatencyBucket {
+  if (ms < 1000) return 'lt1s';
+  if (ms < 3000) return '1to3s';
+  if (ms < 10_000) return '3to10s';
+  return 'gt10s';
+}
+
+/** 'HH' (00–23) of an instant in JST. */
+export const jstHour = (now: number): string => pad(jstParts(now).h);
+
+/** Whole weeks from the JST week of `from` to the JST week of `to` (both are Mondays after jstWeekStart). */
+export function weeksBetween(from: number, to: number): number {
+  const monday = (ms: number) => Date.parse(`${jstWeekStart(ms)}T00:00:00Z`);
+  return Math.round((monday(to) - monday(from)) / (7 * DAY_MS));
+}
+
+/** Weeks after signup that the retention report shows. */
+export const RETENTION_OFFSETS = [1, 2, 4] as const;
+
+/** A day counter: metric plus a fixed-vocabulary dimension (never user-provided text). */
+export interface DayCount {
+  metric: string;
+  dim: string;
+}
+
+const tag = (s: string | undefined, fallback: string): string =>
+  (s ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+    .slice(0, 40) || fallback;
+
+type RenewalStatus = 'renewed' | 'kept' | 'failed' | 'skipped';
+
+/** Counters of one credential refresh: renewed / kept, or the failure reason. Skips are not renewal attempts. */
+export function renewalCounts(outcome: { status: RenewalStatus; reason?: string }): DayCount[] {
+  if (outcome.status === 'renewed') return [{ metric: 'renew_renewed', dim: '' }];
+  if (outcome.status === 'kept') return [{ metric: 'renew_kept', dim: '' }];
+  if (outcome.status === 'failed') return [{ metric: 'renew_failed', dim: tag(outcome.reason, 'error') }];
+  return [];
 }

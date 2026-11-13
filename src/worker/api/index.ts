@@ -12,6 +12,7 @@ import { filesRoutes } from '../files-routes';
 import { errorPayload } from '../http-errors';
 import { landingRoutes } from '../landing';
 import { accountRoutes } from './account';
+import { countConsoleUsage } from './console-usage';
 import { coursesViewRoutes } from './courses-view';
 import { dataRoutes } from './data';
 import { handoffRoutes } from './handoff';
@@ -49,6 +50,7 @@ export function createApi(): Hono<AppEnv> {
     if (!c.res.headers.has('Cache-Control')) c.res.headers.set('Cache-Control', 'no-store');
   });
   app.use('/api/*', (c, next) => (CSRF_EXEMPT_PATHS.has(c.req.path) ? next() : csrf(c, next)));
+  app.use('/api/*', countConsoleUsage());
 
   app.route('/', accountRoutes());
   app.route('/', handoffRoutes());

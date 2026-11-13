@@ -1,4 +1,5 @@
 import type { AuditRow, Store } from '../../core/context';
+import { expirePendingActions } from './actions';
 import { changes, parseJson, toJson } from './rows';
 import { purgeUsage } from './usage';
 
@@ -75,7 +76,7 @@ async function purgeTables(db: D1Database, now: number): Promise<Record<string, 
       'DELETE FROM api_keys WHERE revoked_at IS NOT NULL AND revoked_at < ?',
       now - AUDIT_RETENTION_MS,
     ),
-    actionsExpired: await run("UPDATE actions SET status = 'expired' WHERE status = 'pending' AND expires_at < ?", now),
+    actionsExpired: await expirePendingActions(db, now),
     actionsDeleted: await run(
       "DELETE FROM actions WHERE status != 'pending' AND created_at < ?",
       now - AUDIT_RETENTION_MS,
