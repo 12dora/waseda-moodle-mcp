@@ -1,4 +1,4 @@
-/** Mark notifications (some, or all) or one conversation as read. */
+/** Mark notifications (some, or all), one conversation or one forum discussion as read. */
 
 import type { MoodleApi, ServiceContext } from '../../context';
 import { InvalidInput, MoodleError, NotFound } from '../../errors';
@@ -6,6 +6,7 @@ import { decodeEntities } from '../../html';
 import type { ActionPreview } from '../../types';
 import { fetchConversationInfo, mapConversation } from '../messages';
 import type { RawNotification } from '../messages/notifications';
+import { loadForumThread, lookupForumPost, requireDiscussion, resolveForum } from './forum-info';
 import {
   type ActionOutcome,
   assertWriteAllowed,
@@ -22,17 +23,28 @@ import {
 /** Each id is one Moodle call; the confirm request has a 50-subrequest budget. */
 const MAX_NOTIFICATION_IDS = 30;
 const SUBJECT_LOOKUP_WINDOW = 100;
+const NO_TARGET: MarkReadPayload = {
+  notificationIds: null,
+  allNotifications: false,
+  conversationId: null,
+  forumDiscussion: null,
+};
 
 interface PrepareMarkReadInput {
   notificationIds?: number[];
   allNotifications?: boolean;
   conversationId?: number;
+  forumDiscussionId?: number;
+  /** The forum activity of forumDiscussionId (required with it). */
+  forumCmid?: number;
 }
 
 type MarkReadPayload = {
   notificationIds: number[] | null;
   allNotifications: boolean;
   conversationId: number | null;
+  /** Absent in rows prepared before forum targets existed. */
+  forumDiscussion?: { discussionId: number } | null;
 };
 
 interface Target {
@@ -75,7 +87,7 @@ async function notificationsTarget(api: MoodleApi, ids: number[]): Promise<Targe
     title: `Mark ${plural(ids.length, 'notification')} as read`,
     details: [`Notifications: ${ids.length}`, ...lines],
     warnings: feed ? missingWarning(older.length) : [],
-    payload: { notificationIds: ids, allNotifications: false, conversationId: null },
+    payload: { ...NO_TARGET, notificationIds: ids },
   };
 }
 
@@ -88,7 +100,7 @@ async function allNotificationsTarget(api: MoodleApi): Promise<Target> {
     title: 'Mark all notifications as read',
     details: [count === null ? 'All notifications' : `All notifications (${count} unread)`],
     warnings: count === 0 ? ['There are no unread notifications.'] : [],
-    payload: { notificationIds: null, allNotifications: true, conversationId: null },
+    payload: { ...NO_TARGET, allNotifications: true },
   };
 }
 
@@ -100,7 +112,36 @@ async function conversationTarget(ctx: ServiceContext, api: MoodleApi, conversat
     title: `Mark '${label}' as read`,
     details: [`Conversation: ${label}`, 'Marks all its messages as read.'],
     warnings: info.unreadcount === 0 ? ['This conversation has no unread messages.'] : [],
-    payload: { notificationIds: null, allNotifications: false, conversationId },
+    payload: { ...NO_TARGET, conversationId },
+  };
+}
+
+/**
+ * Standard forums only. Prepare reads the discussion list and its first post, which mark nothing read; the confirmed
+ * action then reads the posts and calls mod_forum_mark_posts_read.
+ */
+async function forumDiscussionTarget(api: MoodleApi, forumCmid: number, discussionId: number): Promise<Target> {
+  const forum = await resolveForum(api, forumCmid, 'forum');
+  if (!forum.settings || forum.settings.tracked === null) {
+    throw new InvalidInput("Could not read this forum's settings. Try again.");
+  }
+  if (!forum.settings.tracked) {
+    throw new InvalidInput('This forum does not track read posts, so there is nothing to mark.');
+  }
+  const entry = await requireDiscussion(api, forum, discussionId);
+  const first = entry.firstPostId === null ? null : await lookupForumPost(api, entry.firstPostId);
+  if (!first) throw new NotFound(`Discussion ${discussionId} could not be read.`);
+  if (first.manualRead) {
+    throw new InvalidInput(
+      'This site marks forum posts read by hand, which the Moodle web service cannot do. Use the Moodle site.',
+    );
+  }
+  const label = first.subject ?? `discussion ${discussionId}`;
+  return {
+    title: `Mark '${label}' as read`,
+    details: [`Discussion: ${label}`, `Unread posts: ${entry.numUnread} of ${entry.numReplies + 1}`],
+    warnings: entry.numUnread === 0 ? ['This discussion has no unread posts.'] : [],
+    payload: { ...NO_TARGET, forumDiscussion: { discussionId } },
   };
 }
 
@@ -109,14 +150,26 @@ async function resolveTarget(ctx: ServiceContext, api: MoodleApi, input: Prepare
   if (isSet(input.conversationId)) {
     return conversationTarget(ctx, api, positiveInt(input.conversationId, 'conversation_id'));
   }
+  if (isSet(input.forumDiscussionId)) {
+    if (!isSet(input.forumCmid)) throw new InvalidInput('forum_discussion_id needs forum_cmid (see list_discussions).');
+    const cmid = positiveInt(input.forumCmid, 'forum_cmid');
+    return forumDiscussionTarget(api, cmid, positiveInt(input.forumDiscussionId, 'forum_discussion_id'));
+  }
   return notificationsTarget(api, validIds(input.notificationIds));
 }
 
 export async function prepareMarkRead(ctx: ServiceContext, input: PrepareMarkReadInput): Promise<ActionPreview> {
   assertWriteAllowed(ctx);
-  const modes = [isSet(input.notificationIds), input.allNotifications === true, isSet(input.conversationId)];
+  const modes = [
+    isSet(input.notificationIds),
+    input.allNotifications === true,
+    isSet(input.conversationId),
+    isSet(input.forumDiscussionId),
+  ];
   if (modes.filter(Boolean).length !== 1) {
-    throw new InvalidInput('Provide exactly one of notification_ids, all_notifications or conversation_id.');
+    throw new InvalidInput(
+      'Provide exactly one of notification_ids, all_notifications, conversation_id or forum_discussion_id.',
+    );
   }
   const { title, details, warnings, payload } = await resolveTarget(ctx, await ctx.moodle(), input);
   return savePreview(ctx, { kind: 'mark_read', title, details, warnings, payload });
@@ -145,6 +198,15 @@ async function markNotifications(api: MoodleApi, ids: number[]): Promise<string>
 export async function executeMarkRead(api: MoodleApi, payload: Raw): Promise<ActionOutcome> {
   const p = payload as MarkReadPayload;
   if (p.notificationIds) return { message: await markNotifications(api, p.notificationIds), url: null };
+  if (p.forumDiscussion) {
+    const { discussionId } = p.forumDiscussion;
+    const thread = await loadForumThread(api, discussionId);
+    if (!thread || thread.posts.length === 0) throw new InvalidInput('Could not read the discussion. Try again.');
+    const postids = thread.unread.length > 0 ? thread.unread : thread.posts.map((x) => x.id);
+    const done = await api.call<unknown>('mod_forum_mark_posts_read', { postids, discussionid: discussionId });
+    if (done !== true) throw refusal('did not mark the posts as read (read tracking may be off in this forum)', null);
+    return { message: 'Discussion marked as read.', url: `${api.baseUrl}/mod/forum/discuss.php?d=${discussionId}` };
+  }
   if (p.conversationId !== null) {
     await api.call('core_message_mark_all_conversation_messages_as_read', {
       userid: api.moodleUserId,

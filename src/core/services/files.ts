@@ -12,7 +12,6 @@ import {
   BudgetExceeded,
   Forbidden,
   InvalidInput,
-  MoodleError,
   MoodleUnavailable,
   NeedsReconnect,
   NotFound,
@@ -21,7 +20,9 @@ import {
 import { htmlToMarkdown } from '../html';
 import { isoJst, nowMs } from '../time';
 import type { FileLink, UploadLink } from '../types';
+import { allocateDraft } from './actions/drafts';
 import { guessMime } from './actions/filenames';
+import { attachmentLimits, postingWindow, readCanAttach, readForumSettings } from './actions/forum-info';
 import { assertWriteAllowed, auditSafe, DEFAULT_MAX_FILES } from './actions/shared';
 import { checkSubmissionWindow, fileSizeLimit } from './actions/submission-checks';
 import { getActivity } from './activity';
@@ -257,30 +258,39 @@ export async function createFileLink(
 
 // ------------------------------------------------------------------ upload link
 
-async function allocateDraftItem(api: MoodleApi): Promise<number> {
-  const draft = await api.call<{ itemid?: unknown }>('core_files_get_unused_draft_itemid');
-  const itemId = typeof draft?.itemid === 'number' ? draft.itemid : Number.NaN;
-  if (!Number.isInteger(itemId) || itemId <= 0) throw new MoodleError('Moodle did not return a draft area.', 'nodraft');
-  return itemId;
+interface UploadLimits {
+  maxBytes: number;
+  maxFiles: number;
+  usedBy: UploadLink['usedBy'];
+}
+
+/** Assignments that take files and standard forums that take attachments, each open for writing now. */
+async function uploadLimits(ctx: ServiceContext, cmid: number): Promise<UploadLimits> {
+  const act = await getActivity(ctx, cmid);
+  if (act.type === 'forum') {
+    const api = await ctx.moodle();
+    const settings = await readForumSettings(api, act.forumType, act.courseId, act.forumId);
+    const canAttach = act.forumType === 'forum' ? await readCanAttach(api, act.forumId) : null;
+    const limits = attachmentLimits(settings, act.forumType, canAttach);
+    postingWindow(settings, nowMs());
+    return { ...limits, usedBy: 'prepare_forum_post' };
+  }
+  if (act.type !== 'assign') throw new InvalidInput('This activity is not an assignment or a forum.');
+  if (!act.submissionTypes.includes('file'))
+    throw new InvalidInput('This assignment does not accept file submissions.');
+  checkSubmissionWindow(act, nowMs());
+  const maxFiles = act.maxFiles && act.maxFiles > 0 ? act.maxFiles : DEFAULT_MAX_FILES;
+  return { maxBytes: fileSizeLimit(act), maxFiles, usedBy: 'prepare_submission' };
 }
 
 export async function createUploadLink(ctx: ServiceContext, cmid: number): Promise<UploadLink> {
   assertWriteAllowed(ctx);
   if (ctx.mode === 'stdio' || !ctx.publicUrl) {
-    throw new InvalidInput(
-      'Upload links are not available in local mode; pass files[].path to prepare_submission instead.',
-    );
+    throw new InvalidInput('Upload links are not available in local mode; pass files[].path instead.');
   }
   if (!Number.isInteger(cmid) || cmid <= 0) throw new InvalidInput('cmid must be a positive integer.');
-  const act = await getActivity(ctx, cmid);
-  if (act.type !== 'assign') throw new InvalidInput('This activity is not an assignment.');
-  if (!act.submissionTypes.includes('file'))
-    throw new InvalidInput('This assignment does not accept file submissions.');
-  checkSubmissionWindow(act, nowMs());
-
-  const maxBytes = fileSizeLimit(act);
-  const maxFiles = act.maxFiles && act.maxFiles > 0 ? act.maxFiles : DEFAULT_MAX_FILES;
-  const draftItemId = await allocateDraftItem(await ctx.moodle());
+  const { maxBytes, maxFiles, usedBy } = await uploadLimits(ctx, cmid);
+  const draftItemId = await allocateDraft(await ctx.moodle());
 
   const now = nowMs();
   const expiresMs = now + UPLOAD_TTL_SEC * 1000;
@@ -308,5 +318,6 @@ export async function createUploadLink(ctx: ServiceContext, cmid: number): Promi
     expiresAt: isoJst(expiresMs),
     maxBytes,
     curlExample: `curl -T ./report.pdf "${uploadUrl}?name=report.pdf"`,
+    usedBy,
   };
 }

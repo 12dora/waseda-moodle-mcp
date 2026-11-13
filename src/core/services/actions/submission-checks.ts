@@ -1,12 +1,11 @@
 /** Validation rules for assignment submissions (window, text, files, statement). */
 
 import { InvalidInput } from '../../errors';
-import { formatBytes } from '../../format';
 import { fmt, fmtDue, isoJst, toMs } from '../../time';
 import type { AssignDetail, FileRef } from '../../types';
-import { fileTypeAccepted } from './filenames';
+import { checkFileList, perFileLimit } from './drafts';
 import type { FileInfo } from './inline-files';
-import { MAX_FILE_BYTES, truncate } from './shared';
+import { truncate } from './shared';
 import { countWords } from './text';
 
 /** Throws when the assignment cannot be submitted to right now; returns warnings (late, team). */
@@ -43,7 +42,7 @@ export function checkOnlineText(act: AssignDetail, text: string | null): void {
 
 /** Per-file size limit: the assignment's, capped by the service's. */
 export function fileSizeLimit(act: AssignDetail): number {
-  return act.maxFileBytes && act.maxFileBytes > 0 ? Math.min(act.maxFileBytes, MAX_FILE_BYTES) : MAX_FILE_BYTES;
+  return perFileLimit(act.maxFileBytes);
 }
 
 /** Checks the new files one by one; returns their lower-cased names. */
@@ -51,20 +50,7 @@ export function checkNewFiles(act: AssignDetail, files: FileInfo[]): Set<string>
   if (files.length > 0 && !act.submissionTypes.includes('file')) {
     throw new InvalidInput('This assignment does not accept file submissions.');
   }
-  const limit = fileSizeLimit(act);
-  const names = new Set<string>();
-  for (const f of files) {
-    const key = f.name.toLowerCase();
-    if (names.has(key)) throw new InvalidInput(`Duplicate file name '${f.name}'. Use unique names.`);
-    names.add(key);
-    if (f.size > limit) {
-      throw new InvalidInput(`File '${f.name}' is ${formatBytes(f.size)}; the limit is ${formatBytes(limit)}.`);
-    }
-    if (!fileTypeAccepted(f.name, act.acceptedTypes)) {
-      throw new InvalidInput(`File '${f.name}' is not an accepted type (${act.acceptedTypes.join(', ')}).`);
-    }
-  }
-  return names;
+  return checkFileList(files, fileSizeLimit(act), act.acceptedTypes);
 }
 
 export function checkFileCount(act: AssignDetail, finalCount: number, keptFiles: FileRef[]): void {

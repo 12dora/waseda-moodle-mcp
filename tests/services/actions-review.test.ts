@@ -205,6 +205,31 @@ describe('claiming (P1-2, P3-9)', () => {
     expect(t.store.actions.get(again.actionId)!.status).toBe('executing'); // the write happened: never back to pending
   });
 
+  it('a confirm landing between the read and the update of a cancel wins; the cancel reports it', async () => {
+    const t = createTestContext();
+    const preview = await pending(t);
+    const read = t.store.getAction.bind(t.store);
+    let raced = false;
+    t.store.getAction = async (id) => {
+      const row = await read(id);
+      if (!raced) {
+        raced = true; // the cancel holds a pending row; the confirm runs to the end before its update
+        expect(await confirmAction(t.ctx, id, 'mcp')).toMatchObject({ status: 'executed' });
+      }
+      return row;
+    };
+    await expect(cancelAction(t.ctx, preview.actionId, 'mcp')).rejects.toThrow('already executed');
+    expect(t.store.actions.get(preview.actionId)!.status).toBe('executed');
+  });
+
+  it('a cancel that lands first makes the later confirm refuse', async () => {
+    const t = createTestContext();
+    const preview = await pending(t);
+    expect(await cancelAction(t.ctx, preview.actionId, 'mcp')).toMatchObject({ status: 'cancelled' });
+    await expect(confirmAction(t.ctx, preview.actionId, 'mcp')).rejects.toThrow('cancelled');
+    expect(t.store.actions.get(preview.actionId)!.status).toBe('cancelled');
+  });
+
   it('a refused MCP confirm does not claim: the console can still approve', async () => {
     const t = createTestContext({ user: makeUser({ settings: { writeMode: 'console' } }) });
     const preview = await pending(t);
@@ -215,7 +240,9 @@ describe('claiming (P1-2, P3-9)', () => {
 
   it('replays the outcome URL for forum posts', async () => {
     const t = createTestContext();
-    t.moodle.handlers.mod_forum_get_discussion_post = { post: { id: 7, subject: 'Q', discussionid: 55 } };
+    t.moodle.handlers.mod_forum_get_discussion_post = {
+      post: { id: 7, subject: 'Q', discussionid: 55, capabilities: { reply: true } },
+    };
     t.moodle.handlers.mod_forum_add_discussion_post = { postid: 88 };
     const preview = await prepareForumPost(t.ctx, { forumType: 'forum', replyToPostId: 7, message: 'hi' });
     const first = await confirmAction(t.ctx, preview.actionId, 'mcp');
@@ -309,17 +336,18 @@ describe('previews and audit', () => {
     expect(preview.warnings.join('\n')).toContain('File types (image) could not be checked here');
   });
 
-  it('shows the CJK count and the full text up to 4000 chars', async () => {
+  it('shows the CJK count, the full text up to 4000 chars, and forum posts in full', async () => {
     const t = createTestContext();
     const text = `日本語${'a '.repeat(10)}`;
     const preview = await prepareSubmission(t.ctx, { cmid: ASSIGN_CMID, onlineText: text });
     expect(preview.details.join('\n')).toContain(`Online text (10 words, 3 CJK characters): ${text}`);
 
     const message = 'm'.repeat(4500);
+    t.moodle.handlers.mod_forum_can_add_discussion = { status: true };
     t.moodle.handlers.core_course_get_course_module_by_instance = { cm: { name: 'F' } };
     const post = await prepareForumPost(t.ctx, { forumType: 'forum', forumId: 3, subject: 's', message });
     const line = post.details.find((d) => d.startsWith('Message: '))!;
-    expect(line).toBe(`Message: ${'m'.repeat(4000)}… (500 more chars)`);
+    expect(line).toBe(`Message: ${message}`); // forum previews are the approval record: never clipped (P1-4)
     const dm = await prepareMessage(t.ctx, { conversationId: 1, text: 'n'.repeat(4000) });
     expect(dm.details[1]).toBe(`Message: ${'n'.repeat(4000)}`);
   });
@@ -327,7 +355,7 @@ describe('previews and audit', () => {
   it('looks hsuforum parents up when the discussion is known', async () => {
     const t = createTestContext();
     t.moodle.handlers.mod_hsuforum_get_forum_discussion_posts = {
-      posts: [{ id: 9, subject: 'Ask &amp; answer', author: { fullname: 'Hanako Sato' } }],
+      posts: [{ id: 9, subject: 'Ask &amp; answer', author: { fullname: 'Hanako Sato' }, canreply: true }],
     };
     const preview = await prepareForumPost(t.ctx, {
       forumType: 'hsuforum',
@@ -342,15 +370,14 @@ describe('previews and audit', () => {
 
   it('refuses an hsuforum reply whose post is not in the given discussion', async () => {
     const t = createTestContext();
-    t.moodle.handlers.mod_hsuforum_get_forum_discussion_posts = { posts: [{ id: 9, subject: 'Ask' }] };
+    t.moodle.handlers.mod_hsuforum_get_forum_discussion_posts = { posts: [{ id: 9, subject: 'Ask', canreply: true }] };
     const input = { forumType: 'hsuforum' as const, replyToPostId: 10, discussionId: 4, message: 'hi' };
     const err = await prepareForumPost(t.ctx, input).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(InvalidInput);
     expect((err as Error).message).toBe('post 10 is not in discussion 4; open it with get_discussion');
-    // a discussion that cannot be read is not proof of anything: the preview falls back to the bare post id
+    // a discussion that cannot be read proves nothing either: prepare fails closed (P2-10)
     const down = createTestContext();
-    const preview = await prepareForumPost(down.ctx, input);
-    expect(preview.details).toContain('Replying to post 10');
+    await expect(prepareForumPost(down.ctx, input)).rejects.toThrow('Could not read discussion 4. Try again.');
   });
 
   it('adds a warning when console approval is unavailable locally', async () => {

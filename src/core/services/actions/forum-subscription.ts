@@ -2,21 +2,17 @@
 
 import type { MoodleApi, ServiceContext } from '../../context';
 import { InvalidInput } from '../../errors';
-import { decodeEntities } from '../../html';
 import type { ActionPreview } from '../../types';
 import { courseNameMap, getCourseModule } from '../shared';
+import { readForumSettings } from './forum-info';
 import {
   type ActionOutcome,
   assertWriteAllowed,
   hasWarnings,
-  isRec,
-  num,
   positiveInt,
   type Raw,
   refusal,
   savePreview,
-  str,
-  tryCall,
 } from './shared';
 
 interface PrepareForumSubscriptionInput {
@@ -34,19 +30,6 @@ type SubscriptionPayload = {
 /** mod_forum `forcesubscribe` values that leave no choice to the user. */
 const FORCED = 1;
 const DISALLOWED = 3;
-
-/** Name and subscription mode of one forum; null when the listing does not show it (the write is still tried). */
-async function forumInfo(
-  api: MoodleApi,
-  courseId: number,
-  instance: number,
-): Promise<{ name: string | null; mode: number | null } | null> {
-  const list = await tryCall<unknown>(api, 'mod_forum_get_forums_by_courses', { courseids: [courseId] });
-  const forum = Array.isArray(list) ? list.find((f): f is Raw => isRec(f) && num(f.id) === instance) : undefined;
-  if (!forum) return null;
-  const name = str(forum.name);
-  return { name: name ? decodeEntities(name) : null, mode: num(forum.forcesubscribe) };
-}
 
 function assertChoosable(mode: number | null): void {
   if (mode === FORCED) {
@@ -68,8 +51,8 @@ export async function prepareForumSubscription(
     throw new InvalidInput('Subscriptions of Advanced Forums (hsuforum) cannot be changed here; use the Moodle site.');
   }
   if (cm.modname !== 'forum') throw new InvalidInput(`Activity ${cmid} is not a forum.`);
-  const info = await forumInfo(api, cm.courseId, cm.instance);
-  assertChoosable(info?.mode ?? null);
+  const info = await readForumSettings(api, 'forum', cm.courseId, cm.instance);
+  assertChoosable(info?.forceSubscribe ?? null);
   const forumName = info?.name || cm.name || `forum ${cmid}`;
   const courseName = (await courseNameMap(ctx)).get(cm.courseId) ?? `course ${cm.courseId}`;
   const payload: SubscriptionPayload = {

@@ -65,11 +65,13 @@ export const createUploadLinkTool = defineTool({
   name: 'create_upload_link',
   title: 'Create upload link',
   description:
-    'Creates a short-lived upload link for a file that should be part of an assignment submission, for files too large to pass inline. ' +
-    'Upload the file with curl (PUT raw bytes, name in ?name=), then call prepare_submission with the returned upload_id. ' +
-    "This does not submit anything; submitting still needs prepare_submission and the user's confirmation.",
+    'Creates a short-lived upload link for files too large to pass inline: for an assignment submission or a forum post attachment. ' +
+    'Upload each file with curl (PUT raw bytes, name in ?name=), then pass the returned upload_id to prepare_submission (assignment) or prepare_forum_post / prepare_forum_post_change (forum). ' +
+    "This does not submit or post anything; that still needs the prepare step and the user's confirmation.",
   annotations: PREPARE_HINTS,
-  input: z.object({ cmid: id('Assignment cmid (see get_activity); it must accept file submissions.') }),
+  input: z.object({
+    cmid: id('cmid of the assignment (must accept files) or of the forum (must accept attachments); see get_activity.'),
+  }),
   output: uploadLinkOut,
   async run(ctx, a) {
     const r = await createUploadLink(ctx, a.cmid);

@@ -1,13 +1,14 @@
 /** Assignment submission: prepare (validate, stage files in a draft, preview) and execute (save + submit). */
 
-import type { MoodleApi, ServiceContext, UploadDraftRow } from '../../context';
-import { InvalidInput, MoodleError, MoodleUnavailable, NotFound } from '../../errors';
+import type { MoodleApi, ServiceContext } from '../../context';
+import { InvalidInput } from '../../errors';
 import { formatBytes } from '../../format';
 import { fmtDue, nowMs } from '../../time';
 import type { ActionPreview, AssignDetail, FileRef, InlineFile } from '../../types';
 import { getActivity } from '../activity';
+import { allocateDraft, claimUpload, copyIntoDraft, gatherFiles, type StagedFiles, uploadInline } from './drafts';
 import { unverifiableTypes } from './filenames';
-import { type FileInfo, type InlineUpload, resolveInlineFiles } from './inline-files';
+import type { FileInfo } from './inline-files';
 import {
   type ActionOutcome,
   assertWriteAllowed,
@@ -74,22 +75,11 @@ interface Plan extends FilePlan {
   onlineText: string | null;
   keepExisting: boolean;
   submitForGrading: boolean;
-  uploadRow: UploadDraftRow | null;
-  inlineFiles: InlineUpload[];
+  staged: StagedFiles;
   newFiles: FileInfo[];
 }
 
 // ------------------------------------------------------------------ prepare
-
-const USED_UPLOAD = 'This upload link was already used or has expired; create a new one.';
-
-async function loadUploadRow(ctx: ServiceContext, uploadId: string, cmid: number): Promise<UploadDraftRow> {
-  const row = await ctx.store.getUploadDraft(uploadId);
-  if (!row || row.userId !== ctx.user.id) throw new NotFound('Upload not found. Create a new upload link.');
-  if (row.expiresAt <= nowMs()) throw new InvalidInput(USED_UPLOAD);
-  if (row.cmid !== cmid) throw new InvalidInput('That upload belongs to a different assignment.');
-  return row;
-}
 
 function planFiles(act: AssignDetail, newFiles: FileInfo[], keepExisting: boolean): FilePlan {
   const names = checkNewFiles(act, newFiles);
@@ -109,53 +99,30 @@ async function planSubmission(ctx: ServiceContext, act: AssignDetail, input: Pre
   const keepExisting = input.keepExistingFiles ?? true;
   const submitForGrading = input.submitForGrading ?? true;
   checkOnlineText(act, onlineText);
-  const uploadRow = input.uploadId ? await loadUploadRow(ctx, input.uploadId, input.cmid) : null;
-  const inlineFiles = await resolveInlineFiles(ctx, input.files ?? [], fileSizeLimit(act));
-  const newFiles: FileInfo[] = [...(uploadRow?.files ?? []), ...inlineFiles];
+  const staged = await gatherFiles(ctx, {
+    cmid: input.cmid,
+    what: 'assignment',
+    files: input.files,
+    uploadId: input.uploadId,
+    maxBytes: fileSizeLimit(act),
+  });
+  const newFiles = staged.all;
   const files = planFiles(act, newFiles, keepExisting);
   const hasChange = !!onlineText || files.touchesFiles;
   checkSubmittable(act, hasChange, submitForGrading);
   if (hasChange) checkResultNotEmpty(act, onlineText, files);
   checkStatement(act, submitForGrading, input.acceptStatement);
-  return { ...files, onlineText, keepExisting, submitForGrading, uploadRow, inlineFiles, newFiles };
-}
-
-const isDuplicateUpload = (e: unknown) =>
-  e instanceof MoodleError && /exist|duplicate/i.test(`${e.errorcode} ${e.message}`);
-
-/** Streams one of the user's current files into the draft; a same-named file already there is fine. */
-async function copyKeptFile(api: MoodleApi, f: FileRef, itemId: number | null): Promise<number | null> {
-  const res = await api.fetchFile(f.url);
-  if (!res.ok || !res.body)
-    throw new MoodleUnavailable('Could not read your current submission file to keep it. Try again.');
-  try {
-    const uploaded = await api.uploadToDraft({ name: f.name, body: res.body, size: f.size, mime: f.mime }, itemId ?? 0);
-    return uploaded.itemid;
-  } catch (e) {
-    if (isDuplicateUpload(e)) return itemId;
-    throw e;
-  }
-}
-
-async function allocateDraft(api: MoodleApi): Promise<number> {
-  const r = await api.call<Raw>('core_files_get_unused_draft_itemid');
-  const itemId = num(r.itemid);
-  if (itemId === null) throw new MoodleError('Moodle did not return a draft area.', 'nodraft');
-  return itemId;
+  return { ...files, onlineText, keepExisting, submitForGrading, staged, newFiles };
 }
 
 /** Uploads at prepare time so confirm is fast. Returns the draft item id the save should reference. */
 async function stageDraft(ctx: ServiceContext, plan: Plan): Promise<number | null> {
   const api = await ctx.moodle();
-  let itemId = plan.uploadRow?.draftItemId ?? null;
-  for (const f of plan.inlineFiles) {
-    const uploaded = await api.uploadToDraft({ name: f.name, body: f.bytes, size: f.size, mime: f.mime }, itemId ?? 0);
-    itemId = uploaded.itemid;
-  }
+  let itemId = await uploadInline(api, plan.staged.inline, plan.staged.uploadRow?.draftItemId ?? null);
   if (plan.newFiles.length > 0) {
-    const have = new Set((plan.uploadRow?.files ?? []).map((f) => f.name.toLowerCase()));
+    const have = new Set((plan.staged.uploadRow?.files ?? []).map((f) => f.name.toLowerCase()));
     for (const f of plan.keptFiles) {
-      if (!have.has(f.name.toLowerCase())) itemId = await copyKeptFile(api, f, itemId);
+      if (!have.has(f.name.toLowerCase())) itemId = await copyIntoDraft(api, f, itemId);
     }
   } else if (plan.clearsFiles) {
     itemId = await allocateDraft(api);
@@ -229,9 +196,7 @@ export async function prepareSubmission(ctx: ServiceContext, input: PrepareSubmi
   }
   const windowWarnings = checkSubmissionWindow(act, nowMs());
   const plan = await planSubmission(ctx, act, { ...input, cmid });
-  if (plan.uploadRow && !(await ctx.store.consumeUploadDraft(plan.uploadRow.id))) {
-    throw new InvalidInput(USED_UPLOAD); // from here on the draft belongs to this action alone
-  }
+  await claimUpload(ctx, plan.staged);
   const draftItemId = await stageDraft(ctx, plan);
   const payload: SubmitPayload = {
     cmid,

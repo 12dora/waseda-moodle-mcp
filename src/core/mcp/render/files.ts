@@ -33,7 +33,9 @@ export function renderUploadLink(u: UploadLink & { uploadId?: string }, cmid?: n
     'Send the raw bytes with PUT or POST and the file name as ?name=. Example:',
     u.curlExample,
   ];
-  if (u.uploadId) {
+  if (u.uploadId && u.usedBy === 'prepare_forum_post') {
+    lines.push(`After uploading, call prepare_forum_post or prepare_forum_post_change with upload_id "${u.uploadId}".`);
+  } else if (u.uploadId) {
     const forCmid = cmid !== undefined ? `cmid ${cmid} and ` : '';
     lines.push(`After uploading, call prepare_submission with ${forCmid}upload_id "${u.uploadId}".`);
   }
