@@ -7,14 +7,17 @@
  */
 
 import OAuthProvider, { type OAuthProviderOptions } from '@cloudflare/workers-oauth-provider';
+import { InvocationBudget } from '../core/budget';
 import { RateLimited } from '../core/errors';
 import { createApi } from './api';
 import { clientIp, rateLimit, resolveApiKey } from './auth';
 import { makeDefer } from './context';
 import { type Env, publicUrlOf } from './env';
 import { mcpApiHandler } from './mcp';
+import { meterD1 } from './metered-d1';
+import { runRenewal } from './renew-cron';
 import { createD1Store } from './store-d1';
-import { runCourseSweep } from './sweep-cron';
+import { runCourseSweep, SCHEDULED_QUERY_BUDGET, SWEEP_CALL_BUDGET } from './sweep-cron';
 
 const PURGE_CURSOR_KEY = 'purge-cursor';
 const ACCESS_TOKEN_TTL_SEC = 43_200; // 12 h: fewer refreshes = fewer KV writes (Free: 1000/day)
@@ -22,6 +25,10 @@ const REFRESH_TOKEN_TTL_SEC = 7_776_000; // 90 d
 const PURGE_BATCH = 25;
 const PURGE_HOUR_UTC = 3;
 const PURGE_MINUTE_UTC = 17;
+/** Night runs (01:17 and 04:17 JST) only keep the Moodle web sessions alive: no course sweep. */
+const KEEPALIVE_ONLY_HOURS_UTC = new Set([16, 19]);
+/** What the keepalive leaves for the course sweep on a daytime run. */
+const SWEEP_RESERVE = { moodle: 14, queries: 20 };
 
 const api = createApi();
 
@@ -97,17 +104,30 @@ async function runPurge(env: Env, now = Date.now()): Promise<void> {
   }
 }
 
-/** The hourly cron (`17 0-14,22-23 * * *`, UTC) also carries the daily purge, on its 03:17 UTC run only. */
+/** The cron (`17 0-14,16,19,22-23 * * *`, UTC) also carries the daily purge, on its 03:17 UTC run only. */
 export function isPurgeRun(scheduledTime: number): boolean {
   const at = new Date(scheduledTime);
   return at.getUTCHours() === PURGE_HOUR_UTC && at.getUTCMinutes() === PURGE_MINUTE_UTC;
 }
 
-/** One cron run: the purge when it is the daily slot, then the course sweep. Each half survives the other's failure. */
+/**
+ * One cron run: the purge when it is the daily slot, the credential keepalive, then the course sweep (07–24 JST).
+ * All three spend ONE invocation budget of Moodle requests and D1 queries (D1 is metered here), so the run stays
+ * under the Free plan's per-invocation limits. Each part survives the others' failure.
+ */
 export async function runScheduled(env: Env, scheduledTime: number, execCtx?: ExecutionContext): Promise<void> {
-  if (isPurgeRun(scheduledTime)) await runPurge(env);
+  const budget = new InvocationBudget(SWEEP_CALL_BUDGET, SCHEDULED_QUERY_BUDGET);
+  const metered: Env = { ...env, DB: meterD1(env.DB, budget) };
+  if (isPurgeRun(scheduledTime)) await runPurge(metered);
+  const sweep = !KEEPALIVE_ONLY_HOURS_UTC.has(new Date(scheduledTime).getUTCHours());
   try {
-    await runCourseSweep(env, execCtx);
+    await runRenewal(metered, budget, sweep ? SWEEP_RESERVE : undefined);
+  } catch (e) {
+    console.error('renewal failed:', e instanceof Error ? e.name : 'unknown');
+  }
+  if (!sweep) return;
+  try {
+    await runCourseSweep(metered, execCtx, budget);
   } catch (e) {
     console.error('course sweep failed:', e instanceof Error ? e.name : 'unknown');
   }

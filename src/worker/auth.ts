@@ -81,11 +81,18 @@ export interface LoadedSession {
   touched: boolean;
 }
 
+interface LoadSessionOptions {
+  /** Runs the cleanup / touch writes after the response. */
+  defer: (p: Promise<unknown>) => void;
+  now?: number;
+  /** false (background requests): never refreshes the sliding expiry or the user's last-seen stamp. Default true. */
+  touch?: boolean;
+}
+
 export async function loadSession(
   store: D1Store,
   cookieValue: string,
-  defer: (p: Promise<unknown>) => void,
-  now = Date.now(),
+  { defer, now = Date.now(), touch = true }: LoadSessionOptions,
 ): Promise<LoadedSession | null> {
   const sessionHash = await sha256Hex(cookieValue);
   const found = await store.getSessionWithUser(sessionHash);
@@ -95,7 +102,7 @@ export async function loadSession(
     return null;
   }
   let touched = false;
-  if (now - found.session.lastSeenAt > SESSION_TOUCH_MS) {
+  if (touch && now - found.session.lastSeenAt > SESSION_TOUCH_MS) {
     touched = true;
     defer(
       Promise.all([
@@ -117,12 +124,21 @@ export function deferOn(c: Context<AppEnv>, p: Promise<unknown>): void {
   }
 }
 
+/**
+ * Console requests the SPA makes on its own (badge refreshes, not a user action) carry this header: they count as
+ * neither activity nor usage and refresh no last-seen stamp.
+ */
+export const BACKGROUND_HEADER = 'X-WMM-Background';
+
+export const isBackgroundRequest = (request: Request): boolean => request.headers.get(BACKGROUND_HEADER) === '1';
+
 /** Requires a valid console session; exposes `user` and `sessionHash` on the context. */
 export function requireSession(getStore: (env: Env) => D1Store): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const cookie = readSessionCookie(c.req.raw);
     if (!cookie) throw new Unauthorized();
-    const loaded = await loadSession(getStore(c.env), cookie, (p) => deferOn(c, p));
+    const touch = !isBackgroundRequest(c.req.raw);
+    const loaded = await loadSession(getStore(c.env), cookie, { defer: (p) => deferOn(c, p), touch });
     if (!loaded) throw new Unauthorized();
     c.set('user', loaded.user);
     c.set('sessionHash', loaded.sessionHash);

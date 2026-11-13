@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { InvocationBudget } from '../../src/core/budget';
 import { BudgetExceeded, InvalidInput, MoodleError, MoodleUnavailable, NeedsReconnect } from '../../src/core/errors';
 import { encodeParams, MoodleClient } from '../../src/core/moodle/client';
 
@@ -78,6 +79,34 @@ describe('MoodleClient.call', () => {
     await client.call('core_files_get_unused_draft_itemid');
     await client.call('core_files_get_unused_draft_itemid');
     expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it('treats a mobile page that saves (its action arg) as a write', async () => {
+    const page = (action: string) => ({
+      component: 'mod_questionnaire',
+      method: 'mobile_view_activity',
+      args: [
+        { name: 'cmid', value: '101' },
+        { name: 'action', value: action },
+      ],
+    });
+    const { client, fetchMock } = setup(() => json({ templates: [] }));
+    await client.call('tool_mobile_get_content', page('respond'));
+    await client.call('tool_mobile_get_content', page('respond'));
+    expect(fetchMock).toHaveBeenCalledTimes(1); // a read: memoised
+    for (const action of ['nextpage', 'submit', 'previouspage']) {
+      await client.call('tool_mobile_get_content', page(action));
+      await client.call('tool_mobile_get_content', page(action));
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    await client.call('tool_mobile_get_content', page('respond'));
+    expect(fetchMock).toHaveBeenCalledTimes(8); // the write cleared the memo
+
+    const failing = setup(() => new Response('oops', { status: 502 }));
+    await expect(failing.client.call('tool_mobile_get_content', page('submit'))).rejects.toBeInstanceOf(
+      MoodleUnavailable,
+    );
+    expect(failing.fetchMock).toHaveBeenCalledTimes(1); // never retried
   });
 
   it('shares one request between concurrent identical reads', async () => {
@@ -496,5 +525,137 @@ describe('MoodleClient.uploadToDraft', () => {
       MoodleUnavailable,
     );
     expect(fetchMock.mock.calls[0]![1]!.redirect).toBe('manual');
+  });
+});
+
+describe('MoodleClient token renewal', () => {
+  const NEW = 'fedcba9876543210fedcba9876543210';
+  const gone = () =>
+    json({ exception: 'moodle_exception', errorcode: 'invalidtoken', message: 'Invalid token - token not found' });
+  /** Moodle that accepts only NEW (as wstoken in a REST body or token= in a file URL / upload body). */
+  const acceptsNew = (ok: unknown) => async (url: string, init: RequestInit) => {
+    const sent = init.body instanceof URLSearchParams || typeof init.body === 'string' ? String(init.body) : '';
+    const token = new URL(url).searchParams.get('token') ?? new URLSearchParams(sent).get('wstoken');
+    const multipart = init.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : '';
+    return token === NEW || multipart.includes(`\r\n\r\n${NEW}\r\n`) ? json(ok) : gone();
+  };
+
+  it('renews once and repeats a read with the new token', async () => {
+    const renewToken = vi.fn(async () => NEW);
+    const onTokenInvalid = vi.fn(async () => {});
+    const { client, fetchMock } = setup(acceptsNew({ userid: 1001 }), { renewToken, onTokenInvalid });
+    expect(await client.call('core_webservice_get_site_info')).toEqual({ userid: 1001 });
+    expect(await client.call('core_x_get_b')).toEqual({ userid: 1001 });
+    expect(renewToken).toHaveBeenCalledTimes(1);
+    expect(onTokenInvalid).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(client.callsMade).toBe(3);
+  });
+
+  it('repeats a rejected write once (a request rejected for its token never ran)', async () => {
+    const { client, fetchMock } = setup(acceptsNew({ messageid: 7 }), { renewToken: async () => NEW });
+    expect(await client.call('core_message_send_instant_messages', { messages: [{ text: 'hi' }] })).toEqual({
+      messageid: 7,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(bodyOf(fetchMock.mock.calls[1]![1]!).get('wstoken')).toBe(NEW);
+  });
+
+  it('repeats a rejected mobile-page write once with the renewed token', async () => {
+    const { client, fetchMock } = setup(acceptsNew({ templates: [] }), { renewToken: async () => NEW });
+    const args = [{ name: 'action', value: 'submit' }];
+    await client.call('tool_mobile_get_content', { component: 'mod_questionnaire', args });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(bodyOf(fetchMock.mock.calls[1]![1]!).get('wstoken')).toBe(NEW);
+  });
+
+  it('shares one renewal between concurrent rejected requests', async () => {
+    let release: (t: string) => void = () => {};
+    const renewToken = vi.fn(
+      () =>
+        new Promise<string>((r) => {
+          release = r;
+        }),
+    );
+    const { client } = setup(acceptsNew({ ok: 1 }), { renewToken });
+    const a = client.call('core_x_get_a');
+    const b = client.call('core_x_get_b');
+    await vi.waitFor(() => expect(renewToken).toHaveBeenCalledTimes(1));
+    release(NEW);
+    expect(await Promise.all([a, b])).toEqual([{ ok: 1 }, { ok: 1 }]);
+    expect(renewToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up when no renewal comes, or the renewed token is rejected too (never loops)', async () => {
+    const onTokenInvalid = vi.fn(async () => {});
+    const none = setup(gone, { renewToken: async () => null, onTokenInvalid });
+    await expect(none.client.call('core_x_get_a')).rejects.toBeInstanceOf(NeedsReconnect);
+    expect(onTokenInvalid).toHaveBeenCalledTimes(1);
+    expect(none.fetchMock).toHaveBeenCalledTimes(1);
+
+    const renewToken = vi.fn(async () => NEW);
+    const twice = setup(gone, { renewToken, onTokenInvalid });
+    await expect(twice.client.call('core_x_get_a')).rejects.toBeInstanceOf(NeedsReconnect);
+    await expect(twice.client.call('core_x_get_b')).rejects.toBeInstanceOf(NeedsReconnect);
+    expect(renewToken).toHaveBeenCalledTimes(1);
+    expect(onTokenInvalid).toHaveBeenCalledTimes(2);
+    expect(twice.fetchMock).toHaveBeenCalledTimes(2);
+
+    const same = setup(gone, { renewToken: async () => TOKEN });
+    await expect(same.client.call('core_x_get_a')).rejects.toBeInstanceOf(NeedsReconnect);
+    expect(same.fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('renews file downloads and Uint8Array uploads; a spent stream asks for the file again', async () => {
+    const file = setup(acceptsNew({}), { renewToken: async () => NEW });
+    const res = await file.client.fetchFile(`${BASE}/webservice/pluginfile.php/1/mod_resource/content/0/a.json`);
+    expect(new URL(String(file.fetchMock.mock.calls[1]![0])).searchParams.get('token')).toBe(NEW);
+    expect(await res.json()).toEqual({});
+
+    const okRecord = [{ itemid: 555, filename: 'a.txt', filesize: 2 }];
+    const bytes = setup(acceptsNew(okRecord), { renewToken: async () => NEW });
+    const up = await bytes.client.uploadToDraft({ name: 'a.txt', body: new TextEncoder().encode('hi'), size: 2 }, 0);
+    expect(up.itemid).toBe(555);
+
+    const stream = setup(gone, { renewToken: async () => NEW });
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode('hi'));
+        c.close();
+      },
+    });
+    await expect(stream.client.uploadToDraft({ name: 'a.txt', body, size: 2 }, 0)).rejects.toBeInstanceOf(
+      MoodleUnavailable,
+    );
+    expect(await stream.client.call('core_x_get_a').catch((e) => e)).toBeInstanceOf(NeedsReconnect);
+  });
+
+  it('charges renewal requests to the client and to the shared invocation budget', async () => {
+    const budget = new InvocationBudget(10, 10);
+    const renewToken = async (charged: typeof fetch) => {
+      await charged(`${BASE}/admin/tool/mobile/launch.php`); // the session's launch.php request
+      return NEW;
+    };
+    const { client, fetchMock } = setup(acceptsNew({ ok: 1 }), { renewToken, budget });
+    expect(await client.call('core_x_get_a')).toEqual({ ok: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(3); // rejected call, launch.php, retry
+    expect(client.callsMade).toBe(3);
+    expect(budget.moodle).toBe(7);
+  });
+
+  it('runs out of budget during a renewal without giving the credential up', async () => {
+    const onTokenInvalid = vi.fn(async () => {});
+    const renewToken = async (charged: typeof fetch) => {
+      await charged(`${BASE}/admin/tool/mobile/launch.php`);
+      return NEW;
+    };
+    const dry = setup(gone, { renewToken, onTokenInvalid, maxCalls: 1 });
+    await expect(dry.client.call('core_x_get_a')).rejects.toBeInstanceOf(BudgetExceeded);
+    expect(dry.fetchMock).toHaveBeenCalledTimes(1);
+
+    const noRetry = setup(acceptsNew({ ok: 1 }), { renewToken, onTokenInvalid, maxCalls: 2 });
+    await expect(noRetry.client.call('core_x_get_a')).rejects.toBeInstanceOf(BudgetExceeded);
+    expect(noRetry.client.callsMade).toBe(2);
+    expect(onTokenInvalid).not.toHaveBeenCalled();
   });
 });

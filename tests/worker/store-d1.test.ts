@@ -171,6 +171,70 @@ describe('credentials', () => {
     await store.updateCredentialStatus(user.id, {}); // no-op
     expect(await store.getCredential(9999)).toBeNull();
   });
+
+  it('keeps the web-session columns (0009) across a token replacement and patches them on their own', async () => {
+    await store.putCredential(credential(user.id));
+    expect(await store.getCredential(user.id)).toMatchObject({
+      sessionEnc: null,
+      sessionOkAt: null,
+      renewedAt: null,
+      autologinAt: null,
+    });
+    await store.updateCredentialStatus(user.id, { sessionEnc: 'enc-cookie', sessionOkAt: 10, autologinAt: 5 });
+    await store.putCredential(credential(user.id, { tokenEnc: 'enc-2', tokenHash: 'hash-2' }));
+    await store.updateCredentialStatus(user.id, { renewedAt: 20 });
+    expect(await store.getCredential(user.id)).toMatchObject({
+      tokenEnc: 'enc-2',
+      sessionEnc: 'enc-cookie',
+      sessionOkAt: 10,
+      renewedAt: 20,
+      autologinAt: 5,
+    });
+    await store.updateCredentialStatus(user.id, { sessionEnc: null, sessionOkAt: null });
+    expect(await store.getCredential(user.id)).toMatchObject({ sessionEnc: null, sessionOkAt: null, renewedAt: 20 });
+  });
+
+  it('lists renewal candidates by urgency: idle deadline of a session, retry time of a session to open', async () => {
+    const add = async (moodleUserId: number, over: Partial<CredentialRow>) => {
+      const u = await store.upsertUser({ moodleUserId, fullname: `User ${moodleUserId}`, lang: 'en' });
+      const { sessionEnc, sessionOkAt, autologinAt, ...row } = over;
+      await store.putCredential(credential(u.id, row));
+      await store.updateCredentialStatus(u.id, { sessionEnc, sessionOkAt, autologinAt });
+      return u.id;
+    };
+    const stale = await add(2001, { sessionEnc: 's', sessionOkAt: 100, status: 'invalid' });
+    const older = await add(2002, { sessionEnc: 's', sessionOkAt: 50 });
+    await add(2003, { sessionEnc: 's', sessionOkAt: 900 }); // confirmed recently
+    const open = await add(2004, { privateTokenEnc: 'p' });
+    const retried = await add(2005, { privateTokenEnc: 'p', autologinAt: 200 });
+    await add(2006, { privateTokenEnc: 'p', autologinAt: 800, connectedAt: 700 }); // tried recently
+    await add(2007, { privateTokenEnc: 'p', status: 'invalid' }); // needs a reconnect
+    await add(2008, {}); // no private token
+    const reconnected = await add(2009, { privateTokenEnc: 'p', autologinAt: 800, connectedAt: 900 });
+    const unconfirmed = await add(2010, { sessionEnc: 's' }); // saved after an autologin, launch.php failed
+    const opts = { sessionBefore: 500, autologinBefore: 500, sessionIdleMs: 1000, autologinRetryMs: 1000, limit: 10 };
+    const ids = async (o: typeof opts) => (await store.listRenewalCandidates(o)).map((c) => c.user.id);
+    expect(await ids(opts)).toEqual([open, unconfirmed, older, stale, retried, reconnected]);
+    expect(await ids({ ...opts, limit: 1 })).toEqual([open]);
+    const [first] = await store.listRenewalCandidates(opts);
+    expect(first?.credential).toMatchObject({ userId: open, privateTokenEnc: 'p', sessionEnc: null });
+    expect(first?.user).toMatchObject({ id: open, moodleUserId: 2004 });
+  });
+
+  it('updates conditionally on the token hash, the session and the autologin stamp', async () => {
+    await store.putCredential(credential(user.id));
+    expect(await store.updateCredentialIf(user.id, { tokenHash: 'other' }, { status: 'invalid' })).toBe(false);
+    const withSession = { tokenHash: 'hash-1', sessionEnc: 's' };
+    expect(await store.updateCredentialIf(user.id, withSession, { status: 'invalid' })).toBe(false);
+    const claim = { tokenHash: 'hash-1', sessionEnc: null, autologinAt: null };
+    expect(await store.updateCredentialIf(user.id, claim, { autologinAt: 10 })).toBe(true);
+    expect(await store.updateCredentialIf(user.id, claim, { autologinAt: 11 })).toBe(false); // claimed already
+    const renewed = { tokenEnc: 'enc-2', tokenHash: 'hash-2', sessionEnc: 'c', sessionOkAt: 12 };
+    expect(await store.updateCredentialIf(user.id, { tokenHash: 'hash-1', sessionEnc: null }, renewed)).toBe(true);
+    expect(await store.getCredential(user.id)).toMatchObject({ ...renewed, status: 'active', autologinAt: 10 });
+    expect(await store.updateCredentialIf(user.id, { tokenHash: 'hash-2', sessionEnc: 'c' }, {})).toBe(true);
+    expect(await store.updateCredentialIf(9999, { tokenHash: 'hash-2' }, { status: 'invalid' })).toBe(false);
+  });
 });
 
 describe('sessions', () => {
@@ -248,9 +312,10 @@ describe('api keys', () => {
 
 describe('actions', () => {
   it('round-trips JSON columns, patches and filters', async () => {
-    await store.createAction(action(user.id, 'act_1', { createdAt: 1000 }));
+    const live = Date.now() + 600_000; // a list settles expired pending rows first
+    await store.createAction(action(user.id, 'act_1', { createdAt: 1000, expiresAt: live }));
     await store.createAction(action(user.id, 'act_2', { createdAt: 2000, status: 'executed', kind: 'completion' }));
-    await store.createAction(action(user.id, 'act_3', { createdAt: 3000 }));
+    await store.createAction(action(user.id, 'act_3', { createdAt: 3000, expiresAt: live }));
 
     expect(await store.getAction('act_1')).toMatchObject({
       details: ['To: Teacher'],
@@ -264,14 +329,17 @@ describe('actions', () => {
     ]);
     expect((await store.listActions(user.id, { limit: 1, before: 3000 })).map((a) => a.id)).toEqual(['act_2']);
 
-    await store.updateAction('act_1', { status: 'executed', executedAt: 4000, result: 'done' });
+    expect(await store.updateAction('act_1', { status: 'executed', executedAt: 4000, result: 'done' })).toBe(false);
+    expect(await store.claimAction('act_1', user.id, Date.now())).toBe(true); // only an executing action finishes
+    expect(await store.updateAction('act_1', { status: 'executed', executedAt: 4000, result: 'done' })).toBe(true);
     expect(await store.getAction('act_1')).toMatchObject({
       status: 'executed',
       executedAt: 4000,
       result: 'done',
       error: null,
     });
-    await store.updateAction('act_1', { error: 'late' });
+    expect(await store.updateAction('act_1', { error: 'late' })).toBe(true);
+    expect(await store.updateAction('act_1', { status: 'cancelled' })).toBe(false); // a final status stays
     expect((await store.getAction('act_1'))?.status).toBe('executed');
     expect(await store.getAction('nope')).toBeNull();
   });

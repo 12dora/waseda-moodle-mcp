@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { InvocationBudget } from '../../src/core/budget';
 import { sha256Hex } from '../../src/core/crypto';
 import { NeedsReconnect } from '../../src/core/errors';
 import { refreshSnapshots } from '../../src/core/services/sweep/refresh';
 import { resetRateLimitMemory } from '../../src/worker/auth';
+import { getRuntime } from '../../src/worker/context';
 import type { Env } from '../../src/worker/env';
 import worker, { buildProviderOptions, isPurgeRun, providerFor, runScheduled } from '../../src/worker/index';
 import { mcpApiHandler } from '../../src/worker/mcp';
+import { meterD1 } from '../../src/worker/metered-d1';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
 import { createTestD1 } from '../helpers/d1-sqlite';
+import { fakeMoodleWeb } from '../helpers/fake-moodle-web';
 import { MemoryKV } from '../helpers/memory-kv';
 
 /** Mirrors the private KV key in src/worker/index.ts (workerd rejects non-handler exports from the entry). */
@@ -247,12 +251,15 @@ describe('scheduled', () => {
 
     worker.scheduled(controller(PURGE_TIME), env, execCtx());
     await Promise.all(deferred);
-    expect(rec.purge).toHaveBeenLastCalledWith(env, { batchSize: 25, cursor: undefined });
+    // The purge runs on the invocation's metered D1, with the rest of the env unchanged.
+    const meteredEnv = { ...env, DB: expect.objectContaining({ prepare: expect.any(Function) }) };
+    expect(rec.purge).toHaveBeenLastCalledWith(meteredEnv, { batchSize: 25, cursor: undefined });
+    expect(rec.purge.mock.lastCall?.[0].DB).not.toBe(env.DB);
     expect(await kv.get(PURGE_CURSOR_KEY)).toBe('c1');
     expect(await store.listAudit(userId, { limit: 10 })).toEqual([]);
 
     await runScheduled(env, PURGE_TIME);
-    expect(rec.purge).toHaveBeenLastCalledWith(env, { batchSize: 25, cursor: 'c1' });
+    expect(rec.purge).toHaveBeenLastCalledWith(meteredEnv, { batchSize: 25, cursor: 'c1' });
     expect(await kv.get(PURGE_CURSOR_KEY)).toBeNull();
   });
 
@@ -274,6 +281,51 @@ describe('scheduled', () => {
     await runScheduled(env, PURGE_TIME, execCtx());
     expect(refreshSnapshots).toHaveBeenCalledTimes(2);
     spy.mockRestore();
+  });
+
+  it('runs only the credential keepalive on the 16:17 and 19:17 UTC night runs', async () => {
+    await seedCredential();
+    const rt = await getRuntime(env);
+    const sessionEnc = await rt.key.encrypt('MoodleSession=n1');
+    await store.updateCredentialStatus(userId, { sessionEnc, sessionOkAt: 1 });
+    const web = fakeMoodleWeb({ live: new Set(['MoodleSession=n1']) });
+    vi.stubGlobal('fetch', vi.fn(web.fetch));
+    try {
+      for (const hour of [16, 19]) await runScheduled(env, Date.UTC(2026, 9, 15, hour, 17), execCtx());
+      expect(refreshSnapshots).not.toHaveBeenCalled();
+      expect(web.requests.map((r) => r.path)).toEqual(['/admin/tool/mobile/launch.php']); // then confirmed recently
+      expect((await store.getCredential(userId))?.sessionOkAt).toBeGreaterThan(1);
+      await runScheduled(env, HOURLY_TIME, execCtx());
+      expect(refreshSnapshots).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps purge + keepalive + sweep within the per-invocation D1 query and subrequest limits', async () => {
+    const rt = await getRuntime(env);
+    const web = fakeMoodleWeb();
+    for (let i = 0; i < 25; i++) {
+      const u = await store.upsertUser({ moodleUserId: 5000 + i, fullname: `User ${i}`, lang: 'en' });
+      await seedCredential(u.id, `h${i}`);
+      const cookie = `MoodleSession=p${i}`;
+      web.state.live.add(cookie);
+      await store.updateCredentialStatus(u.id, { sessionEnc: await rt.key.encrypt(cookie), sessionOkAt: 1 });
+    }
+    const fetchSpy = vi.fn(web.fetch);
+    vi.stubGlobal('fetch', fetchSpy);
+    rec.purge.mockResolvedValue({ done: true });
+    const counter = new InvocationBudget(10_000, 10_000); // only counts what the run really sends to D1
+    try {
+      await runScheduled({ ...env, DB: meterD1(env.DB, counter) }, PURGE_TIME, execCtx());
+      await Promise.all(deferred);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(10_000 - counter.queries).toBeLessThanOrEqual(50);
+    expect(fetchSpy.mock.calls.length).toBeLessThanOrEqual(50);
+    expect(fetchSpy).toHaveBeenCalled(); // the keepalive ran
+    expect(refreshSnapshots).toHaveBeenCalled(); // and the sweep still had room
   });
 
   it('keeps going when one user needs to reconnect', async () => {

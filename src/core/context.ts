@@ -13,6 +13,7 @@ import type {
   UploadedDraftFile,
   UserSettings,
 } from './types';
+import type { FailureClass } from './usage';
 
 // ------------------------------------------------------------------ Moodle client
 
@@ -67,6 +68,29 @@ export interface CredentialRow {
   connectedAt: number;
   lastOkAt: number | null;
   lastError: string | null;
+  // Moodle web session that renews the token (services/credential-renewal). Always read back (null = none);
+  // putCredential leaves these columns alone, only the patch methods change them.
+  sessionEnc?: string | null; // MoodleSession cookie ("name=value"), encrypted like the token
+  sessionOkAt?: number | null; // launch.php last answered with a token for it
+  sessionTriedAt?: number | null; // a launch.php attempt with it last failed (not ended: unreachable, odd answer)
+  renewedAt?: number | null; // a new token was last stored automatically
+  autologinAt?: number | null; // last attempt to open a session
+}
+
+/** Credential fields a patch may change (everything except the owner and the connection's origin). */
+export type CredentialPatch = Partial<Omit<CredentialRow, 'userId' | 'connectedVia' | 'connectedAt'>>;
+
+/** The stored state a conditional credential update requires; each given field must still hold this value. */
+export interface CredentialExpect {
+  tokenHash: string;
+  sessionEnc?: string | null; // the encrypted cookie as read (null = no session)
+  autologinAt?: number | null;
+}
+
+/** A credential the renewal keepalive should visit, with its owner. */
+export interface RenewalCandidate {
+  user: UserRow;
+  credential: CredentialRow;
 }
 
 export interface SessionRow {
@@ -162,10 +186,22 @@ export interface Store {
   // Moodle credential (one per user)
   getCredential(userId: number): Promise<CredentialRow | null>;
   putCredential(row: CredentialRow): Promise<void>;
-  updateCredentialStatus(
-    userId: number,
-    patch: { status?: 'active' | 'invalid'; lastOkAt?: number | null; lastError?: string | null },
-  ): Promise<void>;
+  updateCredentialStatus(userId: number, patch: CredentialPatch): Promise<void>;
+  /** Compare-and-set: applies `patch` only while the stored credential matches `expect`; returns whether it did. */
+  updateCredentialIf(userId: number, expect: CredentialExpect, patch: CredentialPatch): Promise<boolean>;
+  /**
+   * The renewal keepalive's candidates: a web session last visited (confirmed or failed) at or before `sessionBefore`,
+   * or no session but an active credential with a private token, never tried since it was connected or last tried at
+   * or before `autologinBefore`. Most urgent first: a session by `sessionIdleMs` after its last visit (so failing
+   * sessions rotate behind the others), a session to open by when its retry came due (`autologinRetryMs` after it).
+   */
+  listRenewalCandidates(opts: {
+    sessionBefore: number;
+    autologinBefore: number;
+    sessionIdleMs: number;
+    autologinRetryMs: number;
+    limit: number;
+  }): Promise<RenewalCandidate[]>;
 
   // console sessions
   createSession(row: SessionRow): Promise<void>;
@@ -189,10 +225,14 @@ export interface Store {
    * caller that won the claim (D1: UPDATE … WHERE status='pending' AND expires_at > now, changes === 1).
    */
   claimAction(id: string, userId: number, now: number): Promise<boolean>;
+  /**
+   * A patch with a status applies only while the action is in ACTION_STATUS_FROM[status] (atomically); one without
+   * just sets its fields. Returns whether the row changed: false = another request moved the action first.
+   */
   updateAction(
     id: string,
     patch: Partial<Pick<ActionRow, 'status' | 'executedAt' | 'result' | 'error'>>,
-  ): Promise<void>;
+  ): Promise<boolean>;
   listActions(userId: number, opts: { status?: ActionStatus; limit: number; before?: number }): Promise<ActionRow[]>;
 
   // upload drafts (signed upload links)
@@ -251,7 +291,16 @@ export interface Signer {
 
 /** Aggregate usage counters, Worker `/mcp` requests only (stdio and the console never set it). Fire-and-forget. */
 export interface UsageRecorder {
-  toolCall(tool: string, ok: boolean): void;
+  toolCall(call: ToolCallStat): void;
+}
+
+/** One tool invocation as the statistics see it. */
+interface ToolCallStat {
+  tool: string;
+  /** Wall time of the handler. */
+  ms: number;
+  /** null = succeeded. */
+  failure: FailureClass | null;
 }
 
 export interface ServiceContext {

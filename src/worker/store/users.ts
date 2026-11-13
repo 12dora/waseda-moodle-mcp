@@ -1,6 +1,7 @@
-import type { CredentialRow, Store, UserRow } from '../../core/context';
+import type { CredentialPatch, CredentialRow, Store, UserRow } from '../../core/context';
 import { type ConnectVia, DEFAULT_SETTINGS } from '../../core/types';
-import { normalizeSettings, parseJson, toJson, updateColumns } from './rows';
+import { usagePeriods } from '../../core/usage';
+import { changes, normalizeSettings, parseJson, toJson, updateColumns } from './rows';
 
 export interface UserRaw {
   id: number;
@@ -24,6 +25,11 @@ interface CredentialRaw {
   connected_at: number;
   last_ok_at: number | null;
   last_error: string | null;
+  session_enc: string | null; // 0009
+  session_ok_at: number | null;
+  session_tried_at: number | null;
+  renewed_at: number | null;
+  autologin_at: number | null;
 }
 
 function scopeIds(raw: string | null | undefined): number[] | undefined {
@@ -53,7 +59,37 @@ const toCredential = (r: CredentialRaw): CredentialRow => ({
   connectedAt: r.connected_at,
   lastOkAt: r.last_ok_at,
   lastError: r.last_error,
+  sessionEnc: r.session_enc,
+  sessionOkAt: r.session_ok_at,
+  sessionTriedAt: r.session_tried_at,
+  renewedAt: r.renewed_at,
+  autologinAt: r.autologin_at,
 });
+
+const CREDENTIAL_COLUMNS: Record<keyof CredentialPatch, string> = {
+  tokenEnc: 'token_enc',
+  privateTokenEnc: 'private_token_enc',
+  tokenHash: 'token_hash',
+  tokenHint: 'token_hint',
+  status: 'status',
+  lastOkAt: 'last_ok_at',
+  lastError: 'last_error',
+  sessionEnc: 'session_enc',
+  sessionOkAt: 'session_ok_at',
+  sessionTriedAt: 'session_tried_at',
+  renewedAt: 'renewed_at',
+  autologinAt: 'autologin_at',
+};
+
+/** Patch fields -> column values (undefined fields are left out by updateColumns / setClause). */
+function credentialColumns(patch: CredentialPatch): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(patch)) {
+    const column = CREDENTIAL_COLUMNS[k as keyof CredentialPatch];
+    if (column && v !== undefined) out[column] = v;
+  }
+  return out;
+}
 
 /** Tables that hang off a user (deleted explicitly so correctness does not depend on FK enforcement). */
 const USER_OWNED_TABLES = [
@@ -68,21 +104,21 @@ const USER_OWNED_TABLES = [
   'audit',
 ] as const;
 
-type UserMethods = Pick<
+type AccountMethods = Pick<
   Store,
-  | 'getUser'
-  | 'getUserByMoodleId'
-  | 'upsertUser'
-  | 'updateSettings'
-  | 'touchUser'
-  | 'deleteUser'
-  | 'getCredential'
-  | 'putCredential'
-  | 'updateCredentialStatus'
+  'getUser' | 'getUserByMoodleId' | 'upsertUser' | 'updateSettings' | 'touchUser' | 'deleteUser'
+>;
+type CredentialMethods = Pick<
+  Store,
+  'getCredential' | 'putCredential' | 'updateCredentialStatus' | 'updateCredentialIf' | 'listRenewalCandidates'
 >;
 
-export function userMethods(db: D1Database): UserMethods {
-  const getUserByMoodleId: UserMethods['getUserByMoodleId'] = async (moodleUserId) => {
+export function userMethods(db: D1Database): AccountMethods & CredentialMethods {
+  return { ...accountMethods(db), ...credentialMethods(db) };
+}
+
+function accountMethods(db: D1Database): AccountMethods {
+  const getUserByMoodleId: AccountMethods['getUserByMoodleId'] = async (moodleUserId) => {
     const r = await db.prepare('SELECT * FROM users WHERE moodle_user_id = ?').bind(moodleUserId).first<UserRaw>();
     return r ? toUser(r) : null;
   };
@@ -95,19 +131,33 @@ export function userMethods(db: D1Database): UserMethods {
 
     getUserByMoodleId,
 
+    /**
+     * One batch: a NEW account also adds one to its signup week's anonymous size (the retention denominator, kept
+     * when the account is deleted later); an existing one only gets its name and language refreshed.
+     */
     async upsertUser(input) {
       const now = Date.now();
-      await db
-        .prepare(
-          `INSERT INTO users (moodle_user_id, fullname, lang, settings, created_at, last_seen_at)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(moodle_user_id) DO UPDATE SET fullname = excluded.fullname, lang = excluded.lang`,
-        )
-        .bind(input.moodleUserId, input.fullname, input.lang, toJson(DEFAULT_SETTINGS), now, now)
-        .run();
-      const row = await getUserByMoodleId(input.moodleUserId);
-      if (!row) throw new Error('upsertUser: row missing after insert');
-      return row;
+      const res = await db.batch([
+        db
+          .prepare(
+            `INSERT INTO users (moodle_user_id, fullname, lang, settings, created_at, last_seen_at)
+             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(moodle_user_id) DO NOTHING`,
+          )
+          .bind(input.moodleUserId, input.fullname, input.lang, toJson(DEFAULT_SETTINGS), now, now),
+        db
+          .prepare(
+            `INSERT INTO usage_counts (period, metric, dim, value) SELECT ?, 'signups', '', 1 WHERE changes() = 1
+             ON CONFLICT(period, metric, dim) DO UPDATE SET value = value + 1`,
+          )
+          .bind(usagePeriods(now).week),
+        db
+          .prepare('UPDATE users SET fullname = ?, lang = ? WHERE moodle_user_id = ?')
+          .bind(input.fullname, input.lang, input.moodleUserId),
+        db.prepare('SELECT * FROM users WHERE moodle_user_id = ?').bind(input.moodleUserId),
+      ]);
+      const raw = (res[3]?.results as UserRaw[] | undefined)?.[0];
+      if (!raw) throw new Error('upsertUser: row missing after insert');
+      return toUser(raw);
     },
 
     async updateSettings(userId, settings) {
@@ -126,7 +176,11 @@ export function userMethods(db: D1Database): UserMethods {
       stmts.push(db.prepare('DELETE FROM users WHERE id = ?').bind(userId));
       await db.batch(stmts);
     },
+  };
+}
 
+function credentialMethods(db: D1Database): CredentialMethods {
+  return {
     async getCredential(userId) {
       const r = await db.prepare('SELECT * FROM credentials WHERE user_id = ?').bind(userId).first<CredentialRaw>();
       return r ? toCredential(r) : null;
@@ -159,11 +213,48 @@ export function userMethods(db: D1Database): UserMethods {
     },
 
     async updateCredentialStatus(userId, patch) {
-      await updateColumns(
-        db,
-        { table: 'credentials', keyColumn: 'user_id', key: userId },
-        { status: patch.status, last_ok_at: patch.lastOkAt, last_error: patch.lastError },
-      );
+      await updateColumns(db, { table: 'credentials', keyColumn: 'user_id', key: userId }, credentialColumns(patch));
+    },
+
+    async updateCredentialIf(userId, expect, patch) {
+      const sets = Object.entries(credentialColumns(patch));
+      const where = ['user_id = ?', 'token_hash = ?'];
+      const args: unknown[] = [userId, expect.tokenHash];
+      if (expect.sessionEnc !== undefined) {
+        where.push('session_enc IS ?');
+        args.push(expect.sessionEnc);
+      }
+      if (expect.autologinAt !== undefined) {
+        where.push('autologin_at IS ?');
+        args.push(expect.autologinAt);
+      }
+      if (sets.length === 0) sets.push(['user_id', userId]); // still reports whether the state matched
+      const sql = `UPDATE credentials SET ${sets.map(([c]) => `${c} = ?`).join(', ')} WHERE ${where.join(' AND ')}`;
+      return (await changes(db.prepare(sql).bind(...sets.map(([, v]) => v), ...args))) === 1;
+    },
+
+    async listRenewalCandidates(opts) {
+      const { results } = await db
+        .prepare(
+          `SELECT u.*, c.* FROM users u JOIN credentials c ON c.user_id = u.id
+           WHERE (c.session_enc IS NOT NULL
+                  AND MAX(COALESCE(c.session_ok_at, 0), COALESCE(c.session_tried_at, 0)) <= ?)
+              OR (c.session_enc IS NULL AND c.status = 'active' AND c.private_token_enc IS NOT NULL
+                  AND (c.autologin_at IS NULL OR c.autologin_at <= ? OR c.autologin_at < c.connected_at))
+           ORDER BY CASE WHEN c.session_enc IS NOT NULL
+                         THEN MAX(COALESCE(c.session_ok_at, 0), COALESCE(c.session_tried_at, 0)) + ?
+                         ELSE COALESCE(c.autologin_at, 0) + ? END ASC, u.id ASC
+           LIMIT ?`,
+        )
+        .bind(
+          opts.sessionBefore,
+          opts.autologinBefore,
+          opts.sessionIdleMs,
+          opts.autologinRetryMs,
+          Math.max(1, Math.floor(opts.limit)),
+        )
+        .all<UserRaw & CredentialRaw>();
+      return results.map((r) => ({ user: toUser(r), credential: toCredential(r) }));
     },
   };
 }

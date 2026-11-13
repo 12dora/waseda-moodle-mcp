@@ -232,6 +232,21 @@ describe('refreshFromLaunch', () => {
     });
   });
 
+  it('never writes back a stale private token when the same token comes without one', async () => {
+    const { deps, store } = setup();
+    const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'bookmarklet' });
+    // a private token another writer stored after this refresh read the row
+    const getCredential = store.getCredential.bind(store);
+    store.getCredential = async (id) => {
+      const row = await getCredential(id);
+      const snapshot = row ? { ...row } : null; // as read, before the other writer
+      await store.updateCredentialStatus(id, { privateTokenEnc: 'enc(Deliver3dP)' });
+      return snapshot;
+    };
+    await refreshFromLaunch(deps, { launch: TOKEN_A });
+    expect(store.credentials.get(first.user.id)?.privateTokenEnc).toBe('enc(Deliver3dP)');
+  });
+
   it('stores a new token as an extension connection', async () => {
     const { deps, store } = setup();
     const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'bookmarklet' });
@@ -269,8 +284,31 @@ describe('toUserInfo / toCredentialInfo', () => {
       lastOkAt: null,
       lastError: 'boom',
       tokenHint: TOKEN_A.slice(-4),
+      autoRenew: false,
+      renewedAt: null,
     });
     expect(Object.keys(toCredentialInfo(cred))).not.toContain('tokenEnc');
+  });
+
+  it('reports automatic renewal: a web session, or an active credential with a private token', () => {
+    const base = {
+      userId: 1,
+      tokenEnc: 'e',
+      privateTokenEnc: null,
+      tokenHash: 'h',
+      tokenHint: 'abcd',
+      status: 'active' as const,
+      connectedVia: 'paste' as const,
+      connectedAt: 0,
+      lastOkAt: null,
+      lastError: null,
+    };
+    expect(toCredentialInfo(base).autoRenew).toBe(false);
+    expect(toCredentialInfo({ ...base, privateTokenEnc: 'p' }).autoRenew).toBe(true);
+    expect(toCredentialInfo({ ...base, privateTokenEnc: 'p', status: 'invalid' }).autoRenew).toBe(false);
+    const renewed = toCredentialInfo({ ...base, status: 'invalid', sessionEnc: 's', renewedAt: Date.UTC(2026, 9, 14) });
+    expect(renewed).toMatchObject({ autoRenew: true, renewedAt: '2026-10-14T09:00:00+09:00' });
+    expect(Object.keys(renewed)).not.toContain('sessionEnc');
   });
 
   it('fills missing settings with defaults', () => {

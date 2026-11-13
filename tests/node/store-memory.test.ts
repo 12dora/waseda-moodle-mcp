@@ -95,6 +95,29 @@ describe('MemoryStore credential, sessions, keys', () => {
     expect((await s.getCredential(1))?.lastOkAt).toBe(7);
   });
 
+  it('keeps the web session across a token replacement and lists renewal candidates like the D1 store', async () => {
+    const s = new MemoryStore();
+    const a = await s.upsertUser({ moodleUserId: 1001, fullname: 'A', lang: 'en' });
+    const b = await s.upsertUser({ moodleUserId: 1002, fullname: 'B', lang: 'en' });
+    const c = await s.upsertUser({ moodleUserId: 1003, fullname: 'C', lang: 'en' });
+    await s.putCredential(credential(a.id));
+    await s.updateCredentialStatus(a.id, { sessionEnc: 'enc-cookie', sessionOkAt: 10 });
+    await s.putCredential({ ...credential(a.id), tokenEnc: 'enc-2' });
+    expect(await s.getCredential(a.id)).toMatchObject({ tokenEnc: 'enc-2', sessionEnc: 'enc-cookie', sessionOkAt: 10 });
+    await s.putCredential({ ...credential(b.id), privateTokenEnc: 'p' });
+    await s.putCredential({ ...credential(c.id), privateTokenEnc: 'p' });
+    await s.updateCredentialStatus(c.id, { autologinAt: 900 });
+    const opts = { sessionBefore: 500, autologinBefore: 500, sessionIdleMs: 1000, autologinRetryMs: 1000, limit: 5 };
+    const ids = (await s.listRenewalCandidates(opts)).map((r) => r.user.id);
+    expect(ids).toEqual([b.id, a.id]); // b's retry came due (1000) before a's session idles out (1010)
+
+    const drop = { sessionEnc: null };
+    expect(await s.updateCredentialIf(a.id, { tokenHash: 'h', sessionEnc: 'other' }, drop)).toBe(false);
+    expect(await s.updateCredentialIf(a.id, { tokenHash: 'h', sessionEnc: 'enc-cookie' }, drop)).toBe(true);
+    expect((await s.getCredential(a.id))?.sessionEnc).toBeNull();
+    expect(await s.updateCredentialIf(c.id, { tokenHash: 'h', autologinAt: null }, { autologinAt: 1 })).toBe(false);
+  });
+
   it('manages sessions', async () => {
     const s = new MemoryStore();
     await s.createSession({ idHash: 'h1', userId: 1, createdAt: 1, expiresAt: 10, lastSeenAt: 1, userAgent: null });
@@ -140,8 +163,11 @@ describe('MemoryStore actions, uploads, audit', () => {
     expect((await s.listActions(1, { limit: 10, status: 'pending' })).map((a) => a.id)).toEqual(['a1']);
     expect((await s.listActions(1, { limit: 10, before: 2 })).map((a) => a.id)).toEqual(['a1']);
     expect(await s.listActions(1, { limit: 1 })).toHaveLength(1);
-    await s.updateAction('a1', { status: 'executed', executedAt: 9, result: 'ok' });
+    expect(await s.updateAction('a1', { status: 'executed', executedAt: 9, result: 'ok' })).toBe(false); // not running
+    expect(await s.claimAction('a1', 1, 0)).toBe(true);
+    expect(await s.updateAction('a1', { status: 'executed', executedAt: 9, result: 'ok' })).toBe(true);
     expect(await s.getAction('a1')).toMatchObject({ status: 'executed', executedAt: 9, result: 'ok', error: null });
+    expect(await s.updateAction('a1', { status: 'cancelled' })).toBe(false);
   });
 
   it('claims a pending, unexpired, owned action exactly once', async () => {

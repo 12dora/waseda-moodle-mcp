@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { InvocationBudget } from '../../src/core/budget';
 import type { ServiceContext } from '../../src/core/context';
 import { NeedsReconnect } from '../../src/core/errors';
 import { resolveScope } from '../../src/core/services/scope';
@@ -160,10 +161,15 @@ describe('runCourseSweep', () => {
     expect(refreshSnapshots).toHaveBeenCalledTimes(20);
   });
 
-  it('does not count the sweep as the user being active', async () => {
+  it('does not count the sweep as the user being active, nor in the usage statistics', async () => {
     const u = await addUser(1001, 'active', 1);
     await runCourseSweep(env);
     expect((await store.getUser(u.id))?.lastSeenAt).toBe(1);
+    expect(seen.every((ctx) => ctx.usage === undefined)).toBe(true);
+    const counted = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM usage_counts WHERE metric != 'signups'", // signups: the test's account setup
+    ).first<{ n: number }>();
+    expect(counted?.n).toBe(0);
   });
 
   it('skips users who need to reconnect and survives other failures', async () => {
@@ -206,6 +212,20 @@ describe('runCourseSweep', () => {
     expect(summary.calls).toBe(SWEEP_CALL_BUDGET);
     expect(summary.swept).toBe(1);
     expect(seen).toHaveLength(2);
+  });
+
+  it('spends only what the credential keepalive left of the invocation budget', async () => {
+    for (const id of [1001, 1002]) {
+      await addUser(id);
+      plan.set(id, 20);
+    }
+    const budget = new InvocationBudget(25, 45);
+    const summary = await runCourseSweep(env, undefined, budget);
+    // user 1: 20; user 2 would start with 5 left -> below the per-user minimum
+    expect(summary).toEqual({ swept: 1, skipped: 0, failed: 0, calls: 20 });
+    expect(budget.moodle).toBe(5); // the clients charged the shared budget
+    const dry = new InvocationBudget(44, 5); // too few D1 queries left for a user
+    expect(await runCourseSweep(env, undefined, dry)).toEqual({ swept: 0, skipped: 0, failed: 0, calls: 0 });
   });
 
   it('does nothing when no user has a usable credential', async () => {

@@ -1,10 +1,12 @@
 /** Builds the per-request ServiceContext (and Moodle clients for the file routes) from Worker bindings. */
 
-import type { MoodleApi, ServiceContext, Signer, UsageRecorder, UserRow } from '../core/context';
-import { createSigner, importMasterKey, type MasterKey } from '../core/crypto';
+import type { InvocationBudget } from '../core/budget';
+import type { CredentialRow, MoodleApi, ServiceContext, Signer, UsageRecorder, UserRow } from '../core/context';
+import { createSigner, importMasterKey, type MasterKey, sha256Hex } from '../core/crypto';
 import { NeedsReconnect, NotFound } from '../core/errors';
 import { MoodleClient } from '../core/moodle/client';
-import { clientLabel } from '../core/usage';
+import { type RenewalDeps, type RenewalOutcome, refreshCredential } from '../core/services/credential-renewal';
+import { clientLabel, renewalCounts } from '../core/usage';
 import { type Env, type McpProps, publicUrlOf } from './env';
 import { createD1Store, type D1Store } from './store-d1';
 
@@ -57,26 +59,53 @@ export function makeDefer(execCtx: WaitUntil | undefined): Defer {
   };
 }
 
+export const renewalDeps = (rt: Runtime): RenewalDeps => ({ store: rt.store, key: rt.key });
+
+/** Credential-health counters of one refresh (operator statistics; never activity). Never throws. */
+async function countRenewal(store: D1Store, outcome: RenewalOutcome): Promise<void> {
+  const counts = renewalCounts(outcome);
+  if (counts.length > 0) await store.recordCounts(Date.now(), counts).catch(() => undefined);
+}
+
+interface ClientOptions {
+  maxCalls?: number;
+  budget?: InvocationBudget;
+}
+
 /**
- * Moodle client for a stored credential. Marks the credential invalid when Moodle rejects the token and refreshes
- * `lastOkAt` lazily (at most once per LAST_OK_INTERVAL_MS) after the first successful call.
+ * Moodle client for a stored credential. When Moodle rejects the token, a stored web session is asked for the current
+ * one first (launch.php only, charged to this client, never an autologin: concurrent requests cannot open sessions).
+ * An `invalid` credential with a session is therefore still tried: its first rejection renews it. Without success the
+ * rejected token is marked invalid, unless the row holds another token meanwhile. Refreshes `lastOkAt` lazily (at most
+ * once per LAST_OK_INTERVAL_MS).
  */
-async function createMoodleClient(rt: Runtime, user: UserRow, defer: Defer, maxCalls?: number): Promise<MoodleApi> {
+async function createMoodleClient(
+  rt: Runtime,
+  user: UserRow,
+  defer: Defer,
+  opts: ClientOptions = {},
+): Promise<MoodleApi> {
   const cred = await rt.store.getCredential(user.id);
   if (!cred) throw new NeedsReconnect('Moodle is not connected for this account. Reconnect in the console.');
-  if (cred.status === 'invalid') throw new NeedsReconnect();
-  const token = await rt.key.decrypt(cred.tokenEnc);
+  if (cred.status === 'invalid' && !cred.sessionEnc) throw new NeedsReconnect();
   const lastOk = cred.lastOkAt ?? 0;
   return new MoodleClient({
-    token,
+    token: await rt.key.decrypt(cred.tokenEnc),
     moodleUserId: user.moodleUserId,
-    maxCalls,
-    onTokenInvalid: async () => {
+    maxCalls: opts.maxCalls,
+    budget: opts.budget,
+    renewToken: cred.sessionEnc
+      ? async (fetch) => {
+          const outcome = await refreshCredential({ ...renewalDeps(rt), fetch }, user, cred);
+          defer(countRenewal(rt.store, outcome));
+          return outcome.token ?? null;
+        }
+      : undefined,
+    onTokenInvalid: async (rejected) => {
       try {
-        await rt.store.updateCredentialStatus(user.id, {
-          status: 'invalid',
-          lastError: 'Moodle rejected the stored token. Reconnect to continue.',
-        });
+        const expect = { tokenHash: await sha256Hex(rejected) };
+        const lastError = 'Moodle rejected the stored token. Reconnect to continue.';
+        await rt.store.updateCredentialIf(user.id, expect, { status: 'invalid', lastError });
       } catch {
         // the NeedsReconnect that follows still reaches the caller
       }
@@ -105,17 +134,20 @@ interface BuildContextOptions {
   user?: UserRow;
   /** Moodle call budget of this context's client (default: the client's own limit). */
   maxCalls?: number;
-  /** false for background work (scheduled sweep): it must not count as the user being active. Default true. */
+  /** The invocation's shared budget (scheduled run): the client's requests are charged to it too. */
+  budget?: InvocationBudget;
+  /** false for background work (sweep, console background requests): not the user being active. Default true. */
   touchUser?: boolean;
   /** true for `/mcp` requests: tool calls feed the operator statistics (not the console, not the sweep). Default false. */
   recordUsage?: boolean;
 }
 
 /** Tool calls of one MCP request, counted past the response (never throws into the tool). */
-function usageRecorder(store: D1Store, userId: number, source: string, defer: Defer): UsageRecorder {
+function usageRecorder(store: D1Store, user: UserRow, source: string, defer: Defer): UsageRecorder {
   const client = clientLabel(source);
+  const actor = { userId: user.id, createdAt: user.createdAt };
   return {
-    toolCall: (tool, ok) => defer(store.recordToolCall({ userId, client, tool, ok, now: Date.now() })),
+    toolCall: (call) => defer(store.recordToolCall({ ...actor, ...call, client, now: Date.now() })),
   };
 }
 
@@ -142,7 +174,7 @@ export async function buildServiceContext(
     signer: rt.signer,
     moodle: () => {
       // one budgeted client per request; a rejected promise is kept so NeedsReconnect is not retried
-      moodle ??= createMoodleClient(rt, user, defer, opts.maxCalls);
+      moodle ??= createMoodleClient(rt, user, defer, { maxCalls: opts.maxCalls, budget: opts.budget });
       return moodle;
     },
     publicUrl: publicUrlOf(env),
@@ -151,7 +183,7 @@ export async function buildServiceContext(
     source: props.source,
     syllabusLookup: env.SYLLABUS_LOOKUP !== 'off',
     defer,
-    usage: opts.recordUsage ? usageRecorder(rt.store, user.id, props.source, defer) : undefined,
+    usage: opts.recordUsage ? usageRecorder(rt.store, user, props.source, defer) : undefined,
   };
 }
 
@@ -161,6 +193,15 @@ export function consoleProps(user: UserRow): McpProps {
 }
 
 // ------------------------------------------------------------------ connect wiring
+
+/**
+ * After a connect or refresh that stored a private token: opens the web session right away, so renewal is active at
+ * once (a newly connected credential is tried at once; otherwise the policy's retry wait applies).
+ */
+export async function startRenewal(rt: Runtime, user: UserRow, cred: CredentialRow | null): Promise<void> {
+  if (!cred?.privateTokenEnc || cred.sessionEnc || cred.status !== 'active') return;
+  await countRenewal(rt.store, await refreshCredential(renewalDeps(rt), user, cred, { autologin: true }));
+}
 
 export function connectDeps(rt: Runtime, allowRegistration: (moodleUserId: number) => boolean) {
   return {

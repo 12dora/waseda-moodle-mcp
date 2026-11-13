@@ -19,7 +19,7 @@ import {
   registrationPolicy,
   startSession,
 } from '../auth';
-import { connectDeps, getRuntime } from '../context';
+import { connectDeps, getRuntime, startRenewal } from '../context';
 import { adminMoodleUserIds, publicUrlOf, registrationMode, VERSION } from '../env';
 import { normalizeSettings } from '../store/rows';
 import type { D1Store } from '../store-d1';
@@ -130,6 +130,77 @@ async function connectRequest(
   };
 }
 
+/** Signs in from a pasted launch link or a hand-off code and starts a console session. */
+async function connect(c: Context<AppEnv>): Promise<Response> {
+  const rt = await getRuntime(c.env);
+  await rateLimit(rt.store, { key: `connect:ip:${clientIp(c.req.raw)}`, limit: 60, windowMs: 10 * 60_000 });
+  const body = await readJson(c);
+  const request = await connectRequest(body, rt);
+  const result = await connectFromLaunch(connectDeps(rt, registrationPolicy(c.env)), request.input);
+
+  // A hand-off link must not silently replace the account that is signed in (login CSRF): ask first.
+  if (request.code) {
+    const current = await optionalSessionUser(c);
+    if (current && current.id !== result.user.id && body.switchAccount !== true) {
+      const message = 'This sign-in link belongs to a different account. Confirm to switch.';
+      return c.json({ error: { code: 'account_switch', message }, account: { fullname: result.user.fullname } }, 409);
+    }
+    await consumeHandoff(rt, request.code);
+  }
+
+  const { setCookie } = await startSession(rt.store, result.user.id, c.req.header('User-Agent') ?? null);
+  const old = readSessionCookie(c.req.raw);
+  if (old)
+    deferOn(
+      c,
+      sha256Hex(old).then((h) => rt.store.deleteSession(h)),
+    );
+
+  const cred = await rt.store.getCredential(result.user.id);
+  deferOn(c, startRenewal(rt, result.user, cred));
+  deferOn(c, rt.store.recordCounts(Date.now(), [{ metric: 'connect', dim: request.input.via }]));
+  c.header('Set-Cookie', setCookie);
+  return c.json({
+    user: toUserInfo(result.user),
+    credential: cred ? toCredentialInfo(cred) : null,
+    created: result.created,
+  });
+}
+
+/** Browser extension: refreshes the stored token from a fresh launch link. */
+async function extensionRefresh(c: Context<AppEnv>): Promise<Response> {
+  const store = storeOf(c.env);
+  await rateLimit(store, { key: `ext:ip:${clientIp(c.req.raw)}`, limit: 300, windowMs: HOUR_MS });
+  const body = await readJson(c);
+  const launch = reqString(body.launch, 'launch', 4096);
+  // per token: a stolen or looping client cannot hammer Moodle through one credential
+  const tokenKey = await sha256Hex(parseLaunch(launch).token);
+  await rateLimit(store, { key: `ext:token:${tokenKey}`, limit: 6, windowMs: HOUR_MS });
+  const rt = await getRuntime(c.env);
+  const r = await refreshFromLaunch(connectDeps(rt, registrationPolicy(c.env)), { launch });
+  deferOn(
+    c,
+    rt.store.getCredential(r.user.id).then((cred) => startRenewal(rt, r.user, cred)),
+  );
+  return c.json({ status: r.tokenChanged ? 'updated' : 'unchanged' });
+}
+
+/** Revokes the account's OAuth grants, then deletes the account and everything it owns. */
+async function deleteAccount(c: Context<AppEnv>): Promise<Response> {
+  const user = c.get('user');
+  const oauth = c.env.OAUTH_PROVIDER;
+  const grantUser = String(user.id);
+  // revoking shrinks the list, so always re-list from the start (bounded)
+  for (let round = 0; round < 10; round++) {
+    const page = await oauth.listUserGrants(grantUser, { limit: 100 });
+    if (page.items.length === 0) break;
+    for (const g of page.items) await oauth.revokeGrant(g.id, grantUser);
+  }
+  await storeOf(c.env).deleteUser(user.id);
+  c.header('Set-Cookie', clearSessionCookieHeader());
+  return c.json({ ok: true });
+}
+
 export function accountRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
@@ -146,39 +217,7 @@ export function accountRoutes(): Hono<AppEnv> {
     });
   });
 
-  app.post('/api/connect', async (c) => {
-    const rt = await getRuntime(c.env);
-    await rateLimit(rt.store, { key: `connect:ip:${clientIp(c.req.raw)}`, limit: 60, windowMs: 10 * 60_000 });
-    const body = await readJson(c);
-    const request = await connectRequest(body, rt);
-    const result = await connectFromLaunch(connectDeps(rt, registrationPolicy(c.env)), request.input);
-
-    // A hand-off link must not silently replace the account that is signed in (login CSRF): ask first.
-    if (request.code) {
-      const current = await optionalSessionUser(c);
-      if (current && current.id !== result.user.id && body.switchAccount !== true) {
-        const message = 'This sign-in link belongs to a different account. Confirm to switch.';
-        return c.json({ error: { code: 'account_switch', message }, account: { fullname: result.user.fullname } }, 409);
-      }
-      await consumeHandoff(rt, request.code);
-    }
-
-    const { setCookie } = await startSession(rt.store, result.user.id, c.req.header('User-Agent') ?? null);
-    const old = readSessionCookie(c.req.raw);
-    if (old)
-      deferOn(
-        c,
-        sha256Hex(old).then((h) => rt.store.deleteSession(h)),
-      );
-
-    const cred = await rt.store.getCredential(result.user.id);
-    c.header('Set-Cookie', setCookie);
-    return c.json({
-      user: toUserInfo(result.user),
-      credential: cred ? toCredentialInfo(cred) : null,
-      created: result.created,
-    });
-  });
+  app.post('/api/connect', connect);
 
   // Browser extension: silent token refresh. No cookie, any origin; protected by the token itself + a rate limit.
   app.use(EXTENSION_REFRESH_PATH, async (c, next) => {
@@ -186,18 +225,7 @@ export function accountRoutes(): Hono<AppEnv> {
     for (const [k, v] of Object.entries(EXTENSION_CORS)) c.res.headers.set(k, v);
   });
   app.options(EXTENSION_REFRESH_PATH, (c) => c.body(null, 204));
-  app.post(EXTENSION_REFRESH_PATH, async (c) => {
-    const store = storeOf(c.env);
-    await rateLimit(store, { key: `ext:ip:${clientIp(c.req.raw)}`, limit: 300, windowMs: HOUR_MS });
-    const body = await readJson(c);
-    const launch = reqString(body.launch, 'launch', 4096);
-    // per token: a stolen or looping client cannot hammer Moodle through one credential
-    const tokenKey = await sha256Hex(parseLaunch(launch).token);
-    await rateLimit(store, { key: `ext:token:${tokenKey}`, limit: 6, windowMs: HOUR_MS });
-    const rt = await getRuntime(c.env);
-    const r = await refreshFromLaunch(connectDeps(rt, registrationPolicy(c.env)), { launch });
-    return c.json({ status: r.tokenChanged ? 'updated' : 'unchanged' });
-  });
+  app.post(EXTENSION_REFRESH_PATH, extensionRefresh);
 
   app.post('/api/logout', async (c) => {
     const cookie = readSessionCookie(c.req.raw);
@@ -217,20 +245,7 @@ export function accountRoutes(): Hono<AppEnv> {
     });
   });
 
-  app.delete('/api/me', session, async (c) => {
-    const user = c.get('user');
-    const oauth = c.env.OAUTH_PROVIDER;
-    const grantUser = String(user.id);
-    // revoking shrinks the list, so always re-list from the start (bounded)
-    for (let round = 0; round < 10; round++) {
-      const page = await oauth.listUserGrants(grantUser, { limit: 100 });
-      if (page.items.length === 0) break;
-      for (const g of page.items) await oauth.revokeGrant(g.id, grantUser);
-    }
-    await storeOf(c.env).deleteUser(user.id);
-    c.header('Set-Cookie', clearSessionCookieHeader());
-    return c.json({ ok: true });
-  });
+  app.delete('/api/me', session, deleteAccount);
 
   app.patch('/api/settings', session, async (c) => {
     const user = c.get('user');

@@ -63,7 +63,7 @@ describe('sessions (D1)', () => {
     const hash = await sha256Hex(cookieValue);
     expect(await store.getSession(hash)).toMatchObject({ userId, expiresAt: 1_000_000 + SESSION_TTL_MS });
 
-    const loaded = await loadSession(store, cookieValue, defer, 1_000_000 + 1000);
+    const loaded = await loadSession(store, cookieValue, { defer, now: 1_000_000 + 1000 });
     expect(loaded?.user.id).toBe(userId);
     expect(loaded?.sessionHash).toBe(hash);
     expect(loaded?.touched).toBe(false);
@@ -73,7 +73,7 @@ describe('sessions (D1)', () => {
   it('slides the expiry only when the session is stale', async () => {
     const { cookieValue } = await startSession(store, userId, null, 1_000_000);
     const later = 1_000_000 + SESSION_TOUCH_MS + 1;
-    const loaded = await loadSession(store, cookieValue, defer, later);
+    const loaded = await loadSession(store, cookieValue, { defer, now: later });
     expect(loaded?.touched).toBe(true);
     await Promise.all(deferred);
     expect(await store.getSession(await sha256Hex(cookieValue))).toMatchObject({
@@ -84,9 +84,9 @@ describe('sessions (D1)', () => {
   });
 
   it('rejects unknown and expired sessions (and removes the expired row)', async () => {
-    expect(await loadSession(store, 'nonexistent', defer)).toBeNull();
+    expect(await loadSession(store, 'nonexistent', { defer })).toBeNull();
     const { cookieValue } = await startSession(store, userId, null, 1_000_000);
-    expect(await loadSession(store, cookieValue, defer, 1_000_000 + SESSION_TTL_MS + 1)).toBeNull();
+    expect(await loadSession(store, cookieValue, { defer, now: 1_000_000 + SESSION_TTL_MS + 1 })).toBeNull();
     await Promise.all(deferred);
     expect(await store.getSession(await sha256Hex(cookieValue))).toBeNull();
   });

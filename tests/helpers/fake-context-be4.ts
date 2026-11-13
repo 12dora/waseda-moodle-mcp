@@ -16,7 +16,13 @@ import type {
   UserRow,
 } from '../../src/core/context';
 import { MoodleError } from '../../src/core/errors';
-import { DEFAULT_SETTINGS, type Scope, type UploadedDraftFile, type UserSettings } from '../../src/core/types';
+import {
+  ACTION_STATUS_FROM,
+  DEFAULT_SETTINGS,
+  type Scope,
+  type UploadedDraftFile,
+  type UserSettings,
+} from '../../src/core/types';
 
 export const BASE_URL = 'https://wsdmoodle.waseda.jp';
 export const PUBLIC_URL = 'https://wasemoodle.example.com';
@@ -100,9 +106,20 @@ export function createMemoryStoreForTests(): MemoryStore {
     async updateCredentialStatus(userId, patch) {
       const c = credentials.get(userId);
       if (!c) return;
-      if (patch.status !== undefined) c.status = patch.status;
-      if (patch.lastOkAt !== undefined) c.lastOkAt = patch.lastOkAt;
-      if (patch.lastError !== undefined) c.lastError = patch.lastError;
+      for (const [k, v] of Object.entries(patch)) if (v !== undefined) Object.assign(c, { [k]: v });
+    },
+    async updateCredentialIf(userId, expect, patch) {
+      const c = credentials.get(userId);
+      const matches =
+        c !== undefined &&
+        c.tokenHash === expect.tokenHash &&
+        (expect.sessionEnc === undefined || (c.sessionEnc ?? null) === expect.sessionEnc) &&
+        (expect.autologinAt === undefined || (c.autologinAt ?? null) === expect.autologinAt);
+      if (matches) await store.updateCredentialStatus(userId, patch);
+      return matches;
+    },
+    async listRenewalCandidates() {
+      return [];
     },
 
     async createSession(row) {
@@ -157,7 +174,9 @@ export function createMemoryStoreForTests(): MemoryStore {
     },
     async updateAction(id, patch) {
       const a = actions.get(id);
-      if (a) Object.assign(a, patch);
+      if (!a || (patch.status !== undefined && a.status !== ACTION_STATUS_FROM[patch.status])) return false;
+      Object.assign(a, patch);
+      return true;
     },
     async listActions(userId, opts) {
       return [...actions.values()]

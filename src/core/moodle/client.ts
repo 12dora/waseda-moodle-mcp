@@ -3,6 +3,7 @@
  * The token only ever travels in POST bodies, except for pluginfile downloads (`token=` query, required by Moodle).
  */
 
+import type { InvocationBudget } from '../budget';
 import type { DraftUploadResult, MoodleApi } from '../context';
 import { BudgetExceeded, InvalidInput, MoodleError, MoodleUnavailable, NeedsReconnect } from '../errors';
 import { MOODLE_URL } from './launch';
@@ -29,9 +30,21 @@ export interface MoodleClientOptions {
   maxCalls?: number; // default 40
   timeoutMs?: number; // default 25_000 per REST call / until response headers
   uploadTimeoutMs?: number; // default 120_000
-  onTokenInvalid?: () => Promise<void>;
+  /** The invocation's shared allowance: every request (renewal requests too) is charged to it as well. */
+  budget?: InvocationBudget;
+  /**
+   * Moodle rejected the token: a renewed one to repeat the request with, or null to give up. Asked at most once per
+   * client, with a fetch that charges this client's budget; a request rejected for its token never ran, so repeating
+   * a write is safe.
+   */
+  renewToken?: (fetch: typeof globalThis.fetch) => Promise<string | null>;
+  /** The rejected token is gone for good (after renewToken, if any, did not help). */
+  onTokenInvalid?: (rejected: string) => Promise<void>;
   onSuccess?: () => void;
 }
+
+/** Moodle rejected the token of one request (internal: the client renews or turns it into NeedsReconnect). */
+class TokenRejected extends NeedsReconnect {}
 
 function scalarParam(v: unknown): string | null {
   if (typeof v === 'boolean') return v ? '1' : '0';
@@ -62,16 +75,34 @@ export function encodeParams(params: Record<string, unknown>): URLSearchParams {
   return out;
 }
 
-/** Functions that change state (or allocate ids) are never memoised and never retried. */
 const WRITE_FN =
   /save|submit|add|send|update|create|delete|view_|mark|unused|start_|finish|process|remove|reset|toggle/;
-const isReadFunction = (fn: string) => !WRITE_FN.test(fn);
+/** Mobile-app pages that save what they carry (`tool_mobile_get_content` args), e.g. questionnaire `nextpage`. */
+const WRITE_ACTION = /^(?:submit|nextpage|previouspage|save\w*)$/;
+
+/** The `action` arg of a `tool_mobile_get_content` call (`args: [{name, value}]`); '' for everything else. */
+function pageAction(params: Record<string, unknown>): string {
+  const args = Array.isArray(params.args) ? params.args : [];
+  const action = args.find((a) => isObj(a) && a.name === 'action');
+  return isObj(action) && typeof action.value === 'string' ? action.value : '';
+}
+
+/**
+ * Calls that change state (or allocate ids), by function name or by the page action they carry, are never memoised
+ * and never retried after a failure; they clear the memo. A call rejected for its token never ran, so the token
+ * renewal repeats it either way.
+ */
+const isReadCall = (fn: string, params: Record<string, unknown>) =>
+  !WRITE_FN.test(fn) && !WRITE_ACTION.test(pageAction(params));
 
 const RESERVED = new Set(['wstoken', 'wsfunction', 'moodlewsrestformat']);
 const isReserved = (key: string) => RESERVED.has(key.split('[')[0] ?? key);
 const isRedirect = (res: Response) => (res.status >= 300 && res.status < 400) || res.type === 'opaqueredirect';
 const REDIRECT_MSG = 'Moodle redirected the download unexpectedly.';
 const MAX_HOPS = 3;
+const RENEWED_MSG = 'The Moodle sign-in was renewed during the upload. Send the file again.';
+
+type FileInit = { method?: 'GET' | 'HEAD'; range?: string };
 
 const discard = (res: Response) => {
   res.body?.cancel().catch(() => {});
@@ -81,15 +112,19 @@ export class MoodleClient implements MoodleApi {
   readonly baseUrl: string;
   readonly moodleUserId: number;
   private calls = 0;
-  private readonly token: string;
+  private token: string;
   private readonly doFetch: typeof fetch;
   private readonly maxCalls: number;
   private readonly timeoutMs: number;
   private readonly uploadTimeoutMs: number;
-  private readonly onTokenInvalid?: () => Promise<void>;
+  private readonly budget?: InvocationBudget;
+  private readonly renewToken?: MoodleClientOptions['renewToken'];
+  private readonly onTokenInvalid?: MoodleClientOptions['onTokenInvalid'];
   private readonly onSuccess?: () => void;
   private readonly memo = new Map<string, Promise<unknown>>();
   private invalid = false;
+  /** The one renewal of this client; resolves true when it ran out of budget. */
+  private renewal: Promise<boolean> | null = null;
   private succeeded = false;
 
   constructor(opts: MoodleClientOptions) {
@@ -100,6 +135,8 @@ export class MoodleClient implements MoodleApi {
     this.maxCalls = opts.maxCalls ?? 40;
     this.timeoutMs = opts.timeoutMs ?? 25_000;
     this.uploadTimeoutMs = opts.uploadTimeoutMs ?? 120_000;
+    this.budget = opts.budget;
+    this.renewToken = opts.renewToken;
     this.onTokenInvalid = opts.onTokenInvalid;
     this.onSuccess = opts.onSuccess;
   }
@@ -112,7 +149,7 @@ export class MoodleClient implements MoodleApi {
 
   call<T = unknown>(fn: string, params: Record<string, unknown> = {}): Promise<T> {
     if (this.invalid) return Promise.reject(new NeedsReconnect());
-    if (!isReadFunction(fn)) {
+    if (!isReadCall(fn, params)) {
       this.memo.clear();
       return this.exec<T>(fn, params, false).finally(() => this.memo.clear());
     }
@@ -136,17 +173,22 @@ export class MoodleClient implements MoodleApi {
 
   private spend(): void {
     if (this.calls >= this.maxCalls) throw new BudgetExceeded();
+    this.budget?.spendMoodle();
     this.calls++;
   }
 
-  private async restOnce(fn: string, params: Record<string, unknown>): Promise<unknown> {
+  private restOnce(fn: string, params: Record<string, unknown>): Promise<unknown> {
+    return this.withToken((token) => this.restWith(token, fn, params));
+  }
+
+  private async restWith(token: string, fn: string, params: Record<string, unknown>): Promise<unknown> {
     this.spend();
-    const body = new URLSearchParams({ wstoken: this.token, wsfunction: fn, moodlewsrestformat: 'json' });
+    const body = new URLSearchParams({ wstoken: token, wsfunction: fn, moodlewsrestformat: 'json' });
     for (const [k, v] of encodeParams(params)) {
       if (!isReserved(k)) body.append(k, v);
     }
     const parsed = parseJson(await this.postRest(body));
-    if (isObj(parsed)) await this.checkEnvelope(parsed);
+    if (isObj(parsed)) this.checkEnvelope(parsed);
     this.markOk();
     return parsed;
   }
@@ -182,31 +224,82 @@ export class MoodleClient implements MoodleApi {
     }
   }
 
-  private async markInvalid(): Promise<void> {
+  /**
+   * Runs one request with the current token. When Moodle rejects it, the token is renewed once per client and the
+   * request repeated with the new one; a second rejection (or no renewal) gives the credential up.
+   */
+  private async withToken<T>(attempt: (token: string) => Promise<T>, replayable = true): Promise<T> {
+    const first = this.token;
+    try {
+      return await attempt(first);
+    } catch (e) {
+      if (!(e instanceof TokenRejected)) throw e;
+      await this.tokenRejected(first);
+      if (!replayable) throw new MoodleUnavailable(RENEWED_MSG);
+    }
+    try {
+      return await attempt(this.token);
+    } catch (e) {
+      if (!(e instanceof TokenRejected)) throw e;
+      await this.markInvalid(this.token);
+      throw new NeedsReconnect();
+    }
+  }
+
+  /** Returns once a renewed token is in place; otherwise marks the credential invalid and throws NeedsReconnect. */
+  private async tokenRejected(rejected: string): Promise<void> {
+    if (this.token === rejected && this.renewToken) {
+      this.renewal ??= this.renew();
+      // out of budget is not a dead credential: it stays as it is
+      if ((await this.renewal) && this.token === rejected) throw new BudgetExceeded();
+    }
+    if (this.token !== rejected && !this.invalid) return; // renewed here or by a concurrent request
+    await this.markInvalid(rejected);
+    throw new NeedsReconnect();
+  }
+
+  private async renew(): Promise<boolean> {
+    let exhausted = false;
+    const charged: typeof fetch = (input, init) => {
+      try {
+        this.spend();
+      } catch (e) {
+        exhausted = true;
+        return Promise.reject(e);
+      }
+      return this.doFetch(input, init);
+    };
+    try {
+      const fresh = await this.renewToken?.(charged);
+      if (fresh) this.token = fresh;
+    } catch {
+      /* treated as no renewal */
+    }
+    return exhausted;
+  }
+
+  private async markInvalid(rejected: string): Promise<void> {
     if (this.invalid) return;
     this.invalid = true;
     try {
-      await this.onTokenInvalid?.();
+      await this.onTokenInvalid?.(rejected);
     } catch {
       /* best effort */
     }
   }
 
   /** Throws for a Moodle error object; returns for ordinary data. */
-  private async checkEnvelope(o: Json): Promise<void> {
+  private checkEnvelope(o: Json): void {
     const env = readEnvelope(o);
     if (!env) return;
-    if (isTokenGone(env)) {
-      await this.markInvalid();
-      throw new NeedsReconnect();
-    }
+    if (isTokenGone(env)) throw new TokenRejected();
     throw new MoodleError(env.message || 'Moodle returned an error.', env.code || 'moodle_error', env.exception);
   }
 
   // ------------------------------------------------------------------ files
 
-  private fileTarget(fileUrl: string): string {
-    return fileDownloadUrl({ baseUrl: this.baseUrl, token: this.token }, fileUrl);
+  private fileTarget(fileUrl: string, token: string): string {
+    return fileDownloadUrl({ baseUrl: this.baseUrl, token }, fileUrl);
   }
 
   private async send(url: string, init: RequestInit & { duplex?: 'half' }, timeoutMs: number): Promise<Response> {
@@ -223,31 +316,35 @@ export class MoodleClient implements MoodleApi {
   }
 
   /** Re-validates a redirect target: the token must never be sent anywhere we did not check. */
-  private redirectTarget(location: string, from: string, hop: number): string {
+  private redirectTarget(location: string, from: string, hop: number, token: string): string {
     if (hop >= MAX_HOPS) throw new MoodleUnavailable(REDIRECT_MSG);
     try {
-      return this.fileTarget(new URL(location, from).toString());
+      return this.fileTarget(new URL(location, from).toString(), token);
     } catch {
       throw new MoodleUnavailable(REDIRECT_MSG);
     }
   }
 
-  private async getFollowing(fileUrl: string, init: { method?: 'GET' | 'HEAD'; range?: string }): Promise<Response> {
+  private async getFollowing(token: string, fileUrl: string, init: FileInit): Promise<Response> {
     const headers: Record<string, string> = init.range ? { Range: init.range } : {};
-    let target = this.fileTarget(fileUrl);
+    let target = this.fileTarget(fileUrl, token);
     for (let hop = 0; ; hop++) {
       const req = { method: init.method ?? 'GET', headers, redirect: 'manual' } as const;
       const res = await this.send(target, req, this.timeoutMs);
       const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
       if (!location) return res;
       discard(res);
-      target = this.redirectTarget(location, target, hop);
+      target = this.redirectTarget(location, target, hop, token);
     }
   }
 
-  async fetchFile(fileUrl: string, init: { method?: 'GET' | 'HEAD'; range?: string } = {}): Promise<Response> {
+  async fetchFile(fileUrl: string, init: FileInit = {}): Promise<Response> {
     if (this.invalid) throw new NeedsReconnect();
-    const res = await this.getFollowing(fileUrl, init);
+    return this.withToken((token) => this.fetchWith(token, fileUrl, init));
+  }
+
+  private async fetchWith(token: string, fileUrl: string, init: FileInit): Promise<Response> {
+    const res = await this.getFollowing(token, fileUrl, init);
     if (res.status >= 500) {
       discard(res);
       throw new MoodleUnavailable();
@@ -255,7 +352,7 @@ export class MoodleClient implements MoodleApi {
     // Moodle answers a bad token with HTTP 200 and a small JSON error object (often without Content-Length).
     if (init.method !== 'HEAD' && looksLikeSmallJson(res)) {
       const parsed = await peekJson(res);
-      if (isObj(parsed)) await this.checkEnvelope(parsed);
+      if (isObj(parsed)) this.checkEnvelope(parsed);
     }
     this.markOk();
     return res;
@@ -267,7 +364,17 @@ export class MoodleClient implements MoodleApi {
     const name = sanitizeFilename(file.name);
     if (!name) throw new InvalidInput('The file needs a name.');
     const mime = (file.mime ?? '').replace(/[\r\n;]+/g, '') || 'application/octet-stream';
-    const parts = multipartParts({ token: this.token, itemId, name, mime });
+    // a stream is spent by the first attempt: after a renewal the caller sends the file again
+    const replayable = file.body instanceof Uint8Array;
+    return this.withToken((token) => this.uploadWith(token, file, { itemId, name, mime }), replayable);
+  }
+
+  private async uploadWith(
+    token: string,
+    file: UploadFile,
+    meta: { itemId: number; name: string; mime: string },
+  ): Promise<DraftUploadResult> {
+    const parts = multipartParts({ token, ...meta });
     const { body, duplex } = await uploadBody(file, parts);
 
     const res = await this.send(
@@ -293,7 +400,7 @@ export class MoodleClient implements MoodleApi {
     const parsed = parseJson(await res.text());
     const rec = Array.isArray(parsed) ? parsed[0] : parsed;
     if (!isObj(rec)) throw new MoodleError('Unexpected response from the Moodle upload endpoint.', 'upload_failed');
-    await this.checkEnvelope(rec);
+    this.checkEnvelope(rec);
     const failure = uploadError(rec);
     if (failure) throw failure;
     const id = Number(rec.itemid);

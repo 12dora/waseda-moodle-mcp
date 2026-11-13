@@ -4,7 +4,7 @@ import type { Context } from 'hono';
 import type { UserRow } from '../../core/context';
 import { InvalidInput } from '../../core/errors';
 import type { Scope } from '../../core/types';
-import { type AppEnv, deferOn, loadSession, readSessionCookie, requireSession } from '../auth';
+import { type AppEnv, deferOn, isBackgroundRequest, loadSession, readSessionCookie, requireSession } from '../auth';
 import { buildServiceContext, consoleProps, tryExecutionContext } from '../context';
 import { type Env, isScope } from '../env';
 import { createD1Store, type D1Store } from '../store-d1';
@@ -67,7 +67,7 @@ export async function readJson(c: { req: { raw: Request } }): Promise<Record<str
 export async function optionalSessionUser(c: Context<AppEnv>): Promise<UserRow | null> {
   const cookie = readSessionCookie(c.req.raw);
   if (!cookie) return null;
-  return (await loadSession(storeOf(c.env), cookie, (p) => deferOn(c, p)))?.user ?? null;
+  return (await loadSession(storeOf(c.env), cookie, { defer: (p) => deferOn(c, p) }))?.user ?? null;
 }
 
 export function reqString(v: unknown, name: string, max: number): string {
@@ -115,7 +115,8 @@ export function cleanLabel(s: string, max = 80): string {
 
 /** Service context for console-originated calls (full authority of the signed-in user). */
 export function consoleContext(c: Context<AppEnv>, user: UserRow) {
-  return buildServiceContext(c.env, tryExecutionContext(c), consoleProps(user), { user });
+  const touchUser = !isBackgroundRequest(c.req.raw);
+  return buildServiceContext(c.env, tryExecutionContext(c), consoleProps(user), { user, touchUser });
 }
 
 /** Best-effort audit entry written after the response. */

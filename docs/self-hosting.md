@@ -61,7 +61,7 @@ Edit `wrangler.local.jsonc`:
 | `EXTENSION_URL` | var (optional) | unset | Install URL for the browser extension shown in the console. Unset hides the link. |
 | `CF_BEACON_TOKEN` | var (optional) | `""` | Cloudflare Web Analytics site token (32 hex characters). When set, the three public introduction pages (not the console) load the cookieless Web Analytics beacon; view the numbers in the Cloudflare dashboard. Empty or invalid: no beacon. |
 | `VITE_CONTACT_URL` | console build env (optional) | unset | `https://` or `mailto:` link shown as the contact on the privacy page. Read when the console is built (`web/.env.local` or the build environment), not by the Worker. Unset shows "Contact the operator of this instance." |
-| `MASTER_KEY` | secret | required | 32 random bytes, base64. Encrypts Moodle tokens and short-lived handoff/OAuth blobs, and keys the HMAC for file links. Changing it makes stored tokens unreadable (users must reconnect). |
+| `MASTER_KEY` | secret | required | 32 random bytes, base64. Encrypts Moodle tokens, Moodle session cookies and short-lived handoff/OAuth blobs, and keys the HMAC for file links. Changing it makes stored tokens unreadable (users must reconnect). |
 
 Set the secret:
 
@@ -102,10 +102,17 @@ equal this origin exactly, otherwise OAuth discovery and file links break. Check
 
 ## 7. Cron
 
-Schedule: `17 0-14,22-23 * * *` (UTC), i.e. hourly at :17 from 07:17 to 23:17 JST, with no runs
-overnight.
+Schedule: `17 0-14,16,19,22-23 * * *` (UTC), i.e. hourly at :17 from 07:17 to 23:17 JST, plus
+01:17 and 04:17 JST.
 
-Each run performs a course sweep: up to 20 users with an active credential (never-swept users
+Each run first keeps credentials alive: for up to 30 users, least recently visited first, it asks Moodle's mobile launch page for
+the current token with the user's Moodle web session (one call; a new token replaces the stored
+one once Moodle has issued it), or opens that session with the private token (three calls,
+retried after 6 hours at the earliest). Moodle ends an idle session after 4 hours, hence the two
+night runs, which do nothing else. The session cookie is stored encrypted with `MASTER_KEY` and
+sent only to `wsdmoodle.waseda.jp`.
+
+The daytime runs then perform a course sweep with the Moodle calls left: up to 20 users with an active credential (never-swept users
 first, then least recently swept), at most 2 course refreshes per user and at most 44 Moodle
 calls per invocation. It stores compact course snapshots used by `get_due_items` and
 `get_course_updates`. The 03:17 UTC run additionally purges expired data in D1 (see
@@ -125,7 +132,8 @@ are rejected.
 |---|---|---|
 | Worker requests | 100,000 / day | Static console assets are served without invoking the Worker; per-user MCP limit 120 calls / 60 s |
 | CPU per invocation | 10 ms | Moodle calls are I/O; responses are rendered as compact markdown |
-| Subrequests per invocation | 50 | Moodle client capped at 40 calls per request; cron at 44 |
+| Subrequests per invocation | 50 | Moodle client capped at 40 calls per request (token renewals included); cron at 44, shared by keepalive and sweep |
+| D1 queries per invocation | 50 | The cron meters its D1 queries (purge, keepalive, sweep) and stops at 45 |
 | D1 | 5M reads, 100k writes / day, 500 MB | Rate-limit counters skip writes when already over limit; snapshots and logs are purged on schedule |
 | KV | 100k reads, 1k writes / day | KV used only for OAuth; access tokens last 12 h to reduce refresh writes |
 | Cron triggers | 5 | One trigger used |

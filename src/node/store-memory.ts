@@ -4,44 +4,35 @@
  * restarts; credentials, sessions, API keys, uploads and the audit log stay in memory only.
  */
 
-import { readFileSync } from 'node:fs';
-import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import type {
   ActionRow,
   ApiKeyRow,
   AuditRow,
   CourseSnapshotRow,
+  CredentialExpect,
+  CredentialPatch,
   CredentialRow,
+  RenewalCandidate,
   SessionRow,
   Store,
   UploadDraftRow,
   UserRow,
 } from '../core/context';
-import { normalizeScheduleOverrides } from '../core/services/schedule-overrides';
 import {
+  ACTION_STATUS_FROM,
   type ActionStatus,
   DEFAULT_SETTINGS,
   type InferredSchedule,
   type UploadedDraftFile,
   type UserSettings,
 } from '../core/types';
+import { type PersistedState, restoredSettings, StateFile } from './state-file';
 
 const MAX_AUDIT_ROWS = 1000;
 /** Finished actions (executed, cancelled, expired, failed) are dropped from the state file after this long. */
 const FINISHED_ACTION_TTL_MS = 30 * 24 * 3600 * 1000;
 /** Inferred class times are dropped after this long without a check (the D1 store purges them the same way). */
 const INFERRED_TTL_MS = 30 * 24 * 3600 * 1000;
-
-interface PersistedState {
-  version: 1;
-  nextUserId: number;
-  users: UserRow[];
-  actions: ActionRow[];
-  /** Kept across restarts so a new session does not start cold: public syllabus rows and the user's inferred times. */
-  syllabus?: Record<string, { json: string; fetchedAt: number }>;
-  inferred?: Record<string, InferredSchedule>;
-}
 
 interface MemoryStoreOptions {
   /** JSON file for users (settings), actions and lookup caches; mode 0600. Omit for a purely in-memory store. */
@@ -75,45 +66,19 @@ export class MemoryStore implements Store {
   private auditRows: AuditRow[] = [];
   private nextUserId = 1;
   private nextAuditId = 1;
-  private readonly persistPath: string | undefined;
-  private readonly onPersistError: (error: unknown) => void;
-  private writeChain: Promise<void> = Promise.resolve();
+  private readonly file: StateFile | undefined;
 
   constructor(opts: MemoryStoreOptions = {}) {
-    this.persistPath = opts.persistPath;
-    this.onPersistError = opts.onPersistError ?? (() => undefined);
-    if (this.persistPath) this.load(this.persistPath);
+    if (opts.persistPath) {
+      this.file = new StateFile(opts.persistPath, opts.onPersistError ?? (() => undefined));
+      this.file.load((data) => this.restore(data));
+    }
   }
 
   // ------------------------------------------------------------------ persistence
 
-  private load(path: string): void {
-    let raw: string;
-    try {
-      raw = readFileSync(path, 'utf8');
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') this.onPersistError(e);
-      return;
-    }
-    try {
-      this.restore(JSON.parse(raw) as Partial<PersistedState>);
-    } catch (e) {
-      this.onPersistError(e);
-    }
-  }
-
   private restore(data: Partial<PersistedState>): void {
-    for (const u of data.users ?? []) {
-      const merged = { ...DEFAULT_SETTINGS, ...u.settings };
-      const settings: UserSettings = {
-        // drops retired fields; an old file reads no overrides as {} and a missing night / alsoOnDemand as false
-        writeMode: merged.writeMode,
-        myCourseIds: merged.myCourseIds ?? null,
-        uiLang: merged.uiLang,
-        scheduleOverrides: normalizeScheduleOverrides(merged.scheduleOverrides),
-      };
-      this.users.set(u.id, { ...u, settings });
-    }
+    for (const u of data.users ?? []) this.users.set(u.id, { ...u, settings: restoredSettings(u.settings) });
     for (const a of data.actions ?? []) this.actions.set(a.id, a);
     for (const [k, v] of Object.entries(data.syllabus ?? {})) this.syllabusCache.set(k, v);
     const inferredCutoff = Date.now() - INFERRED_TTL_MS; // like the D1 purge
@@ -129,37 +94,23 @@ export class MemoryStore implements Store {
     for (const [id, a] of this.actions) if (a.status !== 'pending' && a.createdAt < cutoff) this.actions.delete(id);
   }
 
-  /**
-   * Snapshot to disk (tmp file + rename). The file is owned by one process: when two servers share it, the last
-   * writer wins and the other one's changes are lost on its next write.
-   */
+  /** Snapshot to the state file (see StateFile). */
   private persist(): void {
-    const path = this.persistPath;
-    if (!path) return;
+    if (!this.file) return;
     this.pruneActions();
-    const state: PersistedState = {
+    this.file.write({
       version: 1,
       nextUserId: this.nextUserId,
       users: [...this.users.values()],
       actions: [...this.actions.values()],
       syllabus: Object.fromEntries(this.syllabusCache),
       inferred: Object.fromEntries(this.inferredSchedules),
-    };
-    const json = JSON.stringify(state, null, 2);
-    this.writeChain = this.writeChain
-      .then(async () => {
-        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-        const tmp = `${path}.${process.pid}.tmp`;
-        await writeFile(tmp, json, { mode: 0o600 });
-        await chmod(tmp, 0o600);
-        await rename(tmp, path);
-      })
-      .catch((e) => this.onPersistError(e));
+    });
   }
 
   /** Resolves when every queued write has reached the disk. */
   flush(): Promise<void> {
-    return this.writeChain;
+    return this.file?.flush() ?? Promise.resolve();
   }
 
   // ------------------------------------------------------------------ users
@@ -226,19 +177,55 @@ export class MemoryStore implements Store {
     return c ? clone(c) : null;
   }
 
+  /** Like the D1 store: the web-session fields of an existing row are kept. */
   async putCredential(row: CredentialRow): Promise<void> {
-    this.credentials.set(row.userId, clone(row));
+    const prev = this.credentials.get(row.userId);
+    this.credentials.set(row.userId, {
+      ...clone(row),
+      sessionEnc: prev?.sessionEnc ?? null,
+      sessionOkAt: prev?.sessionOkAt ?? null,
+      sessionTriedAt: prev?.sessionTriedAt ?? null,
+      renewedAt: prev?.renewedAt ?? null,
+      autologinAt: prev?.autologinAt ?? null,
+    });
   }
 
-  async updateCredentialStatus(
-    userId: number,
-    patch: { status?: 'active' | 'invalid'; lastOkAt?: number | null; lastError?: string | null },
-  ): Promise<void> {
+  async updateCredentialStatus(userId: number, patch: CredentialPatch): Promise<void> {
     const c = this.credentials.get(userId);
     if (!c) return;
-    if (patch.status !== undefined) c.status = patch.status;
-    if (patch.lastOkAt !== undefined) c.lastOkAt = patch.lastOkAt;
-    if (patch.lastError !== undefined) c.lastError = patch.lastError;
+    for (const [k, v] of Object.entries(patch)) if (v !== undefined) Object.assign(c, { [k]: v });
+  }
+
+  async updateCredentialIf(userId: number, expect: CredentialExpect, patch: CredentialPatch): Promise<boolean> {
+    const c = this.credentials.get(userId);
+    const matches =
+      c !== undefined &&
+      c.tokenHash === expect.tokenHash &&
+      (expect.sessionEnc === undefined || (c.sessionEnc ?? null) === expect.sessionEnc) &&
+      (expect.autologinAt === undefined || (c.autologinAt ?? null) === expect.autologinAt);
+    if (matches) await this.updateCredentialStatus(userId, patch);
+    return matches;
+  }
+
+  /** Same filter and order as the D1 store. */
+  async listRenewalCandidates(opts: Parameters<Store['listRenewalCandidates']>[0]): Promise<RenewalCandidate[]> {
+    const visited = (c: CredentialRow) => Math.max(c.sessionOkAt ?? 0, c.sessionTriedAt ?? 0);
+    const due = (c: CredentialRow) => {
+      if (c.sessionEnc) return visited(c) <= opts.sessionBefore;
+      const tried = c.autologinAt ?? null;
+      const retry = tried === null || tried <= opts.autologinBefore || tried < c.connectedAt;
+      return c.status === 'active' && c.privateTokenEnc !== null && retry;
+    };
+    const urgency = (c: CredentialRow) =>
+      c.sessionEnc ? visited(c) + opts.sessionIdleMs : (c.autologinAt ?? 0) + opts.autologinRetryMs;
+    return [...this.credentials.values()]
+      .filter(due)
+      .sort((a, b) => urgency(a) - urgency(b) || a.userId - b.userId)
+      .slice(0, Math.max(1, Math.floor(opts.limit)))
+      .flatMap((c) => {
+        const u = this.users.get(c.userId);
+        return u ? [{ user: clone(u), credential: clone(c) }] : [];
+      });
   }
 
   // ------------------------------------------------------------------ sessions
@@ -321,14 +308,15 @@ export class MemoryStore implements Store {
   async updateAction(
     id: string,
     patch: Partial<Pick<ActionRow, 'status' | 'executedAt' | 'result' | 'error'>>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const a = this.actions.get(id);
-    if (!a) return;
+    if (!a || (patch.status !== undefined && a.status !== ACTION_STATUS_FROM[patch.status])) return false;
     if (patch.status !== undefined) a.status = patch.status;
     if (patch.executedAt !== undefined) a.executedAt = patch.executedAt;
     if (patch.result !== undefined) a.result = patch.result;
     if (patch.error !== undefined) a.error = patch.error;
     this.persist();
+    return true;
   }
 
   async listActions(

@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sha256Hex } from '../../src/core/crypto';
 import { NeedsReconnect, NotFound } from '../../src/core/errors';
 import {
   buildServiceContext,
@@ -6,17 +7,20 @@ import {
   getRuntime,
   LAST_OK_INTERVAL_MS,
   makeMoodleFactory,
+  startRenewal,
 } from '../../src/worker/context';
 import type { Env } from '../../src/worker/env';
 import { resetUsageMemory } from '../../src/worker/store/usage';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
 import { createTestD1 } from '../helpers/d1-sqlite';
+import { fakeMoodleWeb } from '../helpers/fake-moodle-web';
 import { MemoryKV } from '../helpers/memory-kv';
 
 interface FakeClientOptions {
   token: string;
   moodleUserId: number;
-  onTokenInvalid: () => Promise<void>;
+  renewToken?: (fetch: typeof globalThis.fetch) => Promise<string | null>;
+  onTokenInvalid: (rejected: string) => Promise<void>;
   onSuccess: () => void;
   maxCalls?: number;
 }
@@ -51,7 +55,7 @@ async function storeCredential(over: { status?: 'active' | 'invalid'; lastOkAt?:
     userId,
     tokenEnc: await rt.key.encrypt('t'.repeat(32)),
     privateTokenEnc: null,
-    tokenHash: 'h',
+    tokenHash: await sha256Hex('t'.repeat(32)),
     tokenHint: 'tttt',
     status: over.status ?? 'active',
     connectedVia: 'paste',
@@ -117,14 +121,17 @@ describe('buildServiceContext', () => {
     expect(plain.usage).toBeUndefined();
 
     const ctx = await buildServiceContext(env, execCtx(), props, { recordUsage: true });
-    ctx.usage?.toolCall('list_courses', false);
+    ctx.usage?.toolCall({ tool: 'list_courses', ms: 1500, failure: 'moodle_unavailable' });
     await Promise.all(deferred);
     const rows = await env.DB.prepare("SELECT metric, dim, value FROM usage_counts WHERE metric != 'active'").all();
     expect(rows.results).toEqual(
       expect.arrayContaining([
         { metric: 'calls', dim: 'list_courses', value: 1 },
         { metric: 'errors', dim: 'list_courses', value: 1 },
+        { metric: 'failure', dim: 'list_courses|moodle_unavailable', value: 1 },
+        { metric: 'latency', dim: 'list_courses|1to3s', value: 1 },
         { metric: 'client_calls', dim: 'API key', value: 1 },
+        { metric: 'active_all', dim: '', value: 1 },
       ]),
     );
   });
@@ -192,9 +199,102 @@ describe('ctx.moodle()', () => {
   it('marks the credential invalid when Moodle rejects the token', async () => {
     await storeCredential();
     await (await build()).moodle();
-    await firstClient().onTokenInvalid();
+    await firstClient().onTokenInvalid('t'.repeat(32));
     expect(await store.getCredential(userId)).toMatchObject({ status: 'invalid' });
     expect((await store.getCredential(userId))?.lastError).toBeTruthy();
+  });
+
+  it('does not invalidate a credential that holds another token by now (stale rejection)', async () => {
+    await storeCredential();
+    await (await build()).moodle();
+    await firstClient().onTokenInvalid('e'.repeat(32)); // not the stored token
+    expect(await store.getCredential(userId)).toMatchObject({ status: 'active', lastError: null });
+  });
+
+  describe('with a Moodle web session', () => {
+    const NEW = 'c'.repeat(32);
+    const counters = async () =>
+      (
+        await env.DB.prepare(
+          "SELECT metric, dim, value FROM usage_counts WHERE metric != 'signups' ORDER BY metric, dim",
+        ).all()
+      ).results;
+    const LIVE = 'MoodleSession=ctx01';
+    afterEach(() => vi.unstubAllGlobals());
+
+    async function withSession(status: 'active' | 'invalid') {
+      await storeCredential({ status });
+      const rt = await getRuntime(env);
+      await store.updateCredentialStatus(userId, { sessionEnc: await rt.key.encrypt(LIVE), sessionOkAt: 1 });
+      const web = fakeMoodleWeb({ token: NEW, live: new Set([LIVE]) });
+      vi.stubGlobal('fetch', vi.fn(web.fetch));
+      return web;
+    }
+
+    it('lets the client renew a rejected token from the session (launch.php only, never an autologin)', async () => {
+      const web = await withSession('active');
+      await (await build()).moodle();
+      const charged = vi.fn(web.fetch); // the client's own budgeted fetch
+      expect(await firstClient().renewToken?.(charged)).toBe(NEW);
+      expect(charged).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(web.requests.map((r) => r.path)).toEqual(['/admin/tool/mobile/launch.php']);
+      const cred = await store.getCredential(userId);
+      expect(cred).toMatchObject({ status: 'active', tokenHint: NEW.slice(-4) });
+      expect(cred?.renewedAt).not.toBeNull();
+      // credential health only: an on-demand renewal is no activity of its own
+      await Promise.all(deferred);
+      expect(await counters()).toEqual([{ metric: 'renew_renewed', dim: '', value: 1 }]);
+    });
+
+    it('still builds a client for an invalid credential with a session: its first rejection renews it', async () => {
+      const web = await withSession('invalid');
+      await (await build()).moodle();
+      expect(firstClient().token).toBe('t'.repeat(32));
+      expect(await firstClient().renewToken?.(web.fetch)).toBe(NEW);
+      expect(await store.getCredential(userId)).toMatchObject({ status: 'active', lastError: null });
+    });
+
+    it('gives nothing when the session has ended, and forgets it', async () => {
+      const web = await withSession('invalid');
+      web.state.live.clear();
+      await (await build()).moodle();
+      expect(await firstClient().renewToken?.(web.fetch)).toBeNull();
+      expect((await store.getCredential(userId))?.sessionEnc).toBeNull();
+      created.length = 0;
+      await expect((await build()).moodle()).rejects.toBeInstanceOf(NeedsReconnect);
+      expect(created).toHaveLength(0);
+    });
+
+    it('opens the session right after a connect that stored a private token, and only then', async () => {
+      await storeCredential();
+      const rt = await getRuntime(env);
+      const user = (await store.getUser(userId))!;
+      const web = fakeMoodleWeb({ token: NEW });
+      vi.stubGlobal('fetch', vi.fn(web.fetch));
+      await startRenewal(rt, user, await store.getCredential(userId));
+      expect(web.requests).toHaveLength(0); // no private token
+      const prev = (await store.getCredential(userId))!;
+      await store.putCredential({ ...prev, privateTokenEnc: await rt.key.encrypt('Priv4te1') });
+      await startRenewal(rt, user, await store.getCredential(userId));
+      expect(web.requests.map((r) => r.path)).toEqual([
+        '/webservice/rest/server.php',
+        '/admin/tool/mobile/autologin.php',
+        '/admin/tool/mobile/launch.php',
+      ]);
+      const cred = await store.getCredential(userId);
+      expect(cred?.sessionEnc).not.toBeNull();
+      await startRenewal(rt, user, cred);
+      expect(web.requests).toHaveLength(3); // a session exists already
+      expect((await store.getUser(userId))?.lastSeenAt).toBe(user.lastSeenAt);
+      expect(await counters()).toEqual([{ metric: 'renew_renewed', dim: '', value: 1 }]); // one renewal, no activity
+    });
+
+    it('gives no renewal hook without a session', async () => {
+      await storeCredential();
+      await (await build()).moodle();
+      expect(firstClient().renewToken).toBeUndefined();
+    });
   });
 
   it('refreshes lastOkAt lazily, at most every 10 minutes', async () => {

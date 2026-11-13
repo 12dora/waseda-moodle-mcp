@@ -7,9 +7,13 @@ import { type LaunchToken, MOODLE_URL, parseLaunch } from '../moodle/launch';
 import { isoJst, nowMs } from '../time';
 import { type ConnectVia, type CredentialInfo, DEFAULT_SETTINGS, type UserInfo } from '../types';
 
-export interface ConnectDeps {
+/** What writing a credential needs (connect, extension refresh, automatic renewal). */
+export interface CredentialDeps {
   store: Store;
   key: MasterKey;
+}
+
+export interface ConnectDeps extends CredentialDeps {
   /** Client for a not-yet-stored token; moodleUserId 0 means "not known yet". */
   makeClient(token: string, moodleUserId: number): MoodleApi;
   allowRegistration(moodleUserId: number): boolean;
@@ -59,60 +63,50 @@ async function identify(deps: ConnectDeps, launch: string, passport?: string) {
   return { parsed, moodleUserId: userid, fullname, lang };
 }
 
-/** Keeps the old private token when the same token is re-sent without one. */
-async function privateTokenFor(
-  deps: ConnectDeps,
-  privateToken: string | null,
+type TokenColumns = Pick<CredentialRow, 'tokenEnc' | 'privateTokenEnc' | 'tokenHash' | 'tokenHint'>;
+
+/**
+ * The token columns for `launch` over the stored row. `columns` is the whole set (a new row); `patch` changes only
+ * what `launch` changes: a new token with its private token or none, or for the same token only a private token that
+ * arrived, so a concurrent writer's private token is never overwritten with a stale value.
+ */
+export async function tokenColumns(
+  key: MasterKey,
+  launch: LaunchToken,
   previous: CredentialRow | null,
-  tokenChanged: boolean,
-): Promise<string | null> {
-  if (privateToken) return deps.key.encrypt(privateToken);
-  return tokenChanged ? null : (previous?.privateTokenEnc ?? null);
+): Promise<{ tokenChanged: boolean; columns: TokenColumns; patch: Partial<TokenColumns> }> {
+  const tokenHash = await sha256Hex(launch.token);
+  const tokenChanged = !previous || previous.tokenHash !== tokenHash;
+  const arrived = launch.privateToken ? await key.encrypt(launch.privateToken) : null;
+  const columns: TokenColumns = {
+    tokenEnc: await key.encrypt(launch.token),
+    privateTokenEnc: arrived ?? (tokenChanged ? null : (previous?.privateTokenEnc ?? null)),
+    tokenHash,
+    tokenHint: launch.token.slice(-4),
+  };
+  if (tokenChanged) return { tokenChanged, columns, patch: columns };
+  return { tokenChanged, columns, patch: arrived ? { privateTokenEnc: arrived } : {} };
 }
 
-/** Silent refresh with the same token: confirm it still works and keep a private token that newly arrived. */
-async function confirmSameToken(
-  deps: ConnectDeps,
-  previous: CredentialRow,
-  privateToken: string | null,
-): Promise<false> {
-  const confirmed = { status: 'active' as const, lastOkAt: nowMs(), lastError: null };
-  if (privateToken) {
-    await deps.store.putCredential({
-      ...previous,
-      ...confirmed,
-      privateTokenEnc: await deps.key.encrypt(privateToken),
-    });
-  } else {
-    await deps.store.updateCredentialStatus(previous.userId, confirmed);
-  }
-  return false;
-}
-
-/** Writes the credential. Returns whether the stored token differs from the previous one. */
+/**
+ * Writes the credential. Returns whether the stored token differs from the previous one. `silent` (extension
+ * refresh): the same token only confirms the credential (and stores a private token that arrived).
+ */
 async function storeCredential(
-  deps: ConnectDeps,
+  deps: CredentialDeps,
   userId: number,
   launch: LaunchToken,
   opts: { via: ConnectVia; silent: boolean },
 ): Promise<boolean> {
   const now = nowMs();
-  const { token } = launch;
-  const [tokenHash, previous] = await Promise.all([sha256Hex(token), deps.store.getCredential(userId)]);
-  const tokenChanged = !previous || previous.tokenHash !== tokenHash;
-  if (previous && !tokenChanged && opts.silent) return confirmSameToken(deps, previous, launch.privateToken);
-  await deps.store.putCredential({
-    userId,
-    tokenEnc: await deps.key.encrypt(token),
-    privateTokenEnc: await privateTokenFor(deps, launch.privateToken, previous, tokenChanged),
-    tokenHash,
-    tokenHint: token.slice(-4),
-    status: 'active',
-    connectedVia: opts.via,
-    connectedAt: now,
-    lastOkAt: now,
-    lastError: null,
-  });
+  const previous = await deps.store.getCredential(userId);
+  const { tokenChanged, columns, patch } = await tokenColumns(deps.key, launch, previous);
+  const confirmed = { status: 'active' as const, lastOkAt: now, lastError: null };
+  if (previous && !tokenChanged && opts.silent) {
+    await deps.store.updateCredentialStatus(userId, { ...confirmed, ...patch });
+    return false;
+  }
+  await deps.store.putCredential({ userId, ...columns, ...confirmed, connectedVia: opts.via, connectedAt: now });
   return tokenChanged;
 }
 
@@ -177,6 +171,10 @@ export function toUserInfo(row: UserRow): UserInfo {
   };
 }
 
+/** A web session renews the token; without one, an active credential with a private token can open it. */
+const canRenew = (row: CredentialRow): boolean =>
+  Boolean(row.sessionEnc) || (row.status === 'active' && row.privateTokenEnc !== null);
+
 export function toCredentialInfo(row: CredentialRow): CredentialInfo {
   return {
     status: row.status,
@@ -185,5 +183,7 @@ export function toCredentialInfo(row: CredentialRow): CredentialInfo {
     lastOkAt: row.lastOkAt === null ? null : isoJst(row.lastOkAt),
     lastError: row.lastError,
     tokenHint: row.tokenHint,
+    autoRenew: canRenew(row),
+    renewedAt: row.renewedAt ? isoJst(row.renewedAt) : null,
   };
 }
