@@ -60,7 +60,7 @@
 
 ## 工作原理
 
-服务器使用与官方 Moodle 移动应用相同的令牌访问 Moodle 的 Web 服务。该令牌通过 Moodle 移动应用的启动流程获取（需要你已在浏览器中登录 Moodle）；服务器从不索要、也不会看到你的密码。
+服务器使用与官方 Moodle 移动应用相同的令牌访问 Moodle 的 Web 服务。该令牌通过 Moodle 移动应用的启动流程获取（需要你已在浏览器中登录 Moodle）；服务器从不索要、也不会看到你的密码。早稲田 Moodle 的令牌有效期约一周，托管版会自动续期（见「安全与隐私」）。
 
 ```
 AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- REST -->  Moodle web services
@@ -175,7 +175,7 @@ stdio 模式以明文保存令牌（文件权限 0600），不支持在控制台
 | `list_courses` | 已选课程（`scope`：`mine` 或 `all`） | read |
 | `get_course` | 单门课程的章节和活动 | read |
 | `search_course_content` | 搜索活动、章节和文件名 | read |
-| `get_activity` | 单个活动的完整详情 | read |
+| `get_activity` | 单个活动的完整详情（含问卷题目与自己的作答、出勤汇总） | read |
 | `get_grades` | 课程成绩 | read |
 | `set_my_courses` | 保存课程选择（本学期课程；服务器端筛选，不修改 Moodle） | read scope |
 | `get_course_updates` | 老师最近的修改 | read |
@@ -184,7 +184,7 @@ stdio 模式以明文保存令牌（文件权限 0600），不支持在控制台
 | `get_syllabus` | 公开教学大纲：课程计划、评分比例、教材 | read |
 | `get_quiz_review` | 回顾已完成的测验（题目、得分、正确答案） | read |
 | `get_file` | 获取 Moodle 文件（签名 URL、临时文件，或内联返回，最大 1 MiB） | read |
-| `list_discussions` | 论坛主题（默认：公告） | read |
+| `list_discussions` | 所修课程的论坛主题（含论坛 ID、能否发帖与分页） | read |
 | `get_discussion` | 单个讨论的帖子 | read |
 | `list_messages` | Moodle 会话 | read |
 | `get_conversation` | 单个会话的消息 | read |
@@ -193,11 +193,13 @@ stdio 模式以明文保存令牌（文件权限 0600），不支持在控制台
 | `search_people` | 查找在你的课程论坛或会话中出现过的老师和同学 | read |
 | `create_upload_link` | 大文件的短时上传 URL（仅托管版） | write |
 | `prepare_submission` | 预览作业提交 | write |
-| `prepare_forum_post` | 预览论坛发帖或回复 | write |
+| `prepare_forum_post` | 预览论坛新话题或回复（可带附件） | write |
+| `prepare_forum_post_change` | 预览编辑或删除自己的论坛帖子 | write |
+| `prepare_questionnaire` | 预览问卷作答（提交或存为草稿） | write |
 | `prepare_message` | 预览 Moodle 消息 | write |
 | `prepare_completion` | 预览将活动标记为完成 / 未完成 | write |
 | `prepare_forum_subscription` | 预览订阅 / 取消订阅论坛 | write |
-| `prepare_mark_read` | 预览将通知或会话标记为已读 | write |
+| `prepare_mark_read` | 预览将通知、会话或论坛话题标记为已读 | write |
 | `confirm_action` | 执行已准备的操作 | write |
 | `cancel_action` | 放弃已准备的操作 | write |
 
@@ -206,6 +208,7 @@ stdio 模式以明文保存令牌（文件权限 0600），不支持在控制台
 ## 安全与隐私
 
 - 从不索要 Moodle 密码。Moodle 令牌加密存储（AES-256-GCM，使用运营者的 `MASTER_KEY`）。
+- 自动续期：托管版加密保存一个 Moodle 网页会话（只发送给 Moodle），令牌到期时自动取得新令牌，无需每周重新连接。
 - 文件内容以流式传输，不做存储。下载和上传链接使用 HMAC 签名，分别在 15 分钟和 30 分钟后失效。
 - API 密钥以哈希形式存储。OAuth 访问令牌有效期 12 小时，刷新令牌 90 天。
 - 在 **设置 → 账号** 中删除账号，会清除你在服务器上的全部数据。
@@ -239,4 +242,4 @@ stdio 模式以明文保存令牌（文件权限 0600），不支持在控制台
 ## 免责声明
 
 本项目为非官方项目，与早稻田大学无关，也未获得其认可。
-所使用的 Moodle 令牌与官方 Moodle 移动应用使用的令牌相同（每位用户一个）。服务器从不吊销或重置该令牌；如果 Moodle 拒绝该令牌，服务器只会提示你重新连接。
+所使用的 Moodle 令牌与官方 Moodle 移动应用使用的令牌相同（每位用户一个）。服务器从不吊销或重置该令牌；令牌到期时托管版会自动取得新令牌，无法取得时才提示你重新连接。

@@ -66,7 +66,8 @@ stdio プロセスとしても動作します。非公式ツールであり、�
 
 サーバーは、公式 Moodle モバイルアプリと同じトークンを使って Moodle の Web サービスと通信します。
 このトークンは、ブラウザで Moodle にサインインした状態で Moodle のモバイルアプリ起動フローから
-取得します。パスワードを求めたり、見たりすることはありません。
+取得します。パスワードを求めたり、見たりすることはありません。早稲田の Moodle ではトークンの有効期間が
+約 1 週間のため、ホスト版は自動で更新し続けます（「セキュリティとプライバシー」参照）。
 
 ```
 AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- REST -->  Moodle web services
@@ -192,7 +193,7 @@ stdio はトークンを平文で保存し（ファイルモード 0600）、コ
 | `list_courses` | 履修中のコース（`scope`：`mine` または `all`） | read |
 | `get_course` | 1 コースのセクションと活動 | read |
 | `search_course_content` | 活動・セクション・ファイル名を検索 | read |
-| `get_activity` | 1 活動の詳細 | read |
+| `get_activity` | 1 活動の詳細（アンケートの設問と自分の回答、出席の集計を含む） | read |
 | `get_grades` | コースの成績 | read |
 | `set_my_courses` | コース選択（今学期のコース）を保存。サーバー側のフィルタで、Moodle は変更しない | read スコープ |
 | `get_course_updates` | 先生による最近の変更 | read |
@@ -201,7 +202,7 @@ stdio はトークンを平文で保存し（ファイルモード 0600）、コ
 | `get_syllabus` | 公開シラバス：授業計画、成績評価の配分、教科書 | read |
 | `get_quiz_review` | 終了した小テストの受験を確認（問題、得点、正答） | read |
 | `get_file` | Moodle のファイルを取得（署名付き URL、一時ファイル、または 1 MiB までインライン） | read |
-| `list_discussions` | フォーラムのスレッド（既定：お知らせ） | read |
+| `list_discussions` | 履修コースのフォーラムのスレッド（フォーラム ID・投稿可否・ページ送り付き） | read |
 | `get_discussion` | 1 ディスカッションの投稿 | read |
 | `list_messages` | Moodle の会話 | read |
 | `get_conversation` | 1 会話のメッセージ | read |
@@ -210,11 +211,13 @@ stdio はトークンを平文で保存し（ファイルモード 0600）、コ
 | `search_people` | コースのフォーラムや会話に登場した先生・クラスメートを検索 | read |
 | `create_upload_link` | 大きなファイル用の短時間有効なアップロード URL（ホスト型のみ） | write |
 | `prepare_submission` | 課題提出のプレビュー | write |
-| `prepare_forum_post` | フォーラム投稿・返信のプレビュー | write |
+| `prepare_forum_post` | フォーラムの新規スレッド・返信（添付ファイル可）のプレビュー | write |
+| `prepare_forum_post_change` | 自分のフォーラム投稿の編集・削除のプレビュー | write |
+| `prepare_questionnaire` | アンケート回答のプレビュー（提出または下書き保存） | write |
 | `prepare_message` | Moodle メッセージのプレビュー | write |
 | `prepare_completion` | 活動の完了 / 未完了マークのプレビュー | write |
 | `prepare_forum_subscription` | フォーラム購読 / 購読解除のプレビュー | write |
-| `prepare_mark_read` | 通知または会話を既読にする操作のプレビュー | write |
+| `prepare_mark_read` | 通知・会話・フォーラムのスレッドを既読にする操作のプレビュー | write |
 | `confirm_action` | 準備した操作を実行 | write |
 | `cancel_action` | 準備した操作を破棄 | write |
 
@@ -225,6 +228,7 @@ JST で表示されます。サーバーが小テストを受験することは�
 ## セキュリティとプライバシー
 
 - Moodle のパスワードを求めることは一切ありません。Moodle トークンは保存時に暗号化されます（運営者の `MASTER_KEY` による AES-256-GCM）。
+- 自動更新：ホスト版は Moodle の Web セッションを暗号化して保持し（送信先は Moodle のみ）、トークンの期限が切れると新しいトークンを自動で取得します。毎週の再接続は不要です。
 - ファイルの内容はストリーミングされ、保存されません。ダウンロード・アップロードのリンクは HMAC 署名付きで、それぞれ 15 分・30 分で期限切れになります。
 - API キーはハッシュとして保存されます。OAuth アクセストークンの有効期間は 12 時間、リフレッシュトークンは 90 日です。
 - **設定 → アカウント** でアカウントを削除すると、サーバー上のあなたのデータはすべて削除されます。
@@ -261,5 +265,5 @@ JST で表示されます。サーバーが小テストを受験することは�
 
 本プロジェクトは非公式ツールであり、早稲田大学とは関係がなく、早稲田大学の承認も受けていません。
 使用する Moodle トークンは公式 Moodle モバイルアプリが使うものと同じです（ユーザーごとに 1 つ）。
-このサーバーがトークンを失効・リセットすることはありません。Moodle に拒否された場合は、
-再接続を求めるだけです。
+このサーバーがトークンを失効・リセットすることはありません。期限切れの際はホスト版が新しいトークンを
+自動で取得し、それができない場合にのみ再接続を求めます。

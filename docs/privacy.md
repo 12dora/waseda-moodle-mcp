@@ -11,7 +11,7 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 ## Summary
 
 - We never ask for or see your Moodle password.
-- Your Moodle token is stored encrypted and is used only to act on Moodle at your request (and for a background sweep of assignments and deadlines).
+- Your Moodle token is stored encrypted and is used only to act on Moodle at your request (and for a background sweep of assignments and deadlines). When Moodle gives a private token, the service also keeps a Moodle sign-in session so the weekly-expiring token is renewed automatically.
 - File contents are passed through, never stored.
 - Your data is not sold, shared, used for advertising, or used to train AI models.
 - You can delete everything from the console at any time.
@@ -21,6 +21,7 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 | Data | Why | Notes |
 |---|---|---|
 | Moodle web-service token (and the optional private token) | To call Moodle on your behalf | Encrypted with AES-256-GCM using the instance's `MASTER_KEY`. A hash and the last 4 characters are kept to recognise the token and display it as `••••abcd`. |
+| Moodle sign-in session (only when a private token was received) | To renew the token automatically when Moodle replaces it, so you do not reconnect every week | The session cookie, encrypted like the token, opened once with the private token and refreshed by the service about hourly; sent only to Moodle. Also kept: when the session was last confirmed and when the token was last renewed. Removed when Moodle ends the session or you delete your account. |
 | Moodle user id, full name, language | To identify your account | Read from Moodle when you connect. |
 | Settings | Write mode, the courses you confirmed for this term, class times you set, console language | |
 | Console sessions | To keep you signed in | Only a hash of the session cookie, plus a short user-agent snippet. |
@@ -34,14 +35,14 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 | Class times from Moodle | Timetable | Weekly class times derived from the attendance sessions of your courses in Moodle, when the syllabus gives none. Kept per user and refreshed weekly. |
 | Calendar subscription | Calendar apps (only if you turn it on) | A hash of your private calendar link (the link itself is not stored), the time of the last fetch, and the generated calendar (assignments & deadlines and classes) for up to 30 minutes. |
 | Rate-limit counters | Abuse protection | Keyed by IP address, user or token hash; short-lived. |
-| Usage statistics | To see how the service is used | Counts per day (tool calls and failures per tool, calls per AI client type) and the number of active users per day, week and month (plus per AI client type per month). The counts carry no user identifiers and are not linked to any account, so they remain after account deletion. Active users are de-duplicated with keys that are deleted at the first daily cleanup after the day, week or month ends. Visible to the operator only. |
+| Usage statistics | To see how the service is used | Aggregate counts per day only: tool calls per tool with their failure class and response-time bucket, calls per AI client type and per hour of day, console page use, calendar feed fetches, Moodle token renewal outcomes and connection methods, and write actions per type by outcome. Also the number of active users per day, week and month, overall and by channel (AI clients, console), and how many users who signed up in a given week are still active 1, 2 and 4 weeks later (signup weeks are grouped so that each group has at least 3 users; smaller groups are not shown). The counts carry no user identifiers and are not linked to any account, so they remain after account deletion. Active users are de-duplicated within the same day, week or month using salted keys that are deleted at the first daily cleanup after that period ends. Visible to the operator only. |
 | Landing page visits | To see how many people visit the introduction pages | Cloudflare Web Analytics on the public introduction pages (no cookies, no cross-site tracking), aggregated by Cloudflare. |
 
 ## What is never collected
 
 - Your Moodle password. Sign-in happens on Moodle; the service receives only the mobile-app token.
 - File contents. Downloads and uploads are streamed between Moodle and your client. When a client asks for a small file inline (up to 1 MiB), it is included in that one response only.
-- Moodle tokens in logs. Server logs contain only error names, not request bodies or tokens.
+- Moodle tokens or session cookies in logs. Server logs contain only error names, not request bodies, tokens or cookies.
 
 ## How long data is kept
 
@@ -78,7 +79,7 @@ In the console:
 
 - **Settings → Authorized apps**: revoke an MCP client's OAuth access.
 - **Settings → API keys**: revoke a key.
-- **Settings → Account**: delete account — revokes all OAuth grants and permanently deletes your user record, encrypted token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
+- **Settings → Account**: delete account — revokes all OAuth grants and permanently deletes your user record, encrypted token and Moodle sign-in session, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
 
 The service never revokes or resets your Moodle token, because it is the same token the
 official Moodle mobile app uses; revoking it would sign your phone out. If you also want to

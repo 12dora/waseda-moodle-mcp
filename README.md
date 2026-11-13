@@ -66,7 +66,8 @@ stdio process. Unofficial; not affiliated with Waseda University.
 
 The server talks to Moodle's web services using the same token the official Moodle mobile app
 uses. That token is obtained from Moodle's mobile-app launch flow while you are signed in to
-Moodle in your browser; your password is never requested or seen.
+Moodle in your browser; your password is never requested or seen. On Waseda Moodle the token
+lasts about a week; the hosted server keeps it renewed automatically (see Security and privacy).
 
 ```
 AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- REST -->  Moodle web services
@@ -192,7 +193,7 @@ of writes or `create_upload_link`.
 | `list_courses` | Enrolled courses (`scope`: `mine` or `all`) | read |
 | `get_course` | Sections and activities of one course | read |
 | `search_course_content` | Search activity, section and file names | read |
-| `get_activity` | Full details of one activity | read |
+| `get_activity` | Full details of one activity; questionnaire questions and your answers, attendance summary | read |
 | `get_grades` | Grades for a course | read |
 | `set_my_courses` | Save the course selection (This term's courses; server-side filter; does not change Moodle) | read scope |
 | `get_course_updates` | Recent teacher changes | read |
@@ -201,20 +202,22 @@ of writes or `create_upload_link`.
 | `get_syllabus` | Public syllabus: plan, grading weights, textbooks | read |
 | `get_quiz_review` | Review a finished quiz attempt (questions, marks, right answers) | read |
 | `get_file` | Fetch a Moodle file (signed URL, temp file, or inline up to 1 MiB) | read |
-| `list_discussions` | Forum threads (default: announcements) | read |
+| `list_discussions` | Forum threads of your courses, with forum ids, posting permission and paging | read |
 | `get_discussion` | Posts of one discussion | read |
 | `list_messages` | Moodle conversations | read |
 | `get_conversation` | Messages of one conversation | read |
 | `list_notifications` | Notifications and unread count | read |
 | `search_forums` | Keyword search over forum discussions (optionally messages) | read |
 | `search_people` | Find teachers and classmates seen in your course forums or conversations | read |
-| `create_upload_link` | Short-lived upload URL for large files (hosted only) | write |
+| `create_upload_link` | Short-lived upload URL for large files: submissions and forum attachments (hosted only) | write |
 | `prepare_submission` | Preview an assignment submission | write |
-| `prepare_forum_post` | Preview a forum post or reply | write |
+| `prepare_forum_post` | Preview a new discussion or reply, with attachments | write |
+| `prepare_forum_post_change` | Preview editing or deleting your own forum post | write |
+| `prepare_questionnaire` | Preview answers to a questionnaire (submit or save as draft) | write |
 | `prepare_message` | Preview a Moodle message | write |
 | `prepare_completion` | Preview marking an activity done / not done | write |
 | `prepare_forum_subscription` | Preview subscribing to / unsubscribing from a forum | write |
-| `prepare_mark_read` | Preview marking notifications or a conversation as read | write |
+| `prepare_mark_read` | Preview marking notifications, a conversation or a forum discussion as read | write |
 | `confirm_action` | Execute a prepared action | write |
 | `cancel_action` | Discard a prepared action | write |
 
@@ -225,6 +228,7 @@ are shown in JST. The server never takes quizzes.
 ## Security and privacy
 
 - No Moodle password is ever requested. The Moodle token is encrypted at rest (AES-256-GCM with the operator's `MASTER_KEY`).
+- Automatic renewal: the hosted server keeps a Moodle web session (stored encrypted, sent only to Moodle) and uses it to pick up a new token when the old one expires, so you do not have to reconnect every week.
 - File contents are streamed, not stored. Download and upload links are HMAC-signed and expire in 15 and 30 minutes.
 - API keys are stored as hashes. OAuth access tokens last 12 hours, refresh tokens 90 days.
 - Deleting your account under **Settings → Account** removes all of your data on the server.
@@ -261,5 +265,5 @@ Layout: `src/core` (runtime-agnostic services, Moodle client, MCP tools), `src/w
 
 This is an unofficial project and is not affiliated with or endorsed by Waseda University.
 The Moodle token it uses is the same token the official Moodle mobile app uses (one per
-user). This server never revokes or resets it; if Moodle rejects it, the server simply asks
-you to reconnect.
+user). This server never revokes or resets it; when it expires the hosted server picks up the new
+one automatically, and asks you to reconnect only if that is not possible.
