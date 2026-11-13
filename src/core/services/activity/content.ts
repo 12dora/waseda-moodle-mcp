@@ -3,6 +3,7 @@
 import type { MoodleApi } from '../../context';
 import { NotFound } from '../../errors';
 import { decodeEntities, htmlToMarkdown } from '../../html';
+import type { RawDate } from '../../moodle/raw-course';
 import type { ContentDetail, FileRef } from '../../types';
 import { type ActivityInfo, type CourseModuleInfo, mapFile, mapFiles, pickLang, type RawFile } from '../shared';
 
@@ -19,6 +20,7 @@ export interface RawModule {
   name?: string | null;
   modname?: string | null;
   description?: string | null;
+  dates?: RawDate[] | null;
   contents?: RawModuleContent[] | null;
 }
 
@@ -139,15 +141,20 @@ async function fromTypedModule(api: MoodleApi, cm: CourseModuleInfo, info: Conte
   return null;
 }
 
-export async function loadContent(api: MoodleApi, cm: CourseModuleInfo, info: ContentInfo): Promise<ContentDetail> {
-  const typed = await fromTypedModule(api, cm, info);
-  if (typed) return typed;
-  // label, book, resource, folder and everything else (also the fallback when a page/url row is missing)
+/** The module's row of `core_course_get_contents` (name, description, dates, files). */
+export async function fetchModuleRow(api: MoodleApi, cm: CourseModuleInfo): Promise<RawModule> {
   const sections = await api.call<Array<{ modules?: RawModule[] | null }>>('core_course_get_contents', {
     courseid: cm.courseId,
     options: [{ name: 'cmid', value: cm.cmid }],
   });
   const mod = (Array.isArray(sections) ? sections : []).flatMap((s) => s.modules ?? []).find((m) => m.id === cm.cmid);
   if (!mod) throw new NotFound(`Activity ${cm.cmid} was not found or is not visible.`);
-  return mapModuleContent(mod, cm, info);
+  return mod;
+}
+
+export async function loadContent(api: MoodleApi, cm: CourseModuleInfo, info: ContentInfo): Promise<ContentDetail> {
+  const typed = await fromTypedModule(api, cm, info);
+  if (typed) return typed;
+  // label, book, resource, folder and everything else (also the fallback when a page/url row is missing)
+  return mapModuleContent(await fetchModuleRow(api, cm), cm, info);
 }

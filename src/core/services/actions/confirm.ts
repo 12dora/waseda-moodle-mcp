@@ -6,8 +6,10 @@ import { isoJst, nowMs } from '../../time';
 import type { ActionKind, ActionRecord, ActionResult, ActionStatus } from '../../types';
 import { executeCompletion } from './completion';
 import { executeForumDiscussion, executeForumReply } from './forum';
+import { executeForumPostDelete, executeForumPostEdit } from './forum-edit';
 import { executeForumSubscription } from './forum-subscription';
 import { executeMessage } from './message';
+import { executeQuestionnaire } from './questionnaire';
 import { executeMarkRead } from './read-state';
 import { type ActionOutcome, approveUrlFor, auditSafe, canApproveInConsole, type Raw } from './shared';
 import { executeSubmission } from './submission';
@@ -25,6 +27,9 @@ const EXECUTORS: Record<ActionKind, (api: MoodleApi, payload: Raw) => Promise<Ac
   completion: executeCompletion,
   mark_read: executeMarkRead,
   forum_subscription: executeForumSubscription,
+  forum_post_edit: executeForumPostEdit,
+  forum_post_delete: executeForumPostDelete,
+  questionnaire_submit: executeQuestionnaire,
 };
 
 /** Pending rows past their expiry read as expired even before anyone touches them. */
@@ -55,7 +60,10 @@ function resultOf(row: ActionRow): ActionResult {
   return { actionId: row.id, status: row.status, ...decodeResult(row.result) };
 }
 
-/** Best effort: the Moodle write already happened, so a failing bookkeeping update must not hide the result. */
+/**
+ * Best effort: the Moodle write already happened, so a failing bookkeeping update must not hide the result. Only a
+ * throw is retried; a lost transition (a stale-run sweep settled the row meanwhile) leaves the row as it is.
+ */
 async function recordOutcome(ctx: ServiceContext, id: string, patch: Parameters<Store['updateAction']>[1]) {
   try {
     await ctx.store.updateAction(id, patch);
@@ -83,8 +91,8 @@ async function settledResult(ctx: ServiceContext, row: ActionRow, via: Via): Pro
   if (row.status === 'cancelled') throw new InvalidInput('This action was cancelled.');
   if (row.status === 'executing') return settleExecuting(ctx, row, via);
   if (effectiveStatus(row) === 'expired') {
-    if (row.status === 'pending') {
-      await ctx.store.updateAction(row.id, { status: 'expired' });
+    // only the request that moves it records the expiry; a lost race means a purge or a list already did
+    if (row.status === 'pending' && (await ctx.store.updateAction(row.id, { status: 'expired' }))) {
       await auditSafe(ctx, 'action:expire', { id: row.id, kind: row.kind }, via);
     }
     throw new InvalidInput('This action has expired. Prepare it again.');
@@ -143,7 +151,8 @@ export async function cancelAction(ctx: ServiceContext, actionId: string, via: V
   if (row.status === 'executing') throw new InvalidInput(ALREADY_RUNNING);
   const status = effectiveStatus(row);
   if (status === 'pending') {
-    await ctx.store.updateAction(row.id, { status: 'cancelled' });
+    // a confirm (or an expiry) that moved it after our read wins: answer from the row as it is now
+    if (!(await ctx.store.updateAction(row.id, { status: 'cancelled' }))) return cancelAction(ctx, actionId, via);
     await auditSafe(ctx, 'action:cancel', { id: row.id, kind: row.kind }, via);
     return { actionId: row.id, status: 'cancelled', message: 'Cancelled.', url: null };
   }

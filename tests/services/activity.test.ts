@@ -346,7 +346,7 @@ describe('getActivity', () => {
     expect(f.discussions.map((d) => d.discussionId)).toEqual([701, 702]);
     expect(calls.at(-1)).toEqual({
       fn: 'mod_forum_get_forum_discussions',
-      params: { forumid: 3001, sortorder: -1, page: 0, perpage: 10 },
+      params: { forumid: 3001, sortorder: 1, page: 0, perpage: 10 },
     });
 
     const empty = makeFakeContext({

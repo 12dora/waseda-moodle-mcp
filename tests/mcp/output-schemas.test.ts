@@ -10,7 +10,7 @@ import { searchTools } from '../../src/core/mcp/tools/search';
 import { socialTools } from '../../src/core/mcp/tools/social';
 import { syllabusTools } from '../../src/core/mcp/tools/syllabus';
 import { timetableTools } from '../../src/core/mcp/tools/timetable';
-import { prepareSubmissionTool, writeTools } from '../../src/core/mcp/tools/write';
+import { writeTools } from '../../src/core/mcp/tools/write';
 import { OUTPUT_SAMPLES } from '../fixtures/output-samples';
 
 const TOOLS: ToolDef[] = [
@@ -24,8 +24,7 @@ const TOOLS: ToolDef[] = [
   ...socialTools,
   ...searchTools,
   createUploadLinkTool,
-  prepareSubmissionTool(false),
-  ...writeTools,
+  ...writeTools(false),
   ...markReadTools,
 ];
 
@@ -38,7 +37,7 @@ const outputOf = (name: string) => {
 describe('tool output schemas', () => {
   it('every tool has an output schema and a sample payload, and nothing else has a sample', () => {
     const names = TOOLS.map((t) => t.name).sort();
-    expect(names).toHaveLength(29);
+    expect(names).toHaveLength(31);
     expect(Object.keys(OUTPUT_SAMPLES).sort()).toEqual(names);
   });
 

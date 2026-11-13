@@ -49,6 +49,9 @@ export interface CredentialInfo {
   lastOkAt: IsoJst | null;
   lastError: string | null;
   tokenHint: string; // last 4 chars of the token, display only
+  /** The token is renewed automatically (a Moodle web session, or a private token to open one). */
+  autoRenew: boolean;
+  renewedAt: IsoJst | null; // last automatic renewal
 }
 
 // ------------------------------------------------------------------ courses
@@ -176,106 +179,7 @@ export interface CourseUpdate {
 
 // ------------------------------------------------------------------ activities
 
-export interface SubmissionState {
-  status: 'new' | 'draft' | 'submitted' | 'reopened' | 'none';
-  gradingStatus: string | null;
-  lastModified: IsoJst | null;
-  onlineText: string | null; // markdown
-  files: FileRef[];
-  canEdit: boolean;
-  canSubmit: boolean;
-  locked: boolean;
-  extensionDue: IsoJst | null;
-}
-
-export interface Feedback {
-  grade: string | null; // gradefordisplay
-  gradedAt: IsoJst | null;
-  comments: string | null; // markdown
-  files: FileRef[];
-}
-
-export interface AssignDetail {
-  type: 'assign';
-  cmid: number;
-  instanceId: number;
-  courseId: number;
-  courseName: string;
-  name: string;
-  url: string;
-  description: string; // markdown (intro + activity instructions)
-  attachments: FileRef[];
-  opensAt: IsoJst | null;
-  dueAt: IsoJst | null;
-  cutoffAt: IsoJst | null;
-  submissionTypes: Array<'onlinetext' | 'file'>;
-  maxFiles: number | null;
-  maxFileBytes: number | null;
-  acceptedTypes: string[]; // e.g. [".pdf", ".docx"]; [] = any
-  wordLimit: number | null;
-  draftsEnabled: boolean; // submissiondrafts
-  requiresStatement: boolean;
-  statement: string | null;
-  teamSubmission: boolean;
-  submission: SubmissionState;
-  feedback: Feedback | null;
-}
-
-export interface QuizAttempt {
-  attempt: number;
-  state: string; // inprogress, overdue, finished, abandoned
-  startedAt: IsoJst | null;
-  finishedAt: IsoJst | null;
-  grade: string | null;
-}
-
-export interface QuizDetail {
-  type: 'quiz';
-  cmid: number;
-  instanceId: number;
-  courseId: number;
-  courseName: string;
-  name: string;
-  url: string;
-  description: string;
-  opensAt: IsoJst | null;
-  closesAt: IsoJst | null;
-  timeLimitMinutes: number | null;
-  attemptsAllowed: number | null; // null = unlimited
-  attempts: QuizAttempt[];
-  bestGrade: string | null;
-}
-
-/** resource, folder, page, url, label, book and any other module. */
-export interface ContentDetail {
-  type: 'content';
-  cmid: number;
-  courseId: number;
-  courseName: string;
-  name: string;
-  modname: string;
-  url: string;
-  description: string;
-  body: string | null; // markdown for page/label/book; null otherwise
-  externalUrl: string | null; // mod_url target
-  files: FileRef[];
-}
-
-export interface ForumDetail {
-  type: 'forum';
-  cmid: number;
-  forumId: number;
-  forumType: 'forum' | 'hsuforum';
-  courseId: number;
-  courseName: string;
-  name: string;
-  url: string;
-  description: string;
-  dueAt: IsoJst | null;
-  discussions: DiscussionSummary[]; // most recent first, max 10
-}
-
-export type ActivityDetail = AssignDetail | QuizDetail | ContentDetail | ForumDetail;
+export type * from './activity-types';
 
 // ------------------------------------------------------------------ files (passthrough)
 
@@ -289,12 +193,13 @@ export interface FileLink {
 }
 
 export interface UploadLink {
-  uploadId: string; // pass to prepare_submission as upload_id
+  uploadId: string; // pass to prepare_submission / prepare_forum_post as upload_id
   uploadUrl: string; // signed; PUT/POST raw bytes with ?name=<filename>
   draftItemId: number;
   expiresAt: IsoJst;
   maxBytes: number;
   curlExample: string;
+  usedBy: 'prepare_submission' | 'prepare_forum_post'; // the tool that takes the upload_id
 }
 
 export interface UploadedDraftFile {
@@ -338,6 +243,7 @@ export interface DiscussionSummary {
   forumId: number;
   forumCmid: number | null;
   forumName: string;
+  forumKind: string; // Moodle forum type: news, general, blog, qanda, eachuser, single
   courseId: number;
   courseName: string;
   discussionId: number;
@@ -349,6 +255,41 @@ export interface DiscussionSummary {
   replies: number;
   unread: number | null;
   pinned: boolean;
+  canCreateDiscussions: boolean;
+  dueAt: IsoJst | null;
+  cutoffAt: IsoJst | null;
+}
+
+/** One forum in a list_discussions result (index + posting flags). */
+export interface ForumListEntry {
+  forumType: 'forum' | 'hsuforum';
+  forumId: number;
+  forumCmid: number | null;
+  forumName: string;
+  forumKind: string;
+  courseId: number;
+  courseName: string;
+  canCreateDiscussions: boolean;
+  dueAt: IsoJst | null;
+  cutoffAt: IsoJst | null;
+  numDiscussions: number | null;
+}
+
+/** A forum whose discussions were not all returned. Continue with forum_cmid, nextPage, and the same pageSize as `limit`. */
+export interface TruncatedForum {
+  forumId: number;
+  forumCmid: number | null;
+  forumName: string;
+  remaining: number | null; // null = at least another page, count unknown
+  nextPage: number;
+  pageSize: number; // `limit` to reuse when paging this forum
+}
+
+export interface DiscussionList {
+  forums: ForumListEntry[];
+  discussions: DiscussionSummary[];
+  skippedForums: number;
+  truncatedForums: TruncatedForum[];
 }
 
 export interface Post {
@@ -359,12 +300,15 @@ export interface Post {
   subject: string;
   message: string; // markdown
   attachments: FileRef[];
+  unread: boolean;
+  canReply: boolean;
 }
 
 export interface Discussion {
   summary: DiscussionSummary;
   posts: Post[];
   canReply: boolean;
+  forumIntro: string; // markdown, may be ""
 }
 
 export interface ConversationSummary {
@@ -409,9 +353,23 @@ export type ActionKind =
   | 'forum_discussion'
   | 'message'
   | 'completion'
-  | 'mark_read' // notifications / a conversation marked read
-  | 'forum_subscription'; // subscribe to / unsubscribe from a forum
+  | 'mark_read' // notifications, a conversation or a forum discussion marked read
+  | 'forum_subscription' // subscribe to / unsubscribe from a forum
+  | 'forum_post_edit' // edit one's own forum post
+  | 'forum_post_delete' // delete one's own forum post (and its replies)
+  | 'questionnaire_submit'; // answer a questionnaire (submit, or save as a draft)
 export type ActionStatus = 'pending' | 'executing' | 'executed' | 'cancelled' | 'expired' | 'failed';
+/**
+ * The one status Store.updateAction may move an action FROM, per target status (pending -> executing is claimAction;
+ * executing -> pending hands an action back for a retry). Any other transition loses: exactly one outcome per action.
+ */
+export const ACTION_STATUS_FROM: Readonly<Partial<Record<ActionStatus, ActionStatus>>> = {
+  executed: 'executing',
+  failed: 'executing',
+  pending: 'executing',
+  cancelled: 'pending',
+  expired: 'pending',
+};
 export type Approval = 'chat' | 'console';
 
 export interface InlineFile {
@@ -456,3 +414,4 @@ export interface ActionResult {
 }
 
 export type * from './course-overview-types';
+export type * from './usage-stats';

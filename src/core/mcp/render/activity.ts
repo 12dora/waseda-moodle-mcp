@@ -1,8 +1,16 @@
 import { fmt, fmtDue } from '../../time';
-import type { ActivityDetail, ContentDetail, ForumDetail, QuizDetail } from '../../types';
+import type {
+  ActivityDetail,
+  AttendanceDetail,
+  AttendanceSession,
+  ContentDetail,
+  ForumDetail,
+  QuizDetail,
+} from '../../types';
 import { assignText } from './assign';
 import { assemble, clip, fileLines, hardCap, MAX_TEXT_CHARS, oneLine } from './common';
 import { discussionLine } from './forums';
+import { questionnaireText } from './questionnaire';
 
 function quizText(q: QuizDetail): string {
   const lines = [
@@ -37,8 +45,44 @@ function forumText(f: ForumDetail): string {
   if (f.dueAt) head.push(`Due: ${fmtDue(f.dueAt)}`);
   if (f.description.trim()) head.push(clip(f.description, 600));
   head.push(f.discussions.length ? 'Recent discussions:' : 'No discussions yet.');
-  const entries = f.discussions.map((d) => ({ text: discussionLine(d), item: true }));
+  const entries = f.discussions.map((d) => ({ text: discussionLine(d, { underForum: true }), item: true }));
   return assemble({ head, entries, hint: 'use list_discussions with forum_cmid' });
+}
+
+function sessionStatus(s: AttendanceSession): string {
+  if (s.acronym && s.status && s.status !== s.acronym) return `${s.acronym} ${s.status}`;
+  return s.acronym || s.status || '-';
+}
+
+function sessionLine(s: AttendanceSession): string {
+  const when = s.at ? fmt(s.at) : oneLine(s.time, 48) || '-';
+  const bits = [when, s.group, sessionStatus(s), s.remarks ? oneLine(s.remarks, 80) : null].filter(Boolean);
+  return `- ${bits.join(' · ')}`;
+}
+
+function attendanceText(a: AttendanceDetail): string {
+  const s = a.summary;
+  const taken = s.takenSessions != null ? String(s.takenSessions) : '-';
+  const total = s.totalSessions != null ? String(s.totalSessions) : '-';
+  const head = [
+    `# ${oneLine(a.name, 100)} — attendance (cmid ${a.cmid})`,
+    `Course: ${oneLine(a.courseName, 80)} (course_id ${a.courseId})`,
+    `Link: ${a.url}`,
+    `Taken: ${taken} of ${total} sessions · ${s.points ?? '-'} (${s.percentage ?? '-'})`,
+  ];
+  if (s.maxPossiblePoints || s.maxPossiblePercentage) {
+    head.push(`Maximum possible: ${s.maxPossiblePoints ?? '-'} (${s.maxPossiblePercentage ?? '-'})`);
+  }
+  if (a.description.trim()) head.push(clip(a.description, 600));
+  head.push(a.sessions.length ? 'Recent sessions:' : 'No session details.');
+  const footer = ['Attendance is read only; this server cannot record it.'];
+  if (!a.complete) footer.push('Some attendance data could not be read; the complete record is in Moodle.');
+  return assemble({
+    head,
+    entries: a.sessions.map((sess) => ({ text: sessionLine(sess), item: true })),
+    footer,
+    hint: 'older sessions omitted',
+  });
 }
 
 function contentText(c: ContentDetail): string {
@@ -66,6 +110,10 @@ export function renderActivity(a: ActivityDetail): string {
       return quizText(a);
     case 'forum':
       return forumText(a);
+    case 'attendance':
+      return attendanceText(a);
+    case 'questionnaire':
+      return questionnaireText(a);
     default:
       return contentText(a);
   }

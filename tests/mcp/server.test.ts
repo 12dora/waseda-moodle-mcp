@@ -27,6 +27,7 @@ import { type FakeContextOptions, makeFakeContext } from '../helpers/fake-contex
 vi.mock('../../src/core/services/actions', () => ({
   prepareSubmission: vi.fn(),
   prepareForumPost: vi.fn(),
+  prepareForumPostChange: vi.fn(),
   prepareMessage: vi.fn(),
   prepareCompletion: vi.fn(),
   prepareMarkRead: vi.fn(),
@@ -78,8 +79,10 @@ const READ_TOOLS = [
 const WRITE_TOOLS = [
   'prepare_submission',
   'prepare_forum_post',
+  'prepare_forum_post_change',
   'prepare_message',
   'prepare_completion',
+  'prepare_questionnaire',
   'prepare_forum_subscription',
   'confirm_action',
   'cancel_action',
@@ -134,18 +137,18 @@ describe('tool registration', () => {
     expect(names).toEqual([...READ_TOOLS].sort());
   });
 
-  it('adds write tools and create_upload_link for write scope in worker mode (29 tools)', async () => {
+  it('adds write tools and create_upload_link for write scope in worker mode (31 tools)', async () => {
     const client = await connect(fake({ scopes: WRITE }).ctx);
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(names).toEqual([...READ_TOOLS, ...WRITE_TOOLS, 'create_upload_link'].sort());
-    expect(names).toHaveLength(29);
+    expect(names).toHaveLength(31);
   });
 
   it('drops create_upload_link in stdio mode and offers local paths instead of upload ids', async () => {
     const client = await connect(fake({ scopes: WRITE, mode: 'stdio', publicUrl: '' }).ctx);
     const tools = (await client.listTools()).tools;
     expect(tools.map((t) => t.name)).not.toContain('create_upload_link');
-    expect(tools).toHaveLength(28);
+    expect(tools).toHaveLength(30);
     const props = submissionProps(tools);
     expect(props.upload_id).toBeUndefined();
     expect(props.files?.items?.properties?.path).toBeDefined();
@@ -180,7 +183,7 @@ describe('tool registration', () => {
   it('advertises an object output schema for every tool', async () => {
     const client = await connect(fake({ scopes: WRITE }).ctx);
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(29);
+    expect(tools).toHaveLength(31);
     for (const t of tools) {
       expect((t.outputSchema as { type?: string } | undefined)?.type, t.name).toBe('object');
     }

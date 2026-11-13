@@ -375,7 +375,9 @@ describe('prepareSubmission', () => {
     const fs = await import('node:fs/promises');
     const os = await import('node:os');
     const path = await import('node:path');
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wmm-test-'));
+    // hidden path segments are refused, and TMPDIR may live under one (~/.tmpdir)
+    const base = process.platform === 'win32' ? os.tmpdir() : '/tmp';
+    const dir = await fs.mkdtemp(path.join(base, 'wmm-test-'));
     const file = path.join(dir, 'local.pdf');
     await fs.writeFile(file, 'LOCAL-BYTES');
     try {
@@ -626,9 +628,14 @@ describe('prepareForumPost / execution', () => {
     const { ctx, moodle } = createTestContext();
     moodle.handlers.mod_hsuforum_add_discussion_post = { postid: 9 };
     moodle.handlers.mod_hsuforum_add_discussion = { discussionid: 12 };
+    moodle.handlers.mod_hsuforum_get_forum_discussion_posts = {
+      posts: [{ id: 3, subject: 'Topic', canreply: true }],
+    };
+    moodle.handlers.mod_hsuforum_can_add_discussion = { status: true };
     const reply = await prepareForumPost(ctx, {
       forumType: 'hsuforum',
       replyToPostId: 3,
+      discussionId: 9,
       subject: 'Hi',
       message: 'text',
     });
@@ -657,6 +664,7 @@ describe('prepareForumPost / execution', () => {
       cm: { id: 10, name: 'Class &amp; Q&amp;A', course: 1 },
     };
     moodle.handlers.mod_forum_add_discussion = { discussionid: 31, warnings: [] };
+    moodle.handlers.mod_forum_can_add_discussion = { status: true, warnings: [] };
     const preview = await prepareForumPost(ctx, { forumType: 'forum', forumId: 8, subject: 'Topic', message: 'Body' });
     expect(preview.title).toBe('New discussion in Class & Q&A');
     expect((await confirmAction(ctx, preview.actionId, 'mcp')).url).toBe(`${BASE_URL}/mod/forum/discuss.php?d=31`);
@@ -691,6 +699,9 @@ describe('prepareForumPost / execution', () => {
   it('fails when Moodle returns no post id', async () => {
     const { ctx, moodle } = createTestContext();
     moodle.handlers.mod_forum_add_discussion_post = { warnings: [{ message: 'Blocked by throttling.' }] };
+    moodle.handlers.mod_forum_get_discussion_post = {
+      post: { id: 1, subject: 's', discussionid: 2, capabilities: { reply: true } },
+    };
     const preview = await prepareForumPost(ctx, { forumType: 'forum', replyToPostId: 1, message: 'x' });
     const result = await confirmAction(ctx, preview.actionId, 'mcp');
     expect(result).toMatchObject({ status: 'failed', message: 'Moodle refused the reply: Blocked by throttling.' });
@@ -785,6 +796,17 @@ describe('prepareCompletion / execution', () => {
     moodle.handlers.core_completion_get_activities_completion_status = statuses(1, 1);
     const preview = await prepareCompletion(ctx, { cmid: 9, completed: true });
     expect(preview.warnings).toEqual(['It is already marked complete.']);
+  });
+
+  it('says that marking a questionnaire done does not submit its answers', async () => {
+    const { ctx, moodle } = createTestContext();
+    moodle.handlers.core_course_get_course_module = { cm: { ...cm.cm, modname: 'questionnaire' } };
+    moodle.handlers.core_completion_get_activities_completion_status = statuses(1, 0);
+    const done = await prepareCompletion(ctx, { cmid: 9, completed: true });
+    expect(done.warnings).toEqual(['Marking it done does not submit the questionnaire answers.']);
+    moodle.handlers.core_completion_get_activities_completion_status = statuses(1, 1);
+    const undo = await prepareCompletion(ctx, { cmid: 9, completed: false });
+    expect(undo.warnings).toEqual([]);
   });
 
   it('rejects automatic, untracked and unknown activities', async () => {

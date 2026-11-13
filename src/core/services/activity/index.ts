@@ -1,6 +1,7 @@
 /**
- * getActivity: one activity (by cmid) in detail — assignment, quiz, forum, page, url, label, book and
- * everything else (resource, folder, …) as generic content. At most ~5 Moodle calls.
+ * getActivity: one activity (by cmid) in detail — assignment, quiz, forum, attendance, questionnaire, page, url, label,
+ * book and everything else (resource, folder, …) as generic content. At most ~5 Moodle calls (a multi-page
+ * questionnaire: one more per page, at most 8).
  */
 
 import type { MoodleApi, ServiceContext } from '../../context';
@@ -10,7 +11,9 @@ import type { ActivityDetail, DiscussionSummary, ForumDetail } from '../../types
 import { type ForumType, fetchDiscussions, fetchForums } from '../forums';
 import { type ActivityInfo, type CourseModuleInfo, courseNameMap, getCourseModule, pickLang } from '../shared';
 import { loadAssign } from './assign';
+import { loadAttendance } from './attendance';
 import { loadContent } from './content';
+import { loadQuestionnaire } from './questionnaire';
 import { loadQuiz } from './quiz';
 
 async function loadForum(
@@ -25,7 +28,7 @@ async function loadForum(
   let discussions: DiscussionSummary[] = [];
   if (ref.numDiscussions !== 0) {
     // the forum itself is still worth showing when its discussions cannot be listed
-    discussions = await fetchDiscussions(api, ref, info.courseName, 10).catch((e: unknown) => {
+    discussions = await fetchDiscussions(api, ref, info.courseName, { limit: 10 }).catch((e: unknown) => {
       if (e instanceof MoodleError) return [];
       throw e;
     });
@@ -62,6 +65,10 @@ export async function getActivity(ctx: ServiceContext, cmid: number): Promise<Ac
     case 'forum':
     case 'hsuforum':
       return loadForum(api, cm, cm.modname, info);
+    case 'attendance':
+      return loadAttendance(api, cm, info);
+    case 'questionnaire':
+      return loadQuestionnaire(api, cm, info);
     default:
       return loadContent(api, cm, { ...info, courseId: cm.courseId, modname: cm.modname });
   }

@@ -1,5 +1,5 @@
 /**
- * MCP surface: 29 tools, 3 prompts and 2 resource templates over the service layer.
+ * MCP surface: 31 tools, 3 prompts and 2 resource templates over the service layer.
  * One McpServer per request (Worker) or per connection (stdio); tool definitions live in ./tools.
  */
 
@@ -19,7 +19,7 @@ import { searchTools } from './tools/search';
 import { socialTools } from './tools/social';
 import { syllabusTools } from './tools/syllabus';
 import { timetableTools } from './tools/timetable';
-import { prepareSubmissionTool, writeTools } from './tools/write';
+import { writeTools } from './tools/write';
 import { serverInstructions } from './wording';
 
 export const SERVER_VERSION = '0.1.0';
@@ -39,7 +39,7 @@ function toolsFor({ canRead, canWrite, stdio }: ReturnType<typeof access>): Tool
   }
   if (canWrite) {
     if (!stdio) tools.push(createUploadLinkTool);
-    tools.push(prepareSubmissionTool(stdio), ...writeTools, ...markReadTools);
+    tools.push(...writeTools(stdio), ...markReadTools);
   }
   return tools;
 }

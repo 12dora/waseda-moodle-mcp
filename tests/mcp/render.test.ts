@@ -11,6 +11,7 @@ import { renderCourseUpdates, renderMyCourses } from '../../src/core/mcp/render/
 import type {
   ActionPreview,
   AssignDetail,
+  AttendanceDetail,
   Course,
   CourseUpdate,
   Discussion,
@@ -303,7 +304,9 @@ describe('renderActivity', () => {
       dueAt: null,
       discussions: [disc],
     });
-    expect(f).toContain('forum_type forum, discussion_id 5');
+    expect(f).toContain('forum_id 3');
+    expect(f).toContain('discussion_id 5');
+    expect(f).not.toContain('forum_type forum');
 
     const c = renderActivity({
       type: 'content',
@@ -329,6 +332,58 @@ describe('renderActivity', () => {
     expect(c).toContain('External link: https://example.com/a');
     expect(c).toContain('pass a url to get_file');
   });
+
+  it('renders an attendance summary and recent sessions', () => {
+    const a: AttendanceDetail = {
+      type: 'attendance',
+      cmid: 7012,
+      instanceId: 8001,
+      courseId: 101,
+      courseName: 'Finance',
+      name: 'Class attendance',
+      url: 'u',
+      description: 'Friday sessions.',
+      summary: {
+        takenSessions: 6,
+        points: '12 / 18',
+        percentage: '66.7%',
+        totalSessions: 15,
+        maxPossiblePoints: '24 / 30',
+        maxPossiblePercentage: '80.0%',
+      },
+      sessions: [
+        {
+          at: '2026-10-16T13:00:00+09:00',
+          time: 'Fri 16 Oct 2026 01:00PM - 02:40PM',
+          group: null,
+          acronym: null,
+          status: 'Late',
+          remarks: null,
+        },
+        {
+          at: '2026-10-09T13:00:00+09:00',
+          time: 'Fri 09 Oct 2026 01:00PM - 02:40PM',
+          group: 'Group A',
+          acronym: 'P',
+          status: 'Present',
+          remarks: 'on time',
+        },
+      ],
+      complete: true,
+    };
+    const t = renderActivity(a);
+    expect(t).toContain('# Class attendance — attendance (cmid 7012)');
+    expect(t).toContain('Taken: 6 of 15 sessions · 12 / 18 (66.7%)');
+    expect(t).toContain('Maximum possible: 24 / 30 (80.0%)');
+    expect(t).toContain('P Present');
+    expect(t).toContain('Late');
+    expect(t).toContain('cannot record it');
+    expect(t).not.toContain('could not be read');
+    expect(renderActivity({ ...a, sessions: [] })).toContain('No session details.');
+    expect(renderActivity({ ...a, complete: false })).toContain(
+      'Some attendance data could not be read; the complete record is in Moodle.',
+    );
+  });
 });
 
 function discussion(id: number, patch: Partial<DiscussionSummary> = {}): DiscussionSummary {
@@ -337,6 +392,7 @@ function discussion(id: number, patch: Partial<DiscussionSummary> = {}): Discuss
     forumId: 3,
     forumCmid: 88,
     forumName: 'News',
+    forumKind: 'news',
     courseId: 101,
     courseName: 'Finance',
     discussionId: id,
@@ -348,6 +404,9 @@ function discussion(id: number, patch: Partial<DiscussionSummary> = {}): Discuss
     replies: 2,
     unread: 1,
     pinned: false,
+    canCreateDiscussions: false,
+    dueAt: null,
+    cutoffAt: null,
     ...patch,
   };
 }
@@ -385,12 +444,30 @@ describe('files', () => {
         maxBytes: 20 * 1024 * 1024,
         curlExample: 'curl -T ./report.pdf "https://s.example.com/u/t?name=report.pdf"',
         uploadId: 'upl_1',
+        usedBy: 'prepare_submission',
       },
       5001,
     );
     expect(t).toContain('max 20 MB');
     expect(t).toContain('upload_id "upl_1"');
     expect(t).toContain('cmid 5001');
+  });
+
+  it('points forum upload links at the forum post tools', () => {
+    const t = renderUploadLink(
+      {
+        uploadUrl: 'https://s.example.com/u/t',
+        draftItemId: 1,
+        expiresAt: '2026-10-14T12:30:00+09:00',
+        maxBytes: 5 * 1024 * 1024,
+        curlExample: 'curl -T ./photo.jpg "https://s.example.com/u/t?name=photo.jpg"',
+        uploadId: 'upl_2',
+        usedBy: 'prepare_forum_post',
+      },
+      6001,
+    );
+    expect(t).toContain('call prepare_forum_post or prepare_forum_post_change with upload_id "upl_2"');
+    expect(t).not.toContain('prepare_submission');
   });
 });
 
@@ -445,7 +522,10 @@ describe('forums', () => {
   it('lists discussions with ids needed for get_discussion', () => {
     const t = renderDiscussions({ discussions: [discussion(5, { pinned: true })], skippedForums: 3 });
     expect(t).toContain('[pinned] Subject 5');
-    expect(t).toContain('forum_type forum, discussion_id 5, forum_cmid 88');
+    expect(t).toContain('News — Finance, announcements, cannot post (forum_id 3, cmid 88)');
+    expect(t).toContain('(discussion_id 5)');
+    expect(t).not.toContain('forum_type forum');
+    expect(t).not.toContain('To start a discussion');
     expect(t).toContain('1 unread');
     expect(t).toContain('3 forums not checked');
     expect(renderDiscussions({ discussions: [], skippedForums: 0 })).toBe('No discussions found.');
@@ -460,15 +540,19 @@ describe('forums', () => {
       subject: 'Re: x',
       message: `Post body ${i} ${'blah '.repeat(80)}`,
       attachments: [],
+      unread: false,
+      canReply: true,
     }));
-    const d: Discussion = { summary: discussion(5), posts, canReply: true };
+    const d: Discussion = { summary: discussion(5), posts, canReply: true, forumIntro: '' };
     const t = renderDiscussion(d);
     expect(t.length).toBeLessThanOrEqual(LIMIT);
     expect(t).toMatch(/… \d+ earlier posts omitted/);
     expect(t).toContain('post_id 139');
     expect(t).not.toContain('post_id 100)');
     expect(t).toContain('prepare_forum_post with reply_to_post_id');
-    expect(renderDiscussion({ ...d, posts: posts.slice(0, 1), canReply: false })).toContain('Replying is not allowed');
+    expect(renderDiscussion({ ...d, posts: [{ ...posts[0]!, canReply: false }], canReply: false })).toContain(
+      'Replying is not allowed',
+    );
   });
 });
 

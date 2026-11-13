@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MoodleError } from '../../src/core/errors';
 import { attachSubmissions } from '../../src/core/services/submission';
 import type { DueItem } from '../../src/core/types';
@@ -106,6 +106,15 @@ function setup(handlers: Record<string, Handler> = HANDLERS) {
 }
 
 describe('attachSubmissions', () => {
+  // the fixtures' deadlines are written around this instant; nearest-first ranking depends on it
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-14T12:00:00+09:00'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('a submitted questionnaire is no longer overdue; an unanswered one stays overdue', async () => {
     const { ctx } = setup();
     const [done, todo] = await attachSubmissions(ctx, [
