@@ -85,9 +85,6 @@ export function postingWindow(s: ForumSettings | null, now: number): { details: 
 
 // ------------------------------------------------------------------ provenance
 
-export const UNREAD_FIRST =
-  'This discussion has unread posts, and reading it here would mark them read. Open it with get_discussion first, then prepare again.';
-
 const HSU_UNSUPPORTED = 'Advanced Forums (hsuforum) are not supported for this action; use the Moodle site.';
 
 export interface ForumTarget {
@@ -331,17 +328,18 @@ export async function loadForumThread(api: MoodleApi, discussionId: number): Pro
 }
 
 /**
- * The whole thread, but only when reading it changes no read state (untracked forum, manual marking, or nothing
- * unread in the discussion); null otherwise. Throws when Moodle cannot return it.
+ * The whole thread, but only when Moodle marks nothing read on loading it (untracked forum or manual marking); null
+ * otherwise. An earlier unread count is no guarantee: a post arriving before the load would be marked. Throws when
+ * Moodle cannot return it.
  */
 export async function quietThread(
   api: MoodleApi,
   tracked: boolean | null,
-  entry: DiscussionEntry,
+  discussionId: number,
   manualRead: boolean,
 ): Promise<ForumThread | null> {
-  if (!(tracked === false || manualRead || entry.numUnread === 0)) return null;
-  const thread = await loadForumThread(api, entry.id);
+  if (!(tracked === false || manualRead)) return null;
+  const thread = await loadForumThread(api, discussionId);
   if (!thread) throw new InvalidInput('Could not read the discussion. Try again.');
   return thread;
 }

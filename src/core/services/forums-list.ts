@@ -148,6 +148,7 @@ function truncationOf(args: {
   const partial = nShown < nFetched;
   if (!partial && !serverHasMore(ref, nFetched, perForum, page)) return null;
   return {
+    forumType: ref.forumType,
     forumId: ref.forumId,
     forumCmid: ref.cmid,
     forumName: ref.name,

@@ -53,12 +53,13 @@ function moreLine(t: TruncatedForum): string {
   return `  (${n}; pass ${cmid}, page ${t.nextPage}, limit ${t.pageSize})`;
 }
 
-function groupKey(d: DiscussionSummary): string {
-  return `${d.forumType}:${d.forumId}`;
+function groupKey(f: { forumType: string; forumId: number }): string {
+  return `${f.forumType}:${f.forumId}`;
 }
 
-function cutFor(r: DiscussionList, f: { forumId: number; forumCmid: number | null }): TruncatedForum | undefined {
-  return r.truncatedForums.find((t) => t.forumId === f.forumId && t.forumCmid === f.forumCmid);
+function cutFor(r: DiscussionList, f: { forumType: string; forumId: number }): TruncatedForum | undefined {
+  const key = groupKey(f);
+  return r.truncatedForums.find((t) => groupKey(t) === key);
 }
 
 function groupByForum(discussions: DiscussionSummary[]): DiscussionSummary[][] {
@@ -83,18 +84,18 @@ function pushSection(entries: Entry[], heading: string, items: Entry[]): void {
 }
 
 /** item: true so assemble does not strip this as a dangling heading */
-function cutItem(r: DiscussionList, f: { forumId: number; forumCmid: number | null }): Entry | undefined {
+function cutItem(r: DiscussionList, f: { forumType: string; forumId: number }): Entry | undefined {
   const cut = cutFor(r, f);
   return cut ? { text: moreLine(cut), item: true } : undefined;
 }
 
 function listEntries(r: DiscussionList): Entry[] {
   const entries: Entry[] = [];
-  const listed = new Set<number>();
+  const listed = new Set<string>();
   for (const list of groupByForum(r.discussions)) {
     const first = list[0];
     if (!first) continue;
-    listed.add(first.forumId);
+    listed.add(groupKey(first));
     const items: Entry[] = list.map((d) => ({ text: discussionLine(d, { underForum: true }), item: true }));
     const more = cutItem(r, first);
     if (more) items.push(more);
@@ -102,8 +103,8 @@ function listEntries(r: DiscussionList): Entry[] {
   }
   for (const f of r.forums) {
     const more = cutItem(r, f);
-    if (!more || listed.has(f.forumId)) continue;
-    listed.add(f.forumId);
+    if (!more || listed.has(groupKey(f))) continue;
+    listed.add(groupKey(f));
     pushSection(entries, forumHeading(f), [more]);
   }
   return entries;

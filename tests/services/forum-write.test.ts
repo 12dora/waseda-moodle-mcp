@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NotFound } from '../../src/core/errors';
+import { MoodleError, NotFound } from '../../src/core/errors';
 import {
   confirmAction,
   prepareForumPost,
@@ -70,8 +70,9 @@ interface Site {
 
 /**
  * Discussion 55 (first post 77 → 78 → 79) in forum 3001 (cmid 7010) of course 99. Models Moodle's side effects:
- * mod_forum_get_discussion_posts marks the returned posts read (tracked forum, automatic marking), and
- * update_discussion_post unsubscribes unless discussionsubscribe is sent as true.
+ * mod_forum_get_discussion_posts marks the returned posts read (tracked forum, automatic marking),
+ * update_discussion_post unsubscribes unless discussionsubscribe is sent as true, and delete_post refuses a post
+ * with replies without mod/forum:deleteanypost.
  */
 function forumSite(
   t: TestContext,
@@ -114,6 +115,12 @@ function forumSite(
   h.mod_forum_update_discussion_post = (p: Raw) => {
     const options = (p.options as Raw[] | undefined) ?? [];
     site.subscribed = options.some((o) => o.name === 'discussionsubscribe' && o.value === true);
+    return { status: true, warnings: [] };
+  };
+  h.mod_forum_delete_post = (p: Raw) => {
+    if (opts.access?.candeleteanypost !== true && site.posts.some((x) => x.parentid === p.postid)) {
+      throw new MoodleError('You cannot delete a post that has replies.', 'couldnotdeletereplies');
+    }
     return { status: true, warnings: [] };
   };
   return site;
@@ -564,10 +571,9 @@ describe('prepareForumPostChange: delete', () => {
     );
   });
 
-  it('deletes an own reply without replies after checking nothing changed', async () => {
+  it('deletes an own reply on an automatically marking forum without loading the thread', async () => {
     const t = createTestContext();
     forumSite(t, { posts: ownPosts(), unread: [] });
-    t.moodle.handlers.mod_forum_delete_post = { status: true, warnings: [] };
     const p = await prepareForumPostChange(t.ctx, del(80));
     expect(p).toMatchObject({ kind: 'forum_post_delete', title: 'Delete post "My answer"' });
     expect(p.details).toEqual(['Post: "My answer" by Taro Yamada', 'Text: Body of 80', 'Attachment: old.pdf (3 B)']);
@@ -575,29 +581,55 @@ describe('prepareForumPostChange: delete', () => {
     const r = await confirmAction(t.ctx, p.actionId, 'mcp');
     expect(r).toMatchObject({ message: 'Post deleted.', url: `${BASE_URL}/mod/forum/discuss.php?d=55` });
     expect(t.moodle.callsTo('mod_forum_delete_post')).toEqual([{ postid: 80 }]);
+    expect(t.moodle.callsTo('mod_forum_get_discussion_posts')).toHaveLength(0);
   });
 
-  it('will not read a discussion with unread posts to find the replies', async () => {
+  it('leaves a reply arriving after the unread count unread, at prepare and at confirm', async () => {
+    // The list reports nothing unread, then a reply under the target arrives before anything else is read.
+    const arrive = (t: TestContext, access?: Raw) => {
+      const site = forumSite(t, { posts: ownPosts(), unread: [], access });
+      const list = t.moodle.handlers.mod_forum_get_forum_discussions as () => Raw;
+      t.moodle.handlers.mod_forum_get_forum_discussions = () => {
+        const res = list();
+        if (!site.posts.some((x) => x.id === 81)) {
+          site.posts.push(post(81, { parentid: 80 }));
+          site.unread.add(81);
+        }
+        return res;
+      };
+      return site;
+    };
     const t = createTestContext();
-    const site = forumSite(t, { posts: ownPosts(), unread: [77] });
-    await expect(prepareForumPostChange(t.ctx, del(80))).rejects.toThrow('has unread posts');
+    const mod = arrive(t, { candeleteanypost: true });
+    await expect(prepareForumPostChange(t.ctx, del(80))).rejects.toThrow('cannot be listed here');
+    expect(mod.unread.has(81)).toBe(true);
+
+    const own = arrive(t);
+    const p = await prepareForumPostChange(t.ctx, del(80));
+    const r = await confirmAction(t.ctx, p.actionId, 'mcp');
+    expect(r).toMatchObject({ status: 'failed' });
+    expect(r.message).toContain('has replies');
+    expect(own.unread.has(81)).toBe(true);
     expect(t.moodle.callsTo('mod_forum_get_discussion_posts')).toHaveLength(0);
-    expect(site.unread.has(77)).toBe(true);
   });
 
   it('fails closed when the replies cannot be read', async () => {
     const t = createTestContext();
-    forumSite(t, { posts: ownPosts(), unread: [] });
+    forumSite(t, { posts: ownPosts(), forum: { istracked: false } });
     delete t.moodle.handlers.mod_forum_get_discussion_posts;
     await expect(prepareForumPostChange(t.ctx, del(80))).rejects.toThrow('Could not read the discussion');
   });
 
   it('refuses a post with replies without mod/forum:deleteanypost, and warns with it', async () => {
     const posts = () => [...ownPosts(), post(81, { parentid: 80 })];
+    const untracked = { istracked: false };
     const t = createTestContext();
-    forumSite(t, { posts: posts(), unread: [] });
+    forumSite(t, { posts: posts(), forum: untracked });
     await expect(prepareForumPostChange(t.ctx, del(80))).rejects.toThrow('has replies (1)');
-    forumSite(t, { posts: posts(), unread: [], access: { candeleteanypost: true } });
+    forumSite(t, { posts: [{ ...posts()[0], ...OWN }, ...posts().slice(1)], unread: [] });
+    await expect(prepareForumPostChange(t.ctx, del(77))).rejects.toThrow('has replies (2)');
+    expect(t.moodle.callsTo('mod_forum_get_discussion_posts')).toHaveLength(1);
+    forumSite(t, { posts: posts(), forum: untracked, access: { candeleteanypost: true } });
     const p = await prepareForumPostChange(t.ctx, del(80));
     expect(p.warnings).toEqual(['This cannot be undone.', '1 reply under this post is deleted too.']);
   });
@@ -605,7 +637,6 @@ describe('prepareForumPostChange: delete', () => {
   it('deletes an own discussion without replies without reading the thread', async () => {
     const t = createTestContext();
     forumSite(t, { posts: [post(77, { ...OWN, subject: 'Mine', hasparent: false, parentid: null })], unread: [] });
-    t.moodle.handlers.mod_forum_delete_post = { status: true };
     const p = await prepareForumPostChange(t.ctx, del(77));
     expect(p.title).toBe('Delete discussion "Mine"');
     expect(p.warnings).toContain('This is the first post: the whole discussion and all its replies are deleted.');
@@ -615,20 +646,17 @@ describe('prepareForumPostChange: delete', () => {
 
   it('refuses at confirm when the post or its replies changed after the preview', async () => {
     const t = createTestContext();
-    const site = forumSite(t, { posts: ownPosts(), unread: [] });
-    t.moodle.handlers.mod_forum_delete_post = { status: true };
+    const site = forumSite(t, { posts: ownPosts(), forum: { istracked: false }, access: { candeleteanypost: true } });
     const edited = await prepareForumPostChange(t.ctx, del(80));
     site.posts[1] = { ...site.posts[1], message: '<p>Edited on Moodle</p>', timemodified: NOW_S };
     expect(await confirmAction(t.ctx, edited.actionId, 'mcp')).toMatchObject({ status: 'failed' });
 
     const replied = await prepareForumPostChange(t.ctx, del(80));
     site.posts.push(post(82, { parentid: 80 }));
-    site.unread.add(82);
     const r = await confirmAction(t.ctx, replied.actionId, 'mcp');
     expect(r).toMatchObject({ status: 'failed' });
     expect(r.message).toContain('changed since the preview');
     expect(t.moodle.callsTo('mod_forum_delete_post')).toHaveLength(0);
-    expect(site.unread.has(82)).toBe(true);
   });
 });
 

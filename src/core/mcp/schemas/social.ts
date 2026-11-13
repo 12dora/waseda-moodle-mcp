@@ -16,7 +16,7 @@ export const discussionsOut = z.looseObject({
   forums: list({ forumId: z.number(), forumKind: z.string(), canCreateDiscussions: z.boolean() }),
   discussions: list(discussionSummary),
   skippedForums: z.number(),
-  truncatedForums: list({ forumId: z.number(), nextPage: z.number(), pageSize: z.number() }),
+  truncatedForums: list({ forumType: z.string(), forumId: z.number(), nextPage: z.number(), pageSize: z.number() }),
 });
 
 export const discussionOut = z.looseObject({

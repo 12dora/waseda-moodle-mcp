@@ -293,7 +293,15 @@ describe('listDiscussions', () => {
     const r = await listDiscussions(ctx, { forumCmid: 7010, courseId: 9001, limit: 20 });
     expect(r.discussions).toHaveLength(20);
     expect(r.truncatedForums).toEqual([
-      { forumId: 3001, forumCmid: 7010, forumName: 'Q&A', remaining: 11, nextPage: 1, pageSize: 20 },
+      {
+        forumType: 'forum',
+        forumId: 3001,
+        forumCmid: 7010,
+        forumName: 'Q&A',
+        remaining: 11,
+        nextPage: 1,
+        pageSize: 20,
+      },
     ]);
     expect(calls.find((c) => c.fn === 'mod_forum_get_forum_discussions')?.params).toMatchObject({
       forumid: 3001,
@@ -453,9 +461,9 @@ describe('listDiscussions', () => {
     expect(r.discussions.filter((d) => d.forumId === 502)).toHaveLength(9);
     expect(r.discussions.filter((d) => d.forumId === 503)).toHaveLength(1);
     expect(r.truncatedForums).toEqual([
-      { forumId: 501, forumCmid: 8501, forumName: 'A', remaining: 5, nextPage: 1, pageSize: 10 },
-      { forumId: 503, forumCmid: 8503, forumName: 'C', remaining: 4, nextPage: 0, pageSize: 10 },
-      { forumId: 502, forumCmid: 8502, forumName: 'B', remaining: 6, nextPage: 0, pageSize: 10 },
+      { forumType: 'forum', forumId: 501, forumCmid: 8501, forumName: 'A', remaining: 5, nextPage: 1, pageSize: 10 },
+      { forumType: 'forum', forumId: 503, forumCmid: 8503, forumName: 'C', remaining: 4, nextPage: 0, pageSize: 10 },
+      { forumType: 'forum', forumId: 502, forumCmid: 8502, forumName: 'B', remaining: 6, nextPage: 0, pageSize: 10 },
     ]);
     expect(first.calls.filter((c) => c.fn === 'mod_forum_get_forum_discussions').map((c) => c.params.perpage)).toEqual([
       10, 10, 10,
@@ -487,6 +495,71 @@ describe('listDiscussions', () => {
     expect(r.discussions.some((d) => d.discussionId === 50205)).toBe(false);
     expect(bPage.discussions.map((d) => d.discussionId)).toContain(50205);
     expect(bPage.discussions).toHaveLength(10);
+  });
+
+  it('keeps a page-0 continuation for an omitted hsuforum that shares an id with a listed forum', async () => {
+    const rows = (base: number, start: number) =>
+      Array.from({ length: 10 }, (_, i) => ({
+        id: base + i,
+        discussion: base + i,
+        subject: `T${i}`,
+        userfullname: 'Ann',
+        created: start + i,
+        timemodified: start + i,
+        numreplies: 0,
+      }));
+    const forumRows = rows(1000, 2000);
+    const hsuRows = rows(2000, 100);
+    const paged = (all: typeof forumRows) => (p: Record<string, unknown>) => {
+      const sorted = [...all].sort((a, b) => (b.timemodified ?? 0) - (a.timemodified ?? 0));
+      const perpage = typeof p.perpage === 'number' && p.perpage > 0 ? p.perpage : sorted.length;
+      const page = typeof p.page === 'number' && p.page >= 0 ? p.page : 0;
+      return { discussions: sorted.slice(page * perpage, page * perpage + perpage) };
+    };
+    const { ctx } = makeFakeContext({
+      mod_forum_get_forums_by_courses: [
+        {
+          id: 3001,
+          course: 9001,
+          cmid: 7010,
+          type: 'general',
+          name: 'Q&A',
+          cancreatediscussions: true,
+          numdiscussions: 10,
+          timemodified: 2010,
+        },
+      ],
+      mod_hsuforum_get_forums_by_courses: [
+        {
+          id: 3001,
+          course: 9001,
+          cmid: 8010,
+          type: 'general',
+          name: 'Weekly',
+          cancreatediscussions: true,
+          numdiscussions: 10,
+          timemodified: 110,
+          anonymous: 0,
+        },
+      ],
+      mod_forum_get_forum_discussions: paged(forumRows),
+      mod_hsuforum_get_forum_discussions_paginated: paged(hsuRows),
+    });
+    const r = await listDiscussions(ctx, { courseId: 9001, limit: 5 });
+    expect(r.discussions).toHaveLength(5);
+    expect(r.discussions.every((d) => d.forumType === 'forum' && d.forumCmid === 7010)).toBe(true);
+    expect(r.truncatedForums).toEqual([
+      { forumType: 'forum', forumId: 3001, forumCmid: 7010, forumName: 'Q&A', remaining: 5, nextPage: 1, pageSize: 5 },
+      {
+        forumType: 'hsuforum',
+        forumId: 3001,
+        forumCmid: 8010,
+        forumName: 'Weekly',
+        remaining: 10,
+        nextPage: 0,
+        pageSize: 5,
+      },
+    ]);
   });
 });
 

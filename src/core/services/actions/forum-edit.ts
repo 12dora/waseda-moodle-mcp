@@ -25,7 +25,6 @@ import {
   requireOwnPost,
   resolveForum,
   stageForumFiles,
-  UNREAD_FIRST,
 } from './forum-info';
 import type { FileInfo } from './inline-files';
 import {
@@ -215,21 +214,39 @@ const STALE = 'The post or its replies changed since the preview. Open the discu
 const fingerprint = (p: ForumPost) =>
   sha256Hex(JSON.stringify([p.subject, p.message, p.modified, p.attachments.map((f) => [f.name, f.size])]));
 
-/** Posts deleted along with `post`; null when they cannot be read without marking unread posts read. */
+const UNLISTABLE =
+  'Moodle marks posts read when this discussion is loaded, so the replies deleted with this post cannot be listed ' +
+  'here. Delete it on the Moodle site.';
+
+const withReplies = (n: number) => `Moodle does not let you delete a post that has replies (${n}).`;
+
+/**
+ * Posts deleted along with `post`, found without changing read state. Moodle refuses to delete a post with replies
+ * without mod/forum:deleteanypost, so without that right nothing else can go and no thread read is needed.
+ */
 async function deletionScope(
   api: MoodleApi,
   post: ForumPost,
   entry: DiscussionEntry,
-  tracked: boolean | null,
-): Promise<number[] | null> {
-  if (post.parentId === null && entry.numReplies === 0) return [];
-  const thread = await quietThread(api, tracked, entry, post.manualRead);
-  if (!thread) return null;
-  if (post.parentId !== null) return descendantIds(thread.posts, post.id);
-  return thread.posts
-    .filter((x) => x.id !== post.id)
-    .map((x) => x.id)
-    .sort((a, b) => a - b);
+  { forumId, tracked }: { forumId: number; tracked: boolean | null },
+): Promise<number[]> {
+  const isDiscussion = post.parentId === null;
+  if (isDiscussion && entry.numReplies === 0) return [];
+  const canDeleteAny = (await readForumAccess(api, forumId))?.candeleteanypost === true;
+  if (isDiscussion && !canDeleteAny) throw new InvalidInput(withReplies(entry.numReplies));
+  const thread = await quietThread(api, tracked, entry.id, post.manualRead);
+  if (!thread) {
+    if (canDeleteAny) throw new InvalidInput(UNLISTABLE);
+    return [];
+  }
+  const scope = isDiscussion
+    ? thread.posts
+        .filter((x) => x.id !== post.id)
+        .map((x) => x.id)
+        .sort((a, b) => a - b)
+    : descendantIds(thread.posts, post.id);
+  if (scope.length > 0 && !canDeleteAny) throw new InvalidInput(withReplies(scope.length));
+  return scope;
 }
 
 function deleteWarnings(isDiscussion: boolean, replies: number): string[] {
@@ -245,14 +262,8 @@ async function prepareDelete({ ctx, api, forum, post }: OwnPost, entry: Discussi
     throw new InvalidInput("You can't delete this post: Moodle allows it only within its editing time.");
   }
   const tracked = forum.settings?.tracked ?? null;
-  const descendants = await deletionScope(api, post, entry, tracked);
-  if (!descendants) {
-    throw new InvalidInput(UNREAD_FIRST);
-  }
-  // capabilities.delete is computed as if the post had no replies; deleting replies needs mod/forum:deleteanypost.
-  if (descendants.length > 0 && (await readForumAccess(api, forum.forumId))?.candeleteanypost !== true) {
-    throw new InvalidInput(`Moodle does not let you delete a post that has replies (${descendants.length}).`);
-  }
+  // capabilities.delete is computed as if the post had no replies; deletionScope checks the replies.
+  const descendants = await deletionScope(api, post, entry, { forumId: forum.forumId, tracked });
   const isDiscussion = post.parentId === null;
   const details = [byLine(post), `Text: ${currentText(post)}`];
   for (const f of post.attachments) details.push(`Attachment: ${f.name} (${formatBytes(f.size)})`);
@@ -279,7 +290,7 @@ async function assertUnchanged(api: MoodleApi, p: DeletePayload): Promise<void> 
   const post = await lookupForumPost(api, p.postId);
   if (!post || (await fingerprint(post)) !== p.fingerprint) throw new InvalidInput(STALE);
   const entry = await findDiscussion(api, p.forumId, p.discussionId);
-  const scope = entry ? await deletionScope(api, post, entry, p.tracked) : null;
+  const scope = entry ? await deletionScope(api, post, entry, p) : null;
   if (!scope || scope.join(',') !== p.descendants.join(',')) throw new InvalidInput(STALE);
 }
 

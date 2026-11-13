@@ -502,7 +502,15 @@ export const OUTPUT_SAMPLES: Record<string, object[]> = {
       discussions: [discussion],
       skippedForums: 1,
       truncatedForums: [
-        { forumId: 7, forumCmid: 5004, forumName: 'Announcements', remaining: 21, nextPage: 1, pageSize: 20 },
+        {
+          forumType: 'forum',
+          forumId: 7,
+          forumCmid: 5004,
+          forumName: 'Announcements',
+          remaining: 21,
+          nextPage: 1,
+          pageSize: 20,
+        },
       ],
     },
     { forums: [], discussions: [], skippedForums: 0, truncatedForums: [] },

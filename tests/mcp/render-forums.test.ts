@@ -230,7 +230,15 @@ describe('renderDiscussions grouping', () => {
       ],
       skippedForums: 0,
       truncatedForums: [
-        { forumId: 3001, forumCmid: 7010, forumName: 'Announcements', remaining: 21, nextPage: 1, pageSize: 10 },
+        {
+          forumType: 'forum',
+          forumId: 3001,
+          forumCmid: 7010,
+          forumName: 'Announcements',
+          remaining: 21,
+          nextPage: 1,
+          pageSize: 10,
+        },
       ],
     });
     expect(t).toContain(
@@ -319,10 +327,53 @@ describe('renderDiscussions grouping', () => {
       ],
       discussions: [summary({ forumKind: 'general', forumName: 'A', canCreateDiscussions: true })],
       skippedForums: 0,
-      truncatedForums: [{ forumId: 3002, forumCmid: 7011, forumName: 'B', remaining: 5, nextPage: 0, pageSize: 10 }],
+      truncatedForums: [
+        {
+          forumType: 'forum',
+          forumId: 3002,
+          forumCmid: 7011,
+          forumName: 'B',
+          remaining: 5,
+          nextPage: 0,
+          pageSize: 10,
+        },
+      ],
     });
     expect(t).toContain('A — Corporate Finance Basics, general, can post (forum_id 3001, cmid 7010)');
     expect(t).toContain('B — Corporate Finance Basics, general, can post (forum_id 3002, cmid 7011)');
     expect(t).toContain('5 more; pass forum_cmid 7011, page 0, limit 10');
+  });
+
+  it('prints a continuation for an omitted Advanced Forum that shares an id with a listed forum', () => {
+    const t = renderDiscussions({
+      forums: [
+        forumEntry({ forumName: 'Q&A', numDiscussions: 10 }),
+        forumEntry({
+          forumType: 'hsuforum',
+          forumId: 3001,
+          forumCmid: 8010,
+          forumName: 'Weekly',
+          numDiscussions: 5,
+        }),
+      ],
+      discussions: [summary({ forumKind: 'general', forumName: 'Q&A', canCreateDiscussions: true })],
+      skippedForums: 0,
+      truncatedForums: [
+        {
+          forumType: 'hsuforum',
+          forumId: 3001,
+          forumCmid: 8010,
+          forumName: 'Weekly',
+          remaining: 5,
+          nextPage: 0,
+          pageSize: 10,
+        },
+      ],
+    });
+    expect(t).toContain('Q&A — Corporate Finance Basics, general, can post (forum_id 3001, cmid 7010)');
+    expect(t).toContain(
+      'Weekly — Corporate Finance Basics, general, Advanced Forum, can post (forum_id 3001, cmid 8010)',
+    );
+    expect(t).toContain('5 more; pass forum_cmid 8010, page 0, limit 10');
   });
 });
