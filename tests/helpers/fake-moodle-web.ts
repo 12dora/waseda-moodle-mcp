@@ -52,8 +52,11 @@ export function fakeMoodleWeb(over: Partial<FakeWebState> = {}) {
     }
     const passport = url.searchParams.get('passport') ?? '';
     const parts = [md5Hex(MOODLE_URL + passport), state.token, ...(state.privateToken ? [state.privateToken] : [])];
-    const scheme = url.searchParams.get('urlscheme') ?? 'moodlemobile';
-    return new Response(null, { status: 302, headers: { Location: `${scheme}://token=${btoa(parts.join(':::'))}` } });
+    // like the live Open LMS site: its own app scheme, whatever urlscheme was asked for
+    return new Response(null, {
+      status: 302,
+      headers: { Location: `ltgopenlmsapp://token=${btoa(parts.join(':::'))}` },
+    });
   };
 
   const autologin = (url: URL): Response => {

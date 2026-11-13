@@ -14,7 +14,8 @@ import { isObj, readEnvelope } from './wire';
 const APP_USER_AGENT = 'Mozilla/5.0 (compatible; WasedaMoodleMCP) MoodleMobile';
 const TIMEOUT_MS = 15_000;
 const LAUNCH_PATH = '/admin/tool/mobile/launch.php';
-const APP_SCHEME = 'moodlemobile://'; // the urlscheme launchUrl asks for
+/** An app hand-off, not a web page. The site may answer with its own app's scheme (Open LMS: ltgopenlmsapp://). */
+const APP_LAUNCH = /^(?!https?:)[a-z][a-z0-9+.-]*:\/\/token=/i;
 /** The session cookie (the name may carry the site's `sessioncookie` suffix); "deleted" values never match. */
 const SESSION_COOKIE = /^\s*(MoodleSession\w*)=([A-Za-z0-9,-]+)\s*(?:;|$)/;
 
@@ -84,7 +85,7 @@ export async function launchWithSession(doFetch: typeof fetch, cookie: string): 
   return exchange(doFetch, launchUrl(passport, false), { headers: { Cookie: cookie } }, (res): SessionLaunch => {
     const location = locationOf(res);
     if (!location) throw new MoodleUnavailable();
-    if (!location.toLowerCase().startsWith(APP_SCHEME)) return { ok: false };
+    if (!APP_LAUNCH.test(location)) return { ok: false };
     let launch: LaunchToken;
     try {
       launch = parseLaunch(location, passport);
