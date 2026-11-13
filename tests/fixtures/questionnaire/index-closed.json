@@ -1,0 +1,13 @@
+{
+  "templates": [
+    {
+      "id": "main",
+      "html": "<div>\n    <core-course-module-description description=\"&lt;p&gt;Please answer by Thursday 19 November, 1 PM.&lt;/p&gt;\"\n                                    component=\"mod_questionnaire\" componentId=\"101\"\n                                    pagenum=\"1\"></core-course-module-description>\n    <ion-card>\n        <ion-card-content>\n            Closed on Thursday, 15 October 2026, 11:59 PM.\n        </ion-card-content>\n    </ion-card>\n</div>"
+    }
+  ],
+  "javascript": "(function(t) {\n    t.toggleRatebox = function($event, $fieldkey) {\n    }\n})(this);",
+  "otherdata": [],
+  "files": [],
+  "restrict": [],
+  "disabled": false
+}

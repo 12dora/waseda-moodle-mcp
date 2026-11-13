@@ -28,6 +28,13 @@ type CompletionPayload = {
   url: string;
 };
 
+/** Activities that count once handed in: a manual mark does not hand anything in. */
+const HANDED_IN: Record<string, string> = {
+  assign: 'the assignment',
+  quiz: 'the quiz',
+  questionnaire: 'the questionnaire answers',
+};
+
 interface CourseModule {
   courseId: number;
   name: string;
@@ -85,6 +92,7 @@ export async function prepareCompletion(ctx: ServiceContext, input: PrepareCompl
   const wasDone = await manualCompletionState(api, cm.courseId, cmid);
   const courseName = await courseNameOf(ctx, cm.courseId);
   const state = input.completed ? 'complete' : 'incomplete';
+  const handedIn = input.completed ? HANDED_IN[cm.modname] : undefined;
   const payload: CompletionPayload = {
     cmid,
     completed: input.completed,
@@ -94,7 +102,10 @@ export async function prepareCompletion(ctx: ServiceContext, input: PrepareCompl
     kind: 'completion',
     title: `Mark '${cm.name}' ${state}`,
     details: [`Activity: ${cm.name} (${courseName})`, `Mark as: ${input.completed ? 'complete' : 'not complete'}`],
-    warnings: wasDone === input.completed ? [`It is already marked ${state}.`] : [],
+    warnings: [
+      ...(wasDone === input.completed ? [`It is already marked ${state}.`] : []),
+      ...(handedIn ? [`Marking it done does not submit ${handedIn}.`] : []),
+    ],
     payload,
   });
 }

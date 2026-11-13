@@ -157,7 +157,9 @@ const getActivityTool = defineTool({
   title: 'Activity details',
   description:
     "Returns the full detail of one activity by cmid: for assignments the instructions, dates, accepted submission types and limits, the user's submission status and feedback; " +
-    'for quizzes the dates, attempts and grades; for forums recent discussions; for resources, pages and folders the description, body and file links. ' +
+    'for quizzes the dates, attempts and grades; for attendance the session summary and recent sessions; ' +
+    "for questionnaires (アンケート) the window, the user's status and every question with its choices and the user's own answers; " +
+    'for forums recent discussions; for resources, pages and folders the description, body and file links. ' +
     'Call it before answering questions about requirements or before preparing a submission.',
   annotations: READ_HINTS,
   input: z.object({ cmid: id('Course module id (cmid) shown in due items, course outlines and search results.') }),

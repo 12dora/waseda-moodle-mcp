@@ -55,7 +55,7 @@ export const searchContentOut = z.looseObject({
   skipped: z.number(),
 });
 
-/** assign | quiz | content | forum: the keys every variant has. */
+/** assign | quiz | content | forum | attendance | questionnaire: the keys every variant has. */
 export const activityOut = z.looseObject({
   type: z.string(),
   cmid: z.number(),
