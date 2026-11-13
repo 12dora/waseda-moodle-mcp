@@ -13,7 +13,7 @@ import type { CredentialPatch, CredentialRow, UserRow } from '../context';
 import { BudgetExceeded, MoodleUnavailable } from '../errors';
 import { launchWithSession, openSession } from '../moodle/web-session';
 import { nowMs } from '../time';
-import { type CredentialDeps, tokenColumns } from './account';
+import { type CredentialDeps, confirmed, tokenColumns } from './account';
 
 /** Moodle ends an idle web session after this long. */
 export const SESSION_IDLE_MS = 4 * 3_600_000;
@@ -49,8 +49,6 @@ const OPEN = { moodle: 3, queries: 4 }; // claim, key, autologin.php, save cooki
 
 type Result = Omit<RenewalOutcome, 'calls'>;
 type Cookie = { value: string; enc: string };
-
-const confirmed = (now: number) => ({ status: 'active' as const, lastOkAt: now, lastError: null });
 
 /** The store and key, plus the metered fetch every Moodle request of one refresh goes through. */
 type MeteredDeps = CredentialDeps & { http: typeof fetch };

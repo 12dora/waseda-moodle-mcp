@@ -72,6 +72,8 @@ const CREDENTIAL_COLUMNS: Record<keyof CredentialPatch, string> = {
   tokenHash: 'token_hash',
   tokenHint: 'token_hint',
   status: 'status',
+  connectedVia: 'connected_via',
+  connectedAt: 'connected_at',
   lastOkAt: 'last_ok_at',
   lastError: 'last_error',
   sessionEnc: 'session_enc',
@@ -234,21 +236,23 @@ function credentialMethods(db: D1Database): CredentialMethods {
     },
 
     async listRenewalCandidates(opts) {
+      const visited = 'MAX(COALESCE(c.session_ok_at, 0), COALESCE(c.session_tried_at, 0))';
       const { results } = await db
         .prepare(
           `SELECT u.*, c.* FROM users u JOIN credentials c ON c.user_id = u.id
-           WHERE (c.session_enc IS NOT NULL
-                  AND MAX(COALESCE(c.session_ok_at, 0), COALESCE(c.session_tried_at, 0)) <= ?)
+           WHERE (c.session_enc IS NOT NULL AND ${visited} <= ?)
               OR (c.session_enc IS NULL AND c.status = 'active' AND c.private_token_enc IS NOT NULL
                   AND (c.autologin_at IS NULL OR c.autologin_at <= ? OR c.autologin_at < c.connected_at))
-           ORDER BY CASE WHEN c.session_enc IS NOT NULL
-                         THEN MAX(COALESCE(c.session_ok_at, 0), COALESCE(c.session_tried_at, 0)) + ?
-                         ELSE COALESCE(c.autologin_at, 0) + ? END ASC, u.id ASC
+           ORDER BY CASE WHEN c.session_enc IS NOT NULL AND ${visited} > ? AND ${visited} <= ? THEN 0 ELSE 1 END,
+                    CASE WHEN c.session_enc IS NOT NULL THEN ${visited} + ? ELSE COALESCE(c.autologin_at, 0) + ? END,
+                    u.id
            LIMIT ?`,
         )
         .bind(
           opts.sessionBefore,
           opts.autologinBefore,
+          opts.mustVisit.after,
+          opts.mustVisit.until,
           opts.sessionIdleMs,
           opts.autologinRetryMs,
           Math.max(1, Math.floor(opts.limit)),

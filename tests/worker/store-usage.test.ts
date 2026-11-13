@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ActionRow } from '../../src/core/context';
+import type { ActionRow, ServiceContext } from '../../src/core/context';
+import { cancelAction } from '../../src/core/services/actions';
 import { type FailureClass, jstWeekStart, usagePeriods } from '../../src/core/usage';
 import { purgeUsage, resetUsageMemory } from '../../src/worker/store/usage';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
@@ -329,6 +330,18 @@ describe('write funnel', () => {
     expect(funnel('expired', 'message')).toBe(3);
     expect(funnel('expired', 'completion')).toBe(0);
     statements.mockRestore();
+  });
+
+  it('counts a cancel of an elapsed action as its expiry, once: no cancellation, nothing more at the purge', async () => {
+    await store.createAction(action('c1', 'message', Date.now() - 1));
+    const ctx = { user: { id: userId }, store, source: 'Claude' } as unknown as ServiceContext;
+    expect(await cancelAction(ctx, 'c1')).toMatchObject({ status: 'expired', message: 'Already expired.' });
+    expect((await store.getAction('c1'))?.status).toBe('expired');
+    expect(funnel('expired', 'message')).toBe(1);
+    expect(await cancelAction(ctx, 'c1')).toMatchObject({ status: 'expired' });
+    await store.purgeExpired(Date.now());
+    expect(funnel('expired', 'message')).toBe(1);
+    expect(funnel('cancelled', 'message')).toBe(0);
   });
 
   it('counts an expiry exactly once, whether a read or the purge finds it first', async () => {

@@ -247,6 +247,49 @@ describe('refreshFromLaunch', () => {
     expect(store.credentials.get(first.user.id)?.privateTokenEnc).toBe('enc(Deliver3dP)');
   });
 
+  /** The next credential read returns the row as it was, after a renewal stored TOKEN_B with its private token. */
+  function renewAfterRead(store: ReturnType<typeof setup>['store'], privateTokenEnc: string) {
+    const getCredential = store.getCredential.bind(store);
+    let paused = false;
+    store.getCredential = async (id) => {
+      const row = await getCredential(id);
+      if (paused || !row) return row;
+      paused = true;
+      const snapshot = { ...row };
+      const renewed = { tokenEnc: `enc(${TOKEN_B})`, tokenHash: await sha256Hex(TOKEN_B), privateTokenEnc };
+      expect(await store.updateCredentialIf(id, { tokenHash: row.tokenHash }, renewed)).toBe(true);
+      return snapshot;
+    };
+  }
+
+  it('a silent confirmation never pairs its private token with a token renewed meanwhile', async () => {
+    const { deps, store } = setup();
+    const first = await connectFromLaunch(deps, { launch: launchUrl(TOKEN_A, 'p1', 'P1'.repeat(32)), via: 'paste' });
+    renewAfterRead(store, 'enc(P2)');
+    const res = await refreshFromLaunch(deps, { launch: launchUrl(TOKEN_A, 'p1', 'P1'.repeat(32)) });
+    expect(res.tokenChanged).toBe(false);
+    expect(store.credentials.get(first.user.id)).toMatchObject({
+      tokenEnc: `enc(${TOKEN_B})`,
+      privateTokenEnc: 'enc(P2)',
+      connectedVia: 'paste',
+    });
+  });
+
+  it('a reconnect that lost a race is computed again against the current row', async () => {
+    const { deps, store } = setup();
+    const first = await connectFromLaunch(deps, { launch: launchUrl(TOKEN_A, 'p1', 'P1'.repeat(32)), via: 'paste' });
+    renewAfterRead(store, 'enc(P2)');
+    const res = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'bookmarklet' });
+    expect(res.tokenChanged).toBe(true);
+    // the explicit connect wins, but never with the renewed token's private token
+    expect(store.credentials.get(first.user.id)).toMatchObject({
+      tokenEnc: `enc(${TOKEN_A})`,
+      privateTokenEnc: null,
+      connectedVia: 'bookmarklet',
+      status: 'active',
+    });
+  });
+
   it('stores a new token as an extension connection', async () => {
     const { deps, store } = setup();
     const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'bookmarklet' });

@@ -212,10 +212,21 @@ describe('credentials', () => {
     await add(2008, {}); // no private token
     const reconnected = await add(2009, { privateTokenEnc: 'p', autologinAt: 800, connectedAt: 900 });
     const unconfirmed = await add(2010, { sessionEnc: 's' }); // saved after an autologin, launch.php failed
-    const opts = { sessionBefore: 500, autologinBefore: 500, sessionIdleMs: 1000, autologinRetryMs: 1000, limit: 10 };
+    const opts = {
+      sessionBefore: 500,
+      autologinBefore: 500,
+      sessionIdleMs: 1000,
+      autologinRetryMs: 1000,
+      mustVisit: { after: 0, until: 0 },
+      limit: 10,
+    };
     const ids = async (o: typeof opts) => (await store.listRenewalCandidates(o)).map((c) => c.user.id);
     expect(await ids(opts)).toEqual([open, unconfirmed, older, stale, retried, reconnected]);
     expect(await ids({ ...opts, limit: 1 })).toEqual([open]);
+    // sessions that idle out before the next run go ahead of every session to open
+    const must = { ...opts, mustVisit: { after: 0, until: 100 } };
+    expect(await ids(must)).toEqual([older, stale, open, unconfirmed, retried, reconnected]);
+    expect(await ids({ ...must, limit: 2 })).toEqual([older, stale]);
     const [first] = await store.listRenewalCandidates(opts);
     expect(first?.credential).toMatchObject({ userId: open, privateTokenEnc: 'p', sessionEnc: null });
     expect(first?.user).toMatchObject({ id: open, moodleUserId: 2004 });

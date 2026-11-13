@@ -1,13 +1,15 @@
 /**
  * Credential keepalive, first on every cron run (also on the night runs without a course sweep). Moodle ends a web
  * session after 4 h idle and the runs are at most 3 h apart, so a live session is due on every run unless it was
- * visited in the last KEEPALIVE_AFTER_MS. The least recently visited go first (a failing session rotates behind the
- * others; a session waiting to be opened gets its turn once its retry is due). One launch.php call per live session,
- * three to open one, all within the invocation budget. Background work: no activity statistics, no user activity
- * stamp; the outcomes only feed the credential-health counters (one batch per run).
+ * visited in the last KEEPALIVE_AFTER_MS. The sessions that would idle out before the next run go first; the rest by
+ * urgency (a failing session rotates behind the others; a session waiting to be opened gets its turn once its retry
+ * is due, with the capacity the first ones leave). One launch.php call per live session, three to open one, all within
+ * the invocation budget. Background work: no activity statistics, no user activity stamp; the outcomes only feed the
+ * credential-health counters (one batch per run).
  */
 
 import type { InvocationBudget } from '../core/budget';
+import type { CredentialRow } from '../core/context';
 import {
   AUTOLOGIN_RETRY_MS,
   type RenewalOutcome,
@@ -21,16 +23,35 @@ import type { Env } from './env';
 export const RENEW_MAX_USERS = 30;
 /** A session confirmed more recently than this is skipped (ticks are at most 3 h apart, the idle limit is 4 h). */
 const KEEPALIVE_AFTER_MS = 45 * 60_000;
-/**
- * A session idle this long would pass the idle limit before the next run that also sweeps courses (those runs are at
- * most 2 h apart), so it may use the sweep's reserve: the keepalive comes first, the sweep takes what is left. One
- * already idle past the limit has most likely ended and waits within the normal share like any other.
- */
-const URGENT_IDLE_MS = SESSION_IDLE_MS - 2 * 3_600_000 - 15 * 60_000;
+/** The cron's runs (wrangler.jsonc `17 0-14,16,19,22-23 * * *`, UTC). */
+const RUN_HOURS_UTC = [...Array.from({ length: 15 }, (_, h) => h), 16, 19, 22, 23];
+const RUN_MINUTE_UTC = 17;
+/** A run may start this much late. */
+const RUN_SLACK_MS = 15 * 60_000;
+const HOUR_MS = 3_600_000;
 
-function isUrgent(credential: { sessionEnc?: string | null; sessionOkAt?: number | null }, now: number): boolean {
-  const idle = now - (credential.sessionOkAt ?? 0);
-  return Boolean(credential.sessionEnc) && idle >= URGENT_IDLE_MS && idle < SESSION_IDLE_MS;
+/** The first scheduled run after `now`. */
+function nextRunAfter(now: number): number {
+  const day = new Date(now);
+  day.setUTCHours(0, RUN_MINUTE_UTC, 0, 0);
+  const runs = [0, 24].flatMap((d) => RUN_HOURS_UTC.map((h) => day.getTime() + (d + h) * HOUR_MS));
+  return runs.find((at) => at > now) ?? now + HOUR_MS;
+}
+
+/**
+ * The last visits of the sessions this run must keep: still within the idle limit, but past it before the next run
+ * (with its slack) could visit them. They go first and may use the sweep's reserve. One already idle past the limit
+ * has most likely ended and waits within the normal share like any other.
+ */
+function mustVisitWindow(now: number): { after: number; until: number } {
+  return { after: now - SESSION_IDLE_MS, until: nextRunAfter(now) + RUN_SLACK_MS - SESSION_IDLE_MS };
+}
+
+type SessionState = Pick<CredentialRow, 'sessionEnc' | 'sessionOkAt' | 'sessionTriedAt'>;
+
+function mustVisit(credential: SessionState, keep: { after: number; until: number }): boolean {
+  const visited = Math.max(credential.sessionOkAt ?? 0, credential.sessionTriedAt ?? 0);
+  return Boolean(credential.sessionEnc) && visited > keep.after && visited <= keep.until;
 }
 
 interface RenewalRunSummary {
@@ -56,8 +77,9 @@ function tally(summary: RenewalRunSummary, outcome: RenewalOutcome): void {
 }
 
 /**
- * Visits the most urgent candidates (sessions closest to idling out, sessions waiting to be opened) while the
- * invocation budget, minus `reserve`, still fits the next step; a session past URGENT_IDLE_MS may use the reserve too.
+ * Visits the most urgent candidates (sessions closest to idling out, then sessions waiting to be opened) while the
+ * invocation budget, minus `reserve`, still fits the next step; a session that must be visited before the next run
+ * goes first and may use the reserve too.
  * `env.DB` is the invocation's metered D1.
  */
 export async function runRenewal(
@@ -79,21 +101,20 @@ export async function runRenewal(
   const anyRoom = roomWith({ moodle: 0, queries: 0 });
   if (!anyRoom(1, 3)) return summary;
   const rt = await getRuntime(env);
+  const keep = mustVisitWindow(now);
   const candidates = await rt.store.listRenewalCandidates({
     sessionBefore: now - KEEPALIVE_AFTER_MS,
     autologinBefore: now - AUTOLOGIN_RETRY_MS,
     sessionIdleMs: SESSION_IDLE_MS,
     autologinRetryMs: AUTOLOGIN_RETRY_MS,
+    mustVisit: keep,
     limit: RENEW_MAX_USERS,
   });
   const deps = { ...renewalDeps(rt), fetch: budget.meter((input, init) => globalThis.fetch(input, init)) };
   for (const { user, credential } of candidates) {
-    const urgent = isUrgent(credential, now);
+    const urgent = mustVisit(credential, keep);
     const fits = urgent ? anyRoom : room;
-    if (!fits(1, 2)) {
-      if (urgent) break; // not even the whole budget is left
-      continue; // an urgent session further down may still use the reserve
-    }
+    if (!fits(1, 2)) break; // the sessions that must be visited come first: nothing further down fits either
     const outcome = await refreshCredential(deps, user, credential, { autologin: true, room: fits });
     tally(summary, outcome);
     counts.push(...renewalCounts(outcome));

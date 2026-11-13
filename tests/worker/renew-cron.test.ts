@@ -216,6 +216,33 @@ describe('runRenewal', () => {
     await expectAlive(sessions, 4 * HOUR - 5 * 60_000);
   });
 
+  it('a waiting setup only gets the capacity the sessions due before the next real tick leave', async () => {
+    const tickAt = (h: number) => Date.UTC(2026, 10, 13, h, 17);
+    vi.setSystemTime(tickAt(16));
+    const sessions: UserRow[] = [];
+    for (let i = 0; i < RENEW_MAX_USERS; i++) {
+      // the last one has no private token: if it idled out, only a manual reconnect would bring it back
+      const privateToken = i < RENEW_MAX_USERS - 1 ? 'Priv4teTok3n' : undefined;
+      sessions.push(await addUser(6000 + i, { session: `MoodleSession=n${i}`, sessionOkAt: tickAt(14), privateToken }));
+    }
+    const waiting = await addUser(6999, { privateToken: 'Priv4teTok3n', autologinAt: tickAt(16) - 7 * HOUR });
+    const lastSession = sessions[sessions.length - 1] as UserRow;
+
+    await scheduledTick(16, RENEW_MAX_USERS); // all 30 would idle out before 19:17: the setup waits
+    expect((await store.getCredential(lastSession.id))?.sessionOkAt).toBe(tickAt(16));
+    expect((await store.getCredential(waiting.id))?.autologinAt).toBe(tickAt(16) - 7 * HOUR);
+
+    for (const h of [19, 22, 23, ...Array.from({ length: 15 }, (_, i) => 24 + i)]) {
+      vi.setSystemTime(tickAt(h));
+      await expectAlive(sessions, 4 * HOUR - 5 * 60_000);
+      await scheduledTick(h % 24, RENEW_MAX_USERS);
+    }
+    // the setup ran once the sessions left capacity (23:17, an hour before the next tick)
+    expect((await store.getCredential(waiting.id))?.sessionEnc).not.toBeNull();
+    vi.setSystemTime(tickAt(24 + 16));
+    await expectAlive(sessions, 4 * HOUR - 5 * 60_000);
+  });
+
   it('rotates failing sessions behind the others and keeps their confirmation time', async () => {
     const start = Date.now();
     web.state.odd = new Set();

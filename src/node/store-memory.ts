@@ -216,11 +216,13 @@ export class MemoryStore implements Store {
       const retry = tried === null || tried <= opts.autologinBefore || tried < c.connectedAt;
       return c.status === 'active' && c.privateTokenEnc !== null && retry;
     };
+    const must = (c: CredentialRow) =>
+      c.sessionEnc && visited(c) > opts.mustVisit.after && visited(c) <= opts.mustVisit.until ? 0 : 1;
     const urgency = (c: CredentialRow) =>
       c.sessionEnc ? visited(c) + opts.sessionIdleMs : (c.autologinAt ?? 0) + opts.autologinRetryMs;
     return [...this.credentials.values()]
       .filter(due)
-      .sort((a, b) => urgency(a) - urgency(b) || a.userId - b.userId)
+      .sort((a, b) => must(a) - must(b) || urgency(a) - urgency(b) || a.userId - b.userId)
       .slice(0, Math.max(1, Math.floor(opts.limit)))
       .flatMap((c) => {
         const u = this.users.get(c.userId);

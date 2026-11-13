@@ -107,9 +107,18 @@ describe('MemoryStore credential, sessions, keys', () => {
     await s.putCredential({ ...credential(b.id), privateTokenEnc: 'p' });
     await s.putCredential({ ...credential(c.id), privateTokenEnc: 'p' });
     await s.updateCredentialStatus(c.id, { autologinAt: 900 });
-    const opts = { sessionBefore: 500, autologinBefore: 500, sessionIdleMs: 1000, autologinRetryMs: 1000, limit: 5 };
+    const opts = {
+      sessionBefore: 500,
+      autologinBefore: 500,
+      sessionIdleMs: 1000,
+      autologinRetryMs: 1000,
+      mustVisit: { after: 0, until: 0 },
+      limit: 5,
+    };
     const ids = (await s.listRenewalCandidates(opts)).map((r) => r.user.id);
     expect(ids).toEqual([b.id, a.id]); // b's retry came due (1000) before a's session idles out (1010)
+    const must = await s.listRenewalCandidates({ ...opts, mustVisit: { after: 0, until: 10 }, limit: 1 });
+    expect(must.map((r) => r.user.id)).toEqual([a.id]); // a idles out before the next run: it goes first
 
     const drop = { sessionEnc: null };
     expect(await s.updateCredentialIf(a.id, { tokenHash: 'h', sessionEnc: 'other' }, drop)).toBe(false);

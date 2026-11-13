@@ -277,6 +277,7 @@ export interface ForumListEntry {
 
 /** A forum whose discussions were not all returned. Continue with forum_cmid, nextPage, and the same pageSize as `limit`. */
 export interface TruncatedForum {
+  forumType: 'forum' | 'hsuforum';
   forumId: number;
   forumCmid: number | null;
   forumName: string;

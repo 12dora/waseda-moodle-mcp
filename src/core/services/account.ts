@@ -2,7 +2,7 @@
 
 import type { CredentialRow, MoodleApi, Store, UserRow } from '../context';
 import { type MasterKey, sha256Hex } from '../crypto';
-import { Forbidden, InvalidInput, MoodleError, NeedsReconnect, NotFound } from '../errors';
+import { Forbidden, InvalidInput, MoodleError, NeedsReconnect, NotFound, WmmError } from '../errors';
 import { type LaunchToken, MOODLE_URL, parseLaunch } from '../moodle/launch';
 import { isoJst, nowMs } from '../time';
 import { type ConnectVia, type CredentialInfo, DEFAULT_SETTINGS, type UserInfo } from '../types';
@@ -88,9 +88,20 @@ export async function tokenColumns(
   return { tokenChanged, columns, patch: arrived ? { privateTokenEnc: arrived } : {} };
 }
 
+/** Conflicting writers in a row before a connect gives up (each one stored a different token meanwhile). */
+const STORE_ATTEMPTS = 3;
+
+/** The status columns of a credential Moodle just accepted. */
+export const confirmed = (now: number) => ({ status: 'active' as const, lastOkAt: now, lastError: null });
+
 /**
  * Writes the credential. Returns whether the stored token differs from the previous one. `silent` (extension
  * refresh): the same token only confirms the credential (and stores a private token that arrived).
+ *
+ * An existing row is changed only by a compare-and-set on the token it was read with (the protocol renewal uses), so
+ * a private token is always stored with the token it came with. On a conflict the current row is read again: a silent
+ * refresh yields to an active credential with another token (a renewal or reconnect is at least as new); otherwise
+ * the write is computed again against the current row.
  */
 async function storeCredential(
   deps: CredentialDeps,
@@ -98,16 +109,25 @@ async function storeCredential(
   launch: LaunchToken,
   opts: { via: ConnectVia; silent: boolean },
 ): Promise<boolean> {
-  const now = nowMs();
-  const previous = await deps.store.getCredential(userId);
-  const { tokenChanged, columns, patch } = await tokenColumns(deps.key, launch, previous);
-  const confirmed = { status: 'active' as const, lastOkAt: now, lastError: null };
-  if (previous && !tokenChanged && opts.silent) {
-    await deps.store.updateCredentialStatus(userId, { ...confirmed, ...patch });
-    return false;
+  let previous = await deps.store.getCredential(userId);
+  if (!previous) {
+    const now = nowMs();
+    const { columns } = await tokenColumns(deps.key, launch, null);
+    await deps.store.putCredential({ userId, ...columns, ...confirmed(now), connectedVia: opts.via, connectedAt: now });
+    return true;
   }
-  await deps.store.putCredential({ userId, ...columns, ...confirmed, connectedVia: opts.via, connectedAt: now });
-  return tokenChanged;
+  for (let attempt = 0; attempt < STORE_ATTEMPTS; attempt++) {
+    const now = nowMs();
+    const { tokenChanged, columns, patch } = await tokenColumns(deps.key, launch, previous);
+    const origin = !tokenChanged && opts.silent ? {} : { connectedVia: opts.via, connectedAt: now };
+    const update = { ...patch, ...confirmed(now), ...origin };
+    if (await deps.store.updateCredentialIf(userId, { tokenHash: previous.tokenHash }, update)) return tokenChanged;
+    const current = await deps.store.getCredential(userId);
+    if (!current) throw new NotFound('No account is connected for this Moodle user.');
+    if (opts.silent && current.status === 'active' && current.tokenHash !== columns.tokenHash) return false;
+    previous = current;
+  }
+  throw new WmmError('The connection changed while it was being saved. Try again.', 'conflict');
 }
 
 const AUDIT_ACTOR: Record<ConnectVia, string> = {

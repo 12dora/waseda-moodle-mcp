@@ -77,8 +77,8 @@ export interface CredentialRow {
   autologinAt?: number | null; // last attempt to open a session
 }
 
-/** Credential fields a patch may change (everything except the owner and the connection's origin). */
-export type CredentialPatch = Partial<Omit<CredentialRow, 'userId' | 'connectedVia' | 'connectedAt'>>;
+/** Credential fields a patch may change: all but the owner (a reconnect also sets the connection's origin). */
+export type CredentialPatch = Partial<Omit<CredentialRow, 'userId'>>;
 
 /** The stored state a conditional credential update requires; each given field must still hold this value. */
 export interface CredentialExpect {
@@ -194,12 +194,15 @@ export interface Store {
    * or no session but an active credential with a private token, never tried since it was connected or last tried at
    * or before `autologinBefore`. Most urgent first: a session by `sessionIdleMs` after its last visit (so failing
    * sessions rotate behind the others), a session to open by when its retry came due (`autologinRetryMs` after it).
+   * Sessions last visited after `mustVisit.after` and at or before `mustVisit.until` (they idle out before the next
+   * run) go ahead of all others, so the ones to open only get the capacity they leave.
    */
   listRenewalCandidates(opts: {
     sessionBefore: number;
     autologinBefore: number;
     sessionIdleMs: number;
     autologinRetryMs: number;
+    mustVisit: { after: number; until: number };
     limit: number;
   }): Promise<RenewalCandidate[]>;
 

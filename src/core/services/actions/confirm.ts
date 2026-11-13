@@ -85,16 +85,23 @@ async function settleExecuting(ctx: ServiceContext, row: ActionRow, via: Via): P
   return failAction(ctx, row, via, error);
 }
 
+/**
+ * Settles a pending action past its expiry. Only the request that moves it records (and counts) the expiry; false
+ * means another request (a list, a purge, a confirm or cancel) moved it first.
+ */
+async function settleExpired(ctx: ServiceContext, row: ActionRow, via: Via): Promise<boolean> {
+  if (row.status !== 'pending' || !(await ctx.store.updateAction(row.id, { status: 'expired' }))) return false;
+  await auditSafe(ctx, 'action:expire', { id: row.id, kind: row.kind }, via);
+  return true;
+}
+
 /** Final actions answer with their stored result; cancelled / expired / running ones refuse; pending ones return null. */
 async function settledResult(ctx: ServiceContext, row: ActionRow, via: Via): Promise<ActionResult | null> {
   if (row.status === 'executed' || row.status === 'failed') return resultOf(row);
   if (row.status === 'cancelled') throw new InvalidInput('This action was cancelled.');
   if (row.status === 'executing') return settleExecuting(ctx, row, via);
   if (effectiveStatus(row) === 'expired') {
-    // only the request that moves it records the expiry; a lost race means a purge or a list already did
-    if (row.status === 'pending' && (await ctx.store.updateAction(row.id, { status: 'expired' }))) {
-      await auditSafe(ctx, 'action:expire', { id: row.id, kind: row.kind }, via);
-    }
+    await settleExpired(ctx, row, via);
     throw new InvalidInput('This action has expired. Prepare it again.');
   }
   return null;
@@ -150,12 +157,13 @@ export async function cancelAction(ctx: ServiceContext, actionId: string, via: V
   if (row.status === 'executed') throw new InvalidInput('This action was already executed and cannot be cancelled.');
   if (row.status === 'executing') throw new InvalidInput(ALREADY_RUNNING);
   const status = effectiveStatus(row);
+  // a confirm (or an expiry) that moved it after our read wins: answer from the row as it is now
   if (status === 'pending') {
-    // a confirm (or an expiry) that moved it after our read wins: answer from the row as it is now
     if (!(await ctx.store.updateAction(row.id, { status: 'cancelled' }))) return cancelAction(ctx, actionId, via);
     await auditSafe(ctx, 'action:cancel', { id: row.id, kind: row.kind }, via);
     return { actionId: row.id, status: 'cancelled', message: 'Cancelled.', url: null };
   }
+  if (row.status === 'pending' && !(await settleExpired(ctx, row, via))) return cancelAction(ctx, actionId, via);
   return { actionId: row.id, status, message: status === 'cancelled' ? 'Cancelled.' : `Already ${status}.`, url: null };
 }
 
