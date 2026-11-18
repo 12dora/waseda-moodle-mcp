@@ -5,6 +5,7 @@ import { randomId } from '../../crypto';
 import { Forbidden, InvalidInput, MoodleError } from '../../errors';
 import { isoJst, nowMs } from '../../time';
 import type { ActionKind, ActionPreview } from '../../types';
+import { actionTarget } from './target';
 
 const ACTION_TTL_MS = 30 * 60_000;
 /** Hard per-file ceiling for anything passed through this service. */
@@ -92,14 +93,26 @@ export interface PreviewParts {
   payload: Raw;
 }
 
+/** Newest other pending, unexpired action of the user with this target (no auto-cancel: only one of them can run). */
+async function rivalWarning(ctx: ServiceContext, target: string | null, now: number): Promise<string[]> {
+  if (!target) return [];
+  const rows = await ctx.store.listActions(ctx.user.id, { status: 'pending', target, limit: 20 });
+  const rival = rows.find((r) => r.expiresAt > now);
+  return rival ? [`Another pending action has the same target (${rival.id}); only one of them can run.`] : [];
+}
+
 export async function savePreview(ctx: ServiceContext, parts: PreviewParts): Promise<ActionPreview> {
   const now = nowMs();
   const approval = ctx.user.settings.writeMode === 'console' && canApproveInConsole(ctx) ? 'console' : 'chat';
   const { kind, title, details, payload } = parts;
-  const warnings =
-    ctx.user.settings.writeMode === 'console' && approval === 'chat'
-      ? [...parts.warnings, 'Console approval is unavailable locally; confirming in chat.']
-      : parts.warnings;
+  const target = actionTarget(kind, payload);
+  const warnings = [
+    ...parts.warnings,
+    ...(ctx.user.settings.writeMode === 'console' && approval === 'chat'
+      ? ['Console approval is unavailable locally; confirming in chat.']
+      : []),
+    ...(await rivalWarning(ctx, target, now)),
+  ];
   const row: ActionRow = {
     id: randomId('act'),
     userId: ctx.user.id,
@@ -110,6 +123,7 @@ export async function savePreview(ctx: ServiceContext, parts: PreviewParts): Pro
     details,
     warnings,
     payload,
+    target,
     source: ctx.source,
     createdAt: now,
     expiresAt: now + ACTION_TTL_MS,

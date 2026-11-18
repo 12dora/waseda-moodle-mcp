@@ -17,6 +17,7 @@ import type {
   UserRow,
 } from '../../src/core/context';
 import { MoodleError } from '../../src/core/errors';
+import { blocksClaim, SUPERSEDED_RESULT, supersedableIds } from '../../src/core/services/actions/target';
 import type { InferredSchedule, Scope, UserSettings } from '../../src/core/types';
 import { ACTION_STATUS_FROM, DEFAULT_SETTINGS } from '../../src/core/types';
 
@@ -182,12 +183,27 @@ function makeFakeStore(): FakeStore {
     claimAction: async (id, userId, now) => {
       const cur = state.actions.get(id);
       if (!cur || cur.userId !== userId || cur.status !== 'pending' || cur.expiresAt <= now) return false;
+      if ([...state.actions.values()].some((s) => blocksClaim(s, cur, now))) return false;
       state.actions.set(id, { ...cur, status: 'executing' });
       return true;
     },
+    supersedeActions: async (userId, target, now) => {
+      const ids = supersedableIds(state.actions.values(), userId, target, now);
+      for (const id of ids) {
+        const cur = state.actions.get(id);
+        if (cur) state.actions.set(id, { ...cur, status: 'superseded', result: SUPERSEDED_RESULT });
+      }
+      return ids;
+    },
     listActions: async (userId, o) =>
       [...state.actions.values()]
-        .filter((a) => a.userId === userId && (!o.status || a.status === o.status))
+        .filter(
+          (a) =>
+            a.userId === userId &&
+            (!o.status || a.status === o.status) &&
+            (o.target === undefined || a.target === o.target) &&
+            (o.before === undefined || a.createdAt < o.before),
+        )
         .sort((a, b) => b.createdAt - a.createdAt)
         .slice(0, o.limit),
 

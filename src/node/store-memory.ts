@@ -18,6 +18,7 @@ import type {
   UploadDraftRow,
   UserRow,
 } from '../core/context';
+import { blocksClaim, SUPERSEDED_RESULT, supersedableIds } from '../core/services/actions/target';
 import {
   ACTION_STATUS_FROM,
   type ActionStatus,
@@ -29,7 +30,7 @@ import {
 import { type PersistedState, restoredSettings, StateFile } from './state-file';
 
 const MAX_AUDIT_ROWS = 1000;
-/** Finished actions (executed, cancelled, expired, failed) are dropped from the state file after this long. */
+/** Finished actions (any status but pending) are dropped from the state file after this long. */
 const FINISHED_ACTION_TTL_MS = 30 * 24 * 3600 * 1000;
 /** Inferred class times are dropped after this long without a check (the D1 store purges them the same way). */
 const INFERRED_TTL_MS = 30 * 24 * 3600 * 1000;
@@ -79,7 +80,8 @@ export class MemoryStore implements Store {
 
   private restore(data: Partial<PersistedState>): void {
     for (const u of data.users ?? []) this.users.set(u.id, { ...u, settings: restoredSettings(u.settings) });
-    for (const a of data.actions ?? []) this.actions.set(a.id, a);
+    // files written before targets existed lack the field
+    for (const a of data.actions ?? []) this.actions.set(a.id, { ...a, target: a.target ?? null });
     for (const [k, v] of Object.entries(data.syllabus ?? {})) this.syllabusCache.set(k, v);
     const inferredCutoff = Date.now() - INFERRED_TTL_MS; // like the D1 purge
     for (const [k, v] of Object.entries(data.inferred ?? {})) {
@@ -302,9 +304,20 @@ export class MemoryStore implements Store {
   async claimAction(id: string, userId: number, now: number): Promise<boolean> {
     const a = this.actions.get(id);
     if (!a || a.userId !== userId || a.status !== 'pending' || a.expiresAt <= now) return false;
+    for (const s of this.actions.values()) if (blocksClaim(s, a, now)) return false;
     a.status = 'executing'; // single-threaded: check and set cannot interleave
     this.persist();
     return true;
+  }
+
+  async supersedeActions(userId: number, target: string, now: number): Promise<string[]> {
+    const ids = supersedableIds(this.actions.values(), userId, target, now);
+    for (const id of ids) {
+      const a = this.actions.get(id);
+      if (a) Object.assign(a, { status: 'superseded', result: SUPERSEDED_RESULT });
+    }
+    if (ids.length) this.persist();
+    return ids;
   }
 
   async updateAction(
@@ -323,13 +336,14 @@ export class MemoryStore implements Store {
 
   async listActions(
     userId: number,
-    opts: { status?: ActionStatus; limit: number; before?: number },
+    opts: { status?: ActionStatus; target?: string; limit: number; before?: number },
   ): Promise<ActionRow[]> {
     return [...this.actions.values()]
       .filter(
         (a) =>
           a.userId === userId &&
           (opts.status === undefined || a.status === opts.status) &&
+          (opts.target === undefined || a.target === opts.target) &&
           (opts.before === undefined || a.createdAt < opts.before),
       )
       .sort((a, b) => b.createdAt - a.createdAt)

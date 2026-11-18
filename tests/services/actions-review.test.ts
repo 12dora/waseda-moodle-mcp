@@ -197,6 +197,7 @@ describe('claiming (P1-2, P3-9)', () => {
     expect(result.status).toBe('executed');
     expect(t.store.actions.get(preview.actionId)!.status).toBe('executed'); // retried once
 
+    vi.setSystemTime(new Date(NOW.getTime() + 1000)); // a deliberate new write to the same conversation
     const again = await pending(t);
     t.store.updateAction = async () => {
       throw new Error('db down');
@@ -397,11 +398,11 @@ describe('previews and audit', () => {
     t.moodle.handlers.core_message_send_messages_to_conversation = [{ id: 1 }];
     const a = await prepareMessage(t.ctx, { conversationId: 5, text: 'a' });
     await confirmAction(t.ctx, a.actionId, 'mcp');
-    const b = await prepareMessage(t.ctx, { conversationId: 5, text: 'b' });
+    const b = await prepareMessage(t.ctx, { conversationId: 6, text: 'b' });
     await confirmAction(t.ctx, b.actionId, 'console');
-    const c = await prepareMessage(t.ctx, { conversationId: 5, text: 'c' });
+    const c = await prepareMessage(t.ctx, { conversationId: 7, text: 'c' });
     await cancelAction(t.ctx, c.actionId, 'console');
-    const d = await prepareMessage(t.ctx, { conversationId: 5, text: 'd' });
+    const d = await prepareMessage(t.ctx, { conversationId: 8, text: 'd' });
     await cancelAction(t.ctx, d.actionId);
     const actors = t.store.auditLog.filter((r) => r.action !== 'action:prepare').map((r) => [r.action, r.actor]);
     expect(actors).toEqual([

@@ -47,6 +47,7 @@ const action = (userId: number, id: string, over: Partial<ActionRow> = {}): Acti
   details: ['To: Teacher'],
   warnings: [],
   payload: { conversationId: 5 },
+  target: null,
   source: 'Claude',
   createdAt: 1000,
   expiresAt: 5000,
@@ -353,6 +354,101 @@ describe('actions', () => {
     expect(await store.updateAction('act_1', { status: 'cancelled' })).toBe(false); // a final status stays
     expect((await store.getAction('act_1'))?.status).toBe('executed');
     expect(await store.getAction('nope')).toBeNull();
+  });
+});
+
+describe('action targets', () => {
+  const live = () => Date.now() + 600_000;
+  const T = 'forum_discussion:forum:99';
+  const rival = (id: string, over: Partial<ActionRow> = {}) =>
+    action(user.id, id, { kind: 'forum_discussion', target: T, expiresAt: live(), ...over });
+  const superseded = (kind: string): number =>
+    (
+      t.sqlite
+        .prepare("SELECT COALESCE(SUM(value), 0) AS n FROM usage_counts WHERE metric = 'action_superseded' AND dim = ?")
+        .get(kind) as { n: number }
+    ).n;
+
+  it('stores the target and filters by it', async () => {
+    await store.createAction(rival('act_a', { createdAt: 1000 }));
+    await store.createAction(action(user.id, 'act_b', { createdAt: 2000, expiresAt: live() }));
+    expect((await store.getAction('act_a'))?.target).toBe(T);
+    expect((await store.getAction('act_b'))?.target).toBeNull();
+    expect((await store.listActions(user.id, { limit: 10, target: T })).map((a) => a.id)).toEqual(['act_a']);
+  });
+
+  it('never claims two rivals at once (single-statement guard)', async () => {
+    const now = Date.now();
+    await store.createAction(rival('act_a', { createdAt: now - 2000 }));
+    await store.createAction(rival('act_b', { createdAt: now - 1000 }));
+    const won = await Promise.all([store.claimAction('act_a', user.id, now), store.claimAction('act_b', user.id, now)]);
+    expect(won.filter(Boolean)).toHaveLength(1);
+  });
+
+  it('blocks a rival that was pending while another one ran; allows one prepared after it', async () => {
+    const now = Date.now();
+    await store.createAction(rival('act_a', { createdAt: now - 3000 }));
+    await store.createAction(rival('act_b', { createdAt: now - 2000 }));
+    expect(await store.claimAction('act_b', user.id, now)).toBe(true);
+    expect(await store.claimAction('act_a', user.id, now)).toBe(false); // b is executing
+    expect(await store.updateAction('act_b', { status: 'executed', executedAt: now - 1000 })).toBe(true);
+    expect(await store.claimAction('act_a', user.id, now)).toBe(false); // b ran while a was pending
+    await store.createAction(rival('act_c', { createdAt: now - 500 })); // a deliberate new write
+    expect(await store.claimAction('act_c', user.id, now)).toBe(true);
+    // other users and untargeted actions are unaffected
+    const other = await store.upsertUser({ moodleUserId: 1099, fullname: 'Hanako Suzuki', lang: 'ja' });
+    await store.createAction(action(other.id, 'act_o', { target: T, createdAt: now - 3000, expiresAt: live() }));
+    expect(await store.claimAction('act_o', other.id, now)).toBe(true);
+  });
+
+  it('treats an uncertain failure as a run; a plain failure blocks nothing', async () => {
+    const now = Date.now();
+    const uncertain = 'Moodle is down. Check Moodle to see whether it went through before retrying.';
+    await store.createAction(rival('act_a', { createdAt: now - 3000 }));
+    await store.createAction(rival('act_p', { createdAt: now - 2500, status: 'failed', executedAt: now - 2000 }));
+    await store.createAction(
+      rival('act_p2', { createdAt: now - 2500, status: 'failed', executedAt: now - 2000, error: 'Refused.' }),
+    );
+    expect(await store.supersedeActions(user.id, T, now)).toEqual([]);
+    await store.createAction(
+      rival('act_u', { createdAt: now - 2500, status: 'failed', executedAt: now - 2000, error: uncertain }),
+    );
+    await store.createAction(rival('act_b', { createdAt: now - 3000 }));
+    expect(await store.claimAction('act_b', user.id, now)).toBe(false);
+    expect((await store.supersedeActions(user.id, T, now)).sort()).toEqual(['act_a', 'act_b']);
+    expect(superseded('forum_discussion')).toBe(2);
+  });
+
+  it('ignores a stale executing rival', async () => {
+    const now = Date.now();
+    await store.createAction(rival('act_old', { createdAt: 0, expiresAt: now - 11 * 60_000, status: 'executing' }));
+    await store.createAction(rival('act_new', { createdAt: now - 1000 }));
+    expect(await store.claimAction('act_new', user.id, now)).toBe(true);
+  });
+
+  it('supersedes stale rivals once, counted per kind', async () => {
+    const now = Date.now();
+    await store.createAction(rival('act_a', { createdAt: now - 4000 }));
+    await store.createAction(rival('act_b', { createdAt: now - 3000 }));
+    await store.createAction(rival('act_x', { createdAt: now - 3500, expiresAt: now - 1 })); // expired: not moved
+    expect(await store.supersedeActions(user.id, T, now)).toEqual([]); // nothing ran yet
+    expect(await store.claimAction('act_b', user.id, now)).toBe(true);
+    await store.updateAction('act_b', { status: 'executed', executedAt: now - 2000 });
+    await store.createAction(rival('act_c', { createdAt: now - 1000 })); // prepared after b ran
+    expect(await store.supersedeActions(user.id, T, now)).toEqual(['act_a']);
+    expect(await store.supersedeActions(user.id, T, now)).toEqual([]);
+    expect(await store.getAction('act_a')).toMatchObject({
+      status: 'superseded',
+      result: 'Another action for the same target already ran.',
+    });
+    expect((await store.getAction('act_c'))?.status).toBe('pending');
+    expect(superseded('forum_discussion')).toBe(1);
+    expect(await store.updateAction('act_a', { status: 'cancelled' })).toBe(false); // final
+    // the generic transition counts too, once
+    await store.createAction(rival('act_d', { createdAt: now }));
+    expect(await store.updateAction('act_d', { status: 'superseded' })).toBe(true);
+    expect(await store.updateAction('act_d', { status: 'superseded' })).toBe(false);
+    expect(superseded('forum_discussion')).toBe(2);
   });
 });
 

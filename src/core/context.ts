@@ -124,6 +124,8 @@ export interface ActionRow {
   details: string[];
   warnings: string[];
   payload: Record<string, unknown>; // kind-specific execution data (see services/actions.ts)
+  /** What the action writes to (services/actions/target.ts); null = cannot conflict with other actions. */
+  target: string | null;
   source: string;
   createdAt: number;
   expiresAt: number;
@@ -225,9 +227,18 @@ export interface Store {
   getAction(id: string): Promise<ActionRow | null>;
   /**
    * Atomically move a pending, unexpired action owned by userId to 'executing'. Returns true only for the single
-   * caller that won the claim (D1: UPDATE … WHERE status='pending' AND expires_at > now, changes === 1).
+   * caller that won the claim (D1: UPDATE … WHERE status='pending' AND expires_at > now, changes === 1). An action
+   * with a target is not claimed while another action of the user with that target blocks it (target.ts blocksClaim:
+   * one is executing, or one was executed at or after this one was created); in D1 that check is part of the same
+   * UPDATE, so two rival actions can never both be claimed.
    */
   claimAction(id: string, userId: number, now: number): Promise<boolean>;
+  /**
+   * Atomically moves the user's pending, unexpired actions of `target` that another action of that target ran since
+   * (target.ts supersedableIds) to 'superseded' with result SUPERSEDED_RESULT, each counted once in the funnel.
+   * Returns the ids it moved.
+   */
+  supersedeActions(userId: number, target: string, now: number): Promise<string[]>;
   /**
    * A patch with a status applies only while the action is in ACTION_STATUS_FROM[status] (atomically); one without
    * just sets its fields. Returns whether the row changed: false = another request moved the action first.
@@ -236,7 +247,10 @@ export interface Store {
     id: string,
     patch: Partial<Pick<ActionRow, 'status' | 'executedAt' | 'result' | 'error'>>,
   ): Promise<boolean>;
-  listActions(userId: number, opts: { status?: ActionStatus; limit: number; before?: number }): Promise<ActionRow[]>;
+  listActions(
+    userId: number,
+    opts: { status?: ActionStatus; target?: string; limit: number; before?: number },
+  ): Promise<ActionRow[]>;
 
   // upload drafts (signed upload links)
   createUploadDraft(row: UploadDraftRow): Promise<void>;

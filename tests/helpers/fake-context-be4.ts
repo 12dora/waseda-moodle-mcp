@@ -16,6 +16,7 @@ import type {
   UserRow,
 } from '../../src/core/context';
 import { MoodleError } from '../../src/core/errors';
+import { blocksClaim, SUPERSEDED_RESULT, supersedableIds } from '../../src/core/services/actions/target';
 import {
   ACTION_STATUS_FROM,
   DEFAULT_SETTINGS,
@@ -169,8 +170,14 @@ export function createMemoryStoreForTests(): MemoryStore {
     async claimAction(id, userId, now) {
       const a = actions.get(id);
       if (!a || a.userId !== userId || a.status !== 'pending' || a.expiresAt <= now) return false;
+      if ([...actions.values()].some((s) => blocksClaim(s, a, now))) return false;
       a.status = 'executing';
       return true;
+    },
+    async supersedeActions(userId, target, now) {
+      const ids = supersedableIds(actions.values(), userId, target, now);
+      for (const id of ids) Object.assign(actions.get(id) ?? {}, { status: 'superseded', result: SUPERSEDED_RESULT });
+      return ids;
     },
     async updateAction(id, patch) {
       const a = actions.get(id);
@@ -184,6 +191,7 @@ export function createMemoryStoreForTests(): MemoryStore {
           (a) =>
             a.userId === userId &&
             (!opts.status || a.status === opts.status) &&
+            (opts.target === undefined || a.target === opts.target) &&
             (opts.before === undefined || a.createdAt < opts.before),
         )
         .sort((a, b) => b.createdAt - a.createdAt)

@@ -1,4 +1,5 @@
 import type { ActionRow, Store, UploadDraftRow } from '../../core/context';
+import { STALE_EXECUTING_MS, SUPERSEDED_RESULT, UNCERTAIN_MARK } from '../../core/services/actions/target';
 import { ACTION_STATUS_FROM, type ActionStatus, type UploadedDraftFile } from '../../core/types';
 import { usagePeriods } from '../../core/usage';
 import { changes, parseJson, toJson, updateStatement } from './rows';
@@ -13,6 +14,7 @@ interface ActionRaw {
   details: string;
   warnings: string;
   payload: string;
+  target: string | null;
   source: string;
   created_at: number;
   expires_at: number;
@@ -42,6 +44,7 @@ const toAction = (r: ActionRaw): ActionRow => ({
   details: parseJson<string[]>(r.details, []),
   warnings: parseJson<string[]>(r.warnings, []),
   payload: parseJson<Record<string, unknown>>(r.payload, {}),
+  target: r.target ?? null,
   source: r.source,
   createdAt: r.created_at,
   expiresAt: r.expires_at,
@@ -61,10 +64,19 @@ const toUpload = (r: UploadRaw): UploadDraftRow => ({
   expiresAt: r.expires_at,
 });
 
-type ActionMethods = Pick<Store, 'createAction' | 'getAction' | 'claimAction' | 'updateAction' | 'listActions'>;
+type ActionMethods = Pick<
+  Store,
+  'createAction' | 'getAction' | 'claimAction' | 'supersedeActions' | 'updateAction' | 'listActions'
+>;
 
 /** Final statuses of the write funnel (operator statistics: `action_<status>` per kind, with `action_prepared`). */
-const FUNNEL_STATUSES: ReadonlySet<ActionStatus> = new Set(['executed', 'failed', 'cancelled', 'expired']);
+const FUNNEL_STATUSES: ReadonlySet<ActionStatus> = new Set([
+  'executed',
+  'failed',
+  'cancelled',
+  'expired',
+  'superseded',
+]);
 
 /** +1 on `action_<event>` for the action's kind, only if the statement right before (same batch) changed a row. */
 const countAfter = (db: D1Database, id: string, event: string, now: number): D1PreparedStatement =>
@@ -98,39 +110,80 @@ function expireStatements(db: D1Database, now: number, userId?: number): D1Prepa
   ];
 }
 
+/** Rival `s` ran since the outer action was created: executed, or failed uncertainly (bind: UNCERTAIN_MARK). */
+const RAN_SINCE = `(s.status = 'executed' OR (s.status = 'failed' AND instr(COALESCE(s.error, ''), ?) > 0))
+  AND s.executed_at >= actions.created_at`;
+
+/**
+ * A rival of the action in the outer statement (same user and target, another id) that blocks its claim (target.ts
+ * blocksClaim): executing and not yet stale (bind: now - STALE_EXECUTING_MS), or ran since it was created.
+ */
+const BLOCKING_RIVAL = `EXISTS (SELECT 1 FROM actions s
+  WHERE s.user_id = actions.user_id AND s.target = actions.target AND s.id != actions.id
+    AND ((s.status = 'executing' AND s.expires_at > ?) OR (${RAN_SINCE})))`;
+
+/**
+ * The user's pending, unexpired actions of one target that a rival ran since (target.ts supersedableIds).
+ * Binds: userId, target, now, UNCERTAIN_MARK.
+ */
+const STALE_RIVALS = `user_id = ? AND target = ? AND status = 'pending' AND expires_at > ?
+  AND EXISTS (SELECT 1 FROM actions s
+    WHERE s.user_id = actions.user_id AND s.target = actions.target AND s.id != actions.id AND ${RAN_SINCE})`;
+
 /** The daily purge's share: every user's expired pending actions. */
 export async function expirePendingActions(db: D1Database, now: number): Promise<number> {
   const [, expired] = await db.batch(expireStatements(db, now));
   return expired?.meta?.changes ?? 0;
 }
 
+const insertStatement = (db: D1Database, row: ActionRow): D1PreparedStatement =>
+  db
+    .prepare(
+      `INSERT INTO actions (id, user_id, kind, status, approval, title, details, warnings, payload, target, source,
+         created_at, expires_at, executed_at, result, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      row.id,
+      row.userId,
+      row.kind,
+      row.status,
+      row.approval,
+      row.title,
+      toJson(row.details),
+      toJson(row.warnings),
+      toJson(row.payload),
+      row.target ?? null,
+      row.source,
+      row.createdAt,
+      row.expiresAt,
+      row.executedAt ?? null,
+      row.result ?? null,
+      row.error ?? null,
+    );
+
+/** Ids, funnel count (per kind) and move of the stale rivals; run as one batch (a transaction). */
+function supersedeStatements(db: D1Database, userId: number, target: string, now: number): D1PreparedStatement[] {
+  const args = [userId, target, now, UNCERTAIN_MARK];
+  return [
+    db.prepare(`SELECT id FROM actions WHERE ${STALE_RIVALS}`).bind(...args),
+    db
+      .prepare(
+        `INSERT INTO usage_counts (period, metric, dim, value)
+         SELECT ?, 'action_superseded', kind, COUNT(*) FROM actions WHERE ${STALE_RIVALS} GROUP BY kind
+         ON CONFLICT(period, metric, dim) DO UPDATE SET value = value + excluded.value`,
+      )
+      .bind(usagePeriods(now).day, ...args),
+    db
+      .prepare(`UPDATE actions SET status = 'superseded', result = ? WHERE ${STALE_RIVALS}`)
+      .bind(SUPERSEDED_RESULT, ...args),
+  ];
+}
+
 export function actionMethods(db: D1Database): ActionMethods {
   return {
     async createAction(row) {
-      const insert = db
-        .prepare(
-          `INSERT INTO actions (id, user_id, kind, status, approval, title, details, warnings, payload, source,
-             created_at, expires_at, executed_at, result, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          row.id,
-          row.userId,
-          row.kind,
-          row.status,
-          row.approval,
-          row.title,
-          toJson(row.details),
-          toJson(row.warnings),
-          toJson(row.payload),
-          row.source,
-          row.createdAt,
-          row.expiresAt,
-          row.executedAt ?? null,
-          row.result ?? null,
-          row.error ?? null,
-        );
-      await db.batch([insert, countAfter(db, row.id, 'prepared', row.createdAt)]);
+      await db.batch([insertStatement(db, row), countAfter(db, row.id, 'prepared', row.createdAt)]);
     },
 
     async getAction(id) {
@@ -138,16 +191,26 @@ export function actionMethods(db: D1Database): ActionMethods {
       return r ? toAction(r) : null;
     },
 
-    /** Single-winner claim: only a pending, unexpired action of this user can move to 'executing'. */
+    /**
+     * Single-winner claim: only a pending, unexpired action of this user without a blocking rival can move to
+     * 'executing'. One statement, so of two rivals claimed at once only the first sees no executing rival.
+     */
     async claimAction(id, userId, now) {
       const n = await changes(
         db
           .prepare(
-            `UPDATE actions SET status = 'executing' WHERE id = ? AND user_id = ? AND status = 'pending' AND expires_at > ?`,
+            `UPDATE actions SET status = 'executing'
+             WHERE id = ? AND user_id = ? AND status = 'pending' AND expires_at > ? AND NOT ${BLOCKING_RIVAL}`,
           )
-          .bind(id, userId, now),
+          .bind(id, userId, now, now - STALE_EXECUTING_MS, UNCERTAIN_MARK),
       );
       return n === 1;
+    },
+
+    /** Ids, funnel count and move in one batch (a transaction), so each superseded row is counted exactly once. */
+    async supersedeActions(userId, target, now) {
+      const res = await db.batch(supersedeStatements(db, userId, target, now));
+      return ((res[0]?.results ?? []) as Array<{ id: string }>).map((r) => r.id);
     },
 
     async updateAction(id, patch) {
@@ -174,6 +237,10 @@ export function actionMethods(db: D1Database): ActionMethods {
       if (opts.status) {
         where.push('status = ?');
         args.push(opts.status);
+      }
+      if (opts.target !== undefined) {
+        where.push('target = ?');
+        args.push(opts.target);
       }
       if (opts.before !== undefined) {
         where.push('created_at < ?');

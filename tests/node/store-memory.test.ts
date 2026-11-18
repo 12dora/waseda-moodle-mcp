@@ -25,6 +25,7 @@ const action = (patch: Partial<ActionRow> = {}): ActionRow => ({
   details: ['to Alice'],
   warnings: [],
   payload: { text: 'hi' },
+  target: null,
   source: 'Local',
   createdAt: 1000,
   expiresAt: 5000,
@@ -189,6 +190,45 @@ describe('MemoryStore actions, uploads, audit', () => {
     expect((await s.getAction('a1'))?.status).toBe('executing');
     await s.updateAction('a1', { status: 'executed' });
     expect(await s.claimAction('a1', 1, 1000)).toBe(false);
+  });
+
+  it('guards rival actions of one target like D1', async () => {
+    const s = new MemoryStore();
+    const T = 'completion:101';
+    await s.createAction(action({ id: 'a1', kind: 'completion', target: T, createdAt: 100 }));
+    await s.createAction(action({ id: 'a2', kind: 'completion', target: T, createdAt: 200 }));
+    await s.createAction(action({ id: 'a9', kind: 'completion', target: T, createdAt: 50, userId: 2 }));
+    expect((await s.listActions(1, { limit: 10, target: T })).map((a) => a.id)).toEqual(['a2', 'a1']);
+    expect(await s.claimAction('a2', 1, 1000)).toBe(true);
+    expect(await s.claimAction('a1', 1, 1000)).toBe(false); // a2 is executing
+    expect(await s.supersedeActions(1, T, 1000)).toEqual([]); // nothing ran yet
+    await s.updateAction('a2', { status: 'executed', executedAt: 300 });
+    await s.createAction(action({ id: 'a3', kind: 'completion', target: T, createdAt: 400 })); // after a2 ran
+    expect(await s.claimAction('a1', 1, 1000)).toBe(false); // a2 ran while a1 was pending
+    expect(await s.supersedeActions(1, T, 1000)).toEqual(['a1']);
+    expect(await s.getAction('a1')).toMatchObject({
+      status: 'superseded',
+      result: 'Another action for the same target already ran.',
+    });
+    expect(await s.supersedeActions(1, T, 1000)).toEqual([]);
+    expect((await s.getAction('a9'))?.status).toBe('pending'); // another user
+    expect(await s.claimAction('a3', 1, 1000)).toBe(true);
+  });
+
+  it('treats an uncertain failure as a run; a plain failure blocks nothing', async () => {
+    const s = new MemoryStore();
+    const T = 'message:c101';
+    const failed = { status: 'failed' as const, target: T, createdAt: 150, executedAt: 300 };
+    await s.createAction(action({ id: 'a1', target: T, createdAt: 100 }));
+    await s.createAction(action({ id: 'f1', ...failed, error: 'Moodle refused the message.' }));
+    expect(await s.supersedeActions(1, T, 1000)).toEqual([]);
+    await s.createAction(action({ id: 'a2', target: T, createdAt: 100 }));
+    expect(await s.claimAction('a2', 1, 1000)).toBe(true); // the plain failure did not block
+    await s.createAction(
+      action({ id: 'f2', ...failed, error: 'Lost. Check Moodle to see whether it went through before retrying.' }),
+    );
+    expect(await s.claimAction('a1', 1, 1000)).toBe(false);
+    expect(await s.supersedeActions(1, T, 1000)).toEqual(['a1']);
   });
 
   it('consumes an upload draft once', async () => {

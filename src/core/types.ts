@@ -359,7 +359,7 @@ export type ActionKind =
   | 'forum_post_edit' // edit one's own forum post
   | 'forum_post_delete' // delete one's own forum post (and its replies)
   | 'questionnaire_submit'; // answer a questionnaire (submit, or save as a draft)
-export type ActionStatus = 'pending' | 'executing' | 'executed' | 'cancelled' | 'expired' | 'failed';
+export type ActionStatus = 'pending' | 'executing' | 'executed' | 'cancelled' | 'expired' | 'failed' | 'superseded'; // final: another action for the same target ran while it was pending
 /**
  * The one status Store.updateAction may move an action FROM, per target status (pending -> executing is claimAction;
  * executing -> pending hands an action back for a retry). Any other transition loses: exactly one outcome per action.
@@ -370,6 +370,7 @@ export const ACTION_STATUS_FROM: Readonly<Partial<Record<ActionStatus, ActionSta
   pending: 'executing',
   cancelled: 'pending',
   expired: 'pending',
+  superseded: 'pending',
 };
 export type Approval = 'chat' | 'console';
 

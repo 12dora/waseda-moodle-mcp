@@ -13,11 +13,13 @@ import { executeQuestionnaire } from './questionnaire';
 import { executeMarkRead } from './read-state';
 import { type ActionOutcome, approveUrlFor, auditSafe, canApproveInConsole, type Raw } from './shared';
 import { executeSubmission } from './submission';
+import { STALE_EXECUTING_MS, UNCERTAIN_MARK } from './target';
 
 type Via = 'mcp' | 'console';
 
 const ALREADY_RUNNING = 'This action is already running.';
-const STALE_EXECUTING_MS = 10 * 60_000;
+const RIVAL_RUNNING = 'Another action for the same target is running.';
+const SUPERSEDED = 'Another action for the same target already ran. Prepare it again if you still need it.';
 
 const EXECUTORS: Record<ActionKind, (api: MoodleApi, payload: Raw) => Promise<ActionOutcome>> = {
   assign_submit: executeSubmission,
@@ -75,13 +77,14 @@ async function recordOutcome(ctx: ServiceContext, id: string, patch: Parameters<
 async function failAction(ctx: ServiceContext, row: ActionRow, via: Via, error: string): Promise<ActionResult> {
   await recordOutcome(ctx, row.id, { status: 'failed', executedAt: nowMs(), error });
   await auditSafe(ctx, 'action:execute', { id: row.id, kind: row.kind, status: 'failed', error }, via);
+  if (error.includes(UNCERTAIN_MARK)) await supersedeRivals(ctx, row, via); // it may have gone through
   return { actionId: row.id, status: 'failed', message: error, url: null };
 }
 
 /** An 'executing' row is normally another request mid-flight; one long past its expiry lost its worker. */
 async function settleExecuting(ctx: ServiceContext, row: ActionRow, via: Via): Promise<ActionResult> {
   if (nowMs() <= row.expiresAt + STALE_EXECUTING_MS) throw new InvalidInput(ALREADY_RUNNING);
-  const error = 'The action was interrupted. Check Moodle to see whether it went through before preparing it again.';
+  const error = `The action was interrupted. ${UNCERTAIN_MARK} before preparing it again.`;
   return failAction(ctx, row, via, error);
 }
 
@@ -95,10 +98,14 @@ async function settleExpired(ctx: ServiceContext, row: ActionRow, via: Via): Pro
   return true;
 }
 
-/** Final actions answer with their stored result; cancelled / expired / running ones refuse; pending ones return null. */
+/**
+ * Final actions answer with their stored result; cancelled / superseded / expired / running ones refuse; pending ones
+ * return null.
+ */
 async function settledResult(ctx: ServiceContext, row: ActionRow, via: Via): Promise<ActionResult | null> {
   if (row.status === 'executed' || row.status === 'failed') return resultOf(row);
   if (row.status === 'cancelled') throw new InvalidInput('This action was cancelled.');
+  if (row.status === 'superseded') throw new InvalidInput(SUPERSEDED);
   if (row.status === 'executing') return settleExecuting(ctx, row, via);
   if (effectiveStatus(row) === 'expired') {
     await settleExpired(ctx, row, via);
@@ -118,6 +125,30 @@ async function assertMayExecute(ctx: ServiceContext, row: ActionRow, via: Via): 
   if (needsConsole) throw new Forbidden(`Approve this action in the console: ${approveUrlFor(ctx, row.id)}`);
 }
 
+/**
+ * Best effort, like recordOutcome: the user's other pending actions of `target` that `ran` ran since become
+ * 'superseded' (the store counts each once). One audit entry lists them.
+ */
+async function supersedeRivals(ctx: ServiceContext, ran: ActionRow, via: Via): Promise<void> {
+  if (!ran.target) return;
+  const ids = await ctx.store.supersedeActions(ran.userId, ran.target, nowMs()).catch(() => []);
+  if (ids.length) await auditSafe(ctx, 'action:supersede', { ids, kind: ran.kind, after: ran.id }, via);
+}
+
+/**
+ * The claim failed but the row is still pending and unexpired: a rival blocks it. One that already ran makes it
+ * superseded (whichever request moves it counts it); one still running answers "running".
+ */
+async function refuseBlocked(ctx: ServiceContext, row: ActionRow, via: Via): Promise<ActionResult> {
+  if (!row.target) throw new InvalidInput(ALREADY_RUNNING);
+  const ids = await ctx.store.supersedeActions(row.userId, row.target, nowMs()).catch(() => []);
+  if (ids.length) await auditSafe(ctx, 'action:supersede', { ids, kind: row.kind }, via);
+  // answered from the row as it is now: superseded by us or by the rival's own run, or still pending
+  const settled = await settledResult(ctx, await loadOwned(ctx, row.id), via);
+  if (settled) return settled;
+  throw new InvalidInput(RIVAL_RUNNING);
+}
+
 async function runAction(ctx: ServiceContext, row: ActionRow, via: Via): Promise<ActionResult> {
   let outcome: ActionOutcome;
   try {
@@ -129,11 +160,12 @@ async function runAction(ctx: ServiceContext, row: ActionRow, via: Via): Promise
       throw e;
     }
     let error = e instanceof WmmError ? e.message : 'Unexpected error while executing the action.';
-    if (e instanceof MoodleUnavailable) error += ' Check Moodle to see whether it went through before retrying.';
+    if (e instanceof MoodleUnavailable) error += ` ${UNCERTAIN_MARK} before retrying.`;
     return failAction(ctx, row, via, error);
   }
   await recordOutcome(ctx, row.id, { status: 'executed', executedAt: nowMs(), result: encodeResult(outcome) });
   await auditSafe(ctx, 'action:execute', { id: row.id, kind: row.kind, status: 'executed' }, via);
+  await supersedeRivals(ctx, row, via);
   return { actionId: row.id, status: 'executed', ...outcome };
 }
 
@@ -147,9 +179,10 @@ export async function confirmAction(ctx: ServiceContext, actionId: string, via: 
   if (settled) return settled;
   await assertMayExecute(ctx, row, via);
   if (await ctx.store.claimAction(row.id, ctx.user.id, nowMs())) return runAction(ctx, row, via);
-  const current = await settledResult(ctx, await loadOwned(ctx, actionId), via);
+  const fresh = await loadOwned(ctx, actionId);
+  const current = await settledResult(ctx, fresh, via);
   if (current) return current;
-  throw new InvalidInput(ALREADY_RUNNING);
+  return refuseBlocked(ctx, fresh, via);
 }
 
 export async function cancelAction(ctx: ServiceContext, actionId: string, via: Via = 'mcp'): Promise<ActionResult> {

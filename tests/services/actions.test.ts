@@ -741,6 +741,7 @@ describe('prepareMessage / execution', () => {
     ]);
 
     moodle.handlers.core_message_send_instant_messages = [{ msgid: -1, errormessage: 'Blocked by the recipient.' }];
+    vi.setSystemTime(new Date(NOW.getTime() + 1000)); // prepared after the first one ran: a deliberate new write
     const p2 = await prepareMessage(ctx, { toUserId: 2002, text: 'again' });
     const r2 = await confirmAction(ctx, p2.actionId, 'mcp');
     expect(r2).toMatchObject({
@@ -804,6 +805,7 @@ describe('prepareCompletion / execution', () => {
     moodle.handlers.core_completion_get_activities_completion_status = statuses(1, 0);
     const done = await prepareCompletion(ctx, { cmid: 9, completed: true });
     expect(done.warnings).toEqual(['Marking it done does not submit the questionnaire answers.']);
+    await cancelAction(ctx, done.actionId); // only the questionnaire note is under test, not the rival warning
     moodle.handlers.core_completion_get_activities_completion_status = statuses(1, 1);
     const undo = await prepareCompletion(ctx, { cmid: 9, completed: false });
     expect(undo.warnings).toEqual([]);
@@ -862,7 +864,7 @@ describe('cancelAction / listActionRecords', () => {
   it('lists records newest first with ISO times and lazily expired status', async () => {
     const { ctx, moodle } = createTestContext();
     moodle.handlers.core_message_send_messages_to_conversation = [{ id: 1 }];
-    const first = await prepareMessage(ctx, { conversationId: 1, text: 'first' });
+    const first = await prepareMessage(ctx, { conversationId: 2, text: 'first' }); // another target: not superseded
     vi.setSystemTime(new Date(NOW.getTime() + 60_000));
     const second = await prepareMessage(ctx, { conversationId: 1, text: 'second' });
     await confirmAction(ctx, second.actionId, 'mcp');

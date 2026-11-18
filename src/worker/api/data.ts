@@ -11,7 +11,14 @@ import type { ActionStatus } from '../../core/types';
 import type { AppEnv } from '../auth';
 import { consoleContext, intParam, MAX_COURSE_ID, oneOf, session, storeOf } from './shared';
 
-const ACTION_STATUSES: readonly ActionStatus[] = ['pending', 'executed', 'cancelled', 'expired', 'failed'];
+const ACTION_STATUSES: readonly ActionStatus[] = [
+  'pending',
+  'executed',
+  'cancelled',
+  'expired',
+  'failed',
+  'superseded',
+];
 
 export function dataRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
