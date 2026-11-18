@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { type Translate, translate } from '../i18n/core';
 import { en } from '../i18n/en';
-import { auditActionLabel, auditActorLabel } from './audit';
+import { auditActionLabel, auditActorLabel } from './activityLabels';
 
 const t: Translate = (key, vars) => translate(en, key, vars);
 
 describe('audit labels', () => {
   it('localizes known actions and tool calls', () => {
     expect(auditActionLabel('apikey:create', t)).toBe('Created API key');
+    expect(auditActionLabel('action:supersede', t)).toBe('Write action superseded');
     expect(auditActionLabel('tool:get_due_items', t)).toBe('Tool call: get_due_items');
     expect(auditActionLabel('something:new', t)).toBe('something:new');
   });

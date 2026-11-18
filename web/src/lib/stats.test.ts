@@ -5,9 +5,12 @@ import {
   barSlots,
   DEFAULT_STATS_RANGE,
   FAILURE_CLASSES,
+  FUNNEL_OUTCOMES,
   failureRate,
   formatRate,
   formatRetained,
+  funnelCounts,
+  funnelHasData,
   hasUsage,
   hourBars,
   LATENCY_BUCKETS,
@@ -271,5 +274,30 @@ describe('barPath', () => {
 
   it('draws nothing for zero bars', () => {
     expect(barPath(0, 10, 4, 0)).toBe('');
+  });
+});
+
+describe('write funnel', () => {
+  const row = (over: Partial<UsageStats['actions'][number]> = {}): UsageStats['actions'][number] => ({
+    kind: 'message',
+    prepared: 0,
+    executed: 0,
+    failed: 0,
+    cancelled: 0,
+    expired: 0,
+    superseded: 0,
+    ...over,
+  });
+
+  it('puts superseded after expired', () => {
+    expect(FUNNEL_OUTCOMES).toEqual(['executed', 'failed', 'cancelled', 'expired', 'superseded']);
+    expect(funnelCounts(row({ prepared: 5, executed: 1, failed: 2, cancelled: 3, expired: 4, superseded: 6 }))).toEqual(
+      [5, 1, 2, 3, 4, 6],
+    );
+  });
+
+  it('keeps rows that only have superseded counts', () => {
+    expect(funnelHasData(row())).toBe(false);
+    expect(funnelHasData(row({ superseded: 1 }))).toBe(true);
   });
 });

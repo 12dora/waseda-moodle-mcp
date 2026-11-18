@@ -6,6 +6,7 @@ const ACTIONS: Readonly<Record<string, MessageKey>> = {
   'action:execute': 'audit.action.action_execute',
   'action:cancel': 'audit.action.action_cancel',
   'action:expire': 'audit.action.action_expire',
+  'action:supersede': 'audit.action.action_supersede',
   'apikey:create': 'audit.action.apikey_create',
   'apikey:revoke': 'audit.action.apikey_revoke',
   'app:revoke': 'audit.action.app_revoke',

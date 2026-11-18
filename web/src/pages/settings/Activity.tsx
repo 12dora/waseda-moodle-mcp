@@ -7,7 +7,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { ErrorBox } from '../../components/ErrorBox';
 import { PageLoading } from '../../components/Spinner';
 import { useI18n } from '../../i18n';
-import { auditActionLabel, auditActorLabel } from '../../lib/audit';
+import { auditActionLabel, auditActorLabel } from '../../lib/activityLabels';
 import { formatDateTime } from '../../lib/time';
 
 const PAGE = 50;

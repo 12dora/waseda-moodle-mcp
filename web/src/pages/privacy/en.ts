@@ -128,7 +128,7 @@ export const en: PrivacyDoc = {
             head: ['Data', 'Retention'],
             rows: [
               ['Activity log', '90 days'],
-              ['Finished, cancelled or expired actions', '90 days after creation'],
+              ['Finished, cancelled, expired or superseded actions', '90 days after creation'],
               ['Pending actions', 'Expire after 30 minutes'],
               ['Revoked API keys', '90 days after revocation'],
               ['Course snapshots', '30 days after last check'],

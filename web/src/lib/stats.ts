@@ -145,3 +145,16 @@ export function barPath(x: number, baseline: number, width: number, height: numb
     'Z',
   ].join(' ');
 }
+
+/** Funnel outcome columns after "prepared", in display order; each is also an `actions.status.*` label. */
+export const FUNNEL_OUTCOMES = ['executed', 'failed', 'cancelled', 'expired', 'superseded'] as const;
+
+/** True when a funnel row has any count worth showing. */
+export function funnelHasData(a: UsageStats['actions'][number]): boolean {
+  return a.prepared > 0 || FUNNEL_OUTCOMES.some((k) => a[k] > 0);
+}
+
+/** Funnel row values: prepared, then each outcome in `FUNNEL_OUTCOMES` order. */
+export function funnelCounts(a: UsageStats['actions'][number]): number[] {
+  return [a.prepared, ...FUNNEL_OUTCOMES.map((k) => a[k])];
+}

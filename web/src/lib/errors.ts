@@ -25,3 +25,22 @@ export function errorText(e: unknown, t: Translate): string {
   if (e instanceof Error && e.message) return e.message;
   return t('common.requestFailed', { status: '?' });
 }
+
+/** Known approve / cancel refusals (exact server messages) → localized text. */
+const REFUSALS: Readonly<Record<string, MessageKey>> = {
+  'Another action for the same target already ran. Prepare it again if you still need it.':
+    'actions.refusal.superseded',
+  'This action has expired. Prepare it again.': 'actions.refusal.expired',
+  'This action was cancelled.': 'actions.refusal.cancelled',
+  'This action is already running.': 'actions.refusal.running',
+  'Another action for the same target is running.': 'actions.refusal.running',
+};
+
+/** Like `errorText`, but an `invalid_input` answer keeps its meaning: known refusals are localized, others show the server text. */
+export function serverMessageText(e: unknown, t: Translate): string {
+  if (e instanceof ApiError && e.code === 'invalid_input' && e.message && !/^HTTP \d+$/.test(e.message)) {
+    const key = REFUSALS[e.message];
+    return key ? t(key) : e.message;
+  }
+  return errorText(e, t);
+}

@@ -27,6 +27,16 @@ describe('dictionaries', () => {
     });
   }
 
+  it('has a label for the superseded action status and audit entry', () => {
+    for (const lang of LANGS) {
+      expect(DICTIONARIES[lang]['actions.status.superseded'], lang).toBeTruthy();
+      expect(DICTIONARIES[lang]['audit.action.action_supersede'], lang).toBeTruthy();
+    }
+    expect(en['actions.status.superseded']).toBe('Superseded');
+    expect(DICTIONARIES.ja['actions.status.superseded']).toBe('置き換え済み');
+    expect(DICTIONARIES['zh-CN']['actions.status.superseded']).toBe('已被替代');
+  });
+
   it('keeps the product name', () => {
     for (const lang of LANGS) expect(DICTIONARIES[lang]['app.name']).toBe('Waseda Moodle MCP');
   });

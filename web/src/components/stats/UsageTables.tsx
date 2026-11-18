@@ -1,6 +1,15 @@
 import type { UsageStats } from '../../api/types';
 import { type MessageKey, useI18n } from '../../i18n';
-import { FAILURE_CLASSES, formatRetained, LATENCY_BUCKETS, weekRange, withCounts } from '../../lib/stats';
+import {
+  FAILURE_CLASSES,
+  FUNNEL_OUTCOMES,
+  formatRetained,
+  funnelCounts,
+  funnelHasData,
+  LATENCY_BUCKETS,
+  weekRange,
+  withCounts,
+} from '../../lib/stats';
 import { StatTable } from './StatTable';
 
 type Fmt = (n: number) => string;
@@ -104,24 +113,17 @@ export function LatencyTable({ tools, fmt }: { tools: Tools; fmt: Fmt }) {
   );
 }
 
-/** Write funnel per action kind: prepared → completed / failed / cancelled / expired. */
+/** Write funnel per action kind: prepared → completed / failed / cancelled / expired / superseded. */
 export function ActionsTable({ actions, fmt }: { actions: UsageStats['actions']; fmt: Fmt }) {
   const { t } = useI18n();
-  const rows = actions.filter((a) => a.prepared || a.executed || a.failed || a.cancelled || a.expired);
+  const rows = actions.filter(funnelHasData);
   return (
     <StatTable
-      head={[
-        t('stats.col.kind'),
-        t('stats.col.prepared'),
-        t('actions.status.executed'),
-        t('actions.status.failed'),
-        t('actions.status.cancelled'),
-        t('actions.status.expired'),
-      ]}
+      head={[t('stats.col.kind'), t('stats.col.prepared'), ...FUNNEL_OUTCOMES.map((k) => t(`actions.status.${k}`))]}
       rows={rows.map((a) => ({
         key: a.kind,
         label: t(`actions.kind.${a.kind}`),
-        cells: [a.prepared, a.executed, a.failed, a.cancelled, a.expired].map(fmt),
+        cells: funnelCounts(a).map(fmt),
       }))}
       empty={t('stats.actions.empty')}
     />

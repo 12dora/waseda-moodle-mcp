@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { approveAction, cancelAction, listActions } from '../api/endpoints';
 import type { ActionRecord } from '../api/types';
@@ -10,10 +10,11 @@ import { notifyActionsChanged, PageHeader } from '../components/Layout';
 import { PageLoading } from '../components/Spinner';
 import { useToast } from '../components/Toast';
 import { useI18n } from '../i18n';
-import { errorText } from '../lib/errors';
+import { startBackgroundRefresh } from '../lib/backgroundRefresh';
+import { serverMessageText } from '../lib/errors';
 import { PENDING_LIMIT } from '../lib/pending';
 import { formatDateTime } from '../lib/time';
-import { useAsync } from '../lib/useAsync';
+import { type AsyncState, useAsync } from '../lib/useAsync';
 
 const STATUS_BADGE: Record<ActionRecord['status'], string> = {
   pending: 'badge-warn',
@@ -21,6 +22,7 @@ const STATUS_BADGE: Record<ActionRecord['status'], string> = {
   executed: 'badge-ok',
   cancelled: '',
   expired: '',
+  superseded: '',
   failed: 'badge-danger',
 };
 
@@ -88,14 +90,53 @@ function HistoryRow({ action: a, focused }: { action: ActionRecord; focused: boo
   );
 }
 
+type ListState = AsyncState<ActionRecord[]>;
+
+/** Keeps both lists fresh without a spinner: on tab focus / visibility and every 30 s while something is pending. */
+function useBackgroundSync(pending: ListState, history: ListState, background: { current: boolean }) {
+  const count = pending.data?.length;
+  const countRef = useRef(count);
+  const expectBackground = useRef(false);
+  const reloadPending = pending.reload;
+  const reloadHistory = history.reload;
+
+  const reload = useCallback(() => {
+    expectBackground.current = true;
+    background.current = true;
+    try {
+      reloadPending();
+      reloadHistory();
+    } finally {
+      background.current = false;
+    }
+  }, [background, reloadPending, reloadHistory]);
+
+  useEffect(() => {
+    const countNow = () => countRef.current ?? 0;
+    return startBackgroundRefresh({ reload, shouldPoll: () => countNow() > 0, doc: document, win: window });
+  }, [reload]);
+
+  useEffect(() => {
+    const prev = countRef.current;
+    countRef.current = count;
+    if (!expectBackground.current || count === undefined) return;
+    expectBackground.current = false;
+    // Let the sidebar badge follow a change found by a background reload.
+    if (prev !== undefined && prev !== count) notifyActionsChanged();
+  }, [count]);
+}
+
 export function ActionsPage() {
   const { t } = useI18n();
   const toast = useToast();
   const [params] = useSearchParams();
   const focus = params.get('focus');
-  const pending = useAsync(() => listActions('pending', PENDING_LIMIT));
-  const history = useAsync(() => listActions(undefined, 50));
+  // Set only around a background reload so its requests are not counted as console usage.
+  const background = useRef(false);
+  const pending = useAsync(() => listActions('pending', PENDING_LIMIT, background.current));
+  const history = useAsync(() => listActions(undefined, 50, background.current));
   const [busy, setBusy] = useState<string | null>(null);
+  useBackgroundSync(pending, history, background);
 
   const ready = pending.data !== undefined;
   useEffect(() => {
@@ -115,7 +156,7 @@ export function ActionsPage() {
         toast.show(t('actions.rejectedToast'));
       }
     } catch (e) {
-      toast.show(errorText(e, t), 'error');
+      toast.show(serverMessageText(e, t), 'error');
     } finally {
       setBusy(null);
       pending.reload();
@@ -132,7 +173,7 @@ export function ActionsPage() {
 
       <Card title={t('actions.pending')}>
         {pending.loading && !pending.data && <PageLoading label={t('common.loading')} />}
-        {pending.error != null && <ErrorBox error={pending.error} onRetry={pending.reload} />}
+        {pending.error != null && !pending.data && <ErrorBox error={pending.error} onRetry={pending.reload} />}
         {pending.data?.length === 0 && <EmptyState>{t('actions.emptyPending')}</EmptyState>}
         {pending.data && pending.data.length > 0 && (
           <ul className="actions-list">
@@ -145,7 +186,7 @@ export function ActionsPage() {
 
       <Card title={t('actions.history')}>
         {history.loading && !history.data && <PageLoading label={t('common.loading')} />}
-        {history.error != null && <ErrorBox error={history.error} onRetry={history.reload} />}
+        {history.error != null && !history.data && <ErrorBox error={history.error} onRetry={history.reload} />}
         {history.data && done.length === 0 && <EmptyState>{t('actions.emptyHistory')}</EmptyState>}
         {done.length > 0 && (
           <ul className="rows">
