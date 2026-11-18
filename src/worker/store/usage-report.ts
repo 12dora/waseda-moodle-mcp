@@ -61,6 +61,7 @@ const BY_DIM = [
   'action_failed',
   'action_cancelled',
   'action_expired',
+  'action_superseded',
 ];
 
 const marks = (n: number) => Array.from({ length: n }, () => '?').join(', ');
@@ -140,7 +141,7 @@ function hourly(dims: Map<string, number>): number[] {
 }
 
 function actionFunnel(dim: (metric: string) => Map<string, number>): ActionFunnel[] {
-  const stages = ['prepared', 'executed', 'failed', 'cancelled', 'expired'] as const;
+  const stages = ['prepared', 'executed', 'failed', 'cancelled', 'expired', 'superseded'] as const;
   const maps = stages.map((s) => [s, dim(`action_${s}`)] as const);
   const kinds = new Set(maps.flatMap(([, m]) => [...m.keys()]));
   return [...kinds]

@@ -259,6 +259,7 @@ describe('write funnel', () => {
     details: [],
     warnings: [],
     payload: {},
+    target: null,
     source: 'Claude',
     createdAt: NOW,
     expiresAt,
@@ -357,6 +358,20 @@ describe('write funnel', () => {
     expect(funnel('expired', 'message')).toBe(2);
     expect(funnel('expired', 'completion')).toBe(1);
     expect((await store.getAction('live'))?.status).toBe('pending');
+  });
+
+  it('counts a pending row becoming superseded exactly once for its kind', async () => {
+    await store.createAction(action('s1', 'forum_discussion'));
+    await store.createAction(action('s2', 'forum_discussion'));
+    await store.createAction(action('s3', 'message'));
+    expect(await store.updateAction('s1', { status: 'superseded' })).toBe(true);
+    expect(await store.updateAction('s1', { status: 'superseded' })).toBe(false);
+    expect(await store.updateAction('s1', { status: 'cancelled' })).toBe(false);
+    expect(funnel('superseded', 'forum_discussion')).toBe(1);
+    expect(funnel('superseded', 'message')).toBe(0);
+    expect(funnel('cancelled', 'forum_discussion')).toBe(0);
+    expect((await store.getAction('s1'))?.status).toBe('superseded');
+    expect((await store.getAction('s2'))?.status).toBe('pending');
   });
 });
 
@@ -463,12 +478,21 @@ describe('getUsageStats (finer sections)', () => {
     insert.run(P.day, 'action_expired', 'message', 1);
     insert.run(P.day, 'action_prepared', 'forum_reply', 6);
     insert.run(P.day, 'action_cancelled', 'forum_reply', 2);
+    insert.run(P.day, 'action_superseded', 'forum_reply', 1);
     await store.recordFeedFetch({ ownerId: 1, now: NOW });
     await store.recordFeedFetch({ ownerId: 1, now: NOW });
     const r = await report();
     expect(r.actions).toEqual([
-      { kind: 'forum_reply', prepared: 6, executed: 0, failed: 0, cancelled: 2, expired: 0 },
-      { kind: 'message', prepared: 5, executed: 3, failed: 0, cancelled: 0, expired: 1 },
+      {
+        kind: 'forum_reply',
+        prepared: 6,
+        executed: 0,
+        failed: 0,
+        cancelled: 2,
+        expired: 0,
+        superseded: 1,
+      },
+      { kind: 'message', prepared: 5, executed: 3, failed: 0, cancelled: 0, expired: 1, superseded: 0 },
     ]);
     expect(r.daily.at(-1)).toMatchObject({ icsFetches: 2, icsFeeds: 1 });
   });

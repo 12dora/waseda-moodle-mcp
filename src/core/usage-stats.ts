@@ -45,6 +45,7 @@ export interface ActionFunnel {
   failed: number;
   cancelled: number;
   expired: number;
+  superseded: number;
 }
 
 export interface Cohort {
