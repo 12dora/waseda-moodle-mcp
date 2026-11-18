@@ -60,7 +60,7 @@ stdio process. Unofficial; not affiliated with Waseda University.
 
 **Writes with preview, then confirm**
 - Assignment submission (text and files), forum posts and replies, Moodle messages, manual completion.
-- Every write is two steps: `prepare_*` returns a preview, and nothing reaches Moodle until `confirm_action` runs after you agree. Writes can also be restricted to approval in the web console, or turned off.
+- Every write is two steps: `prepare_*` returns a preview, and nothing reaches Moodle until `confirm_action` runs after you agree. Once one of several prepared actions for the same target (e.g. the same forum, post or assignment) runs, the others that were pending are marked superseded and can no longer run, so a stale preview never posts twice. Writes can also be restricted to approval in the web console, or turned off.
 
 ## How it works
 
