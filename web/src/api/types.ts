@@ -53,12 +53,35 @@ export interface AppConfig {
   version: string;
 }
 
+/** GET /api/me `mail`: the Waseda mailbox connection. `null` = this server does not offer mail. */
+export interface MailInfo {
+  connection: MailConnection | null;
+  /** Free slots left; null = unlimited. */
+  slotsLeft: number | null;
+  /** This user already holds a slot (reconnecting never needs a free one). */
+  hasSlot: boolean;
+  /** Auto-disconnect after this many days without use; null = never. */
+  idleDays: number | null;
+}
+
+export interface MailConnection {
+  address: string;
+  canSend: boolean;
+  status: 'active' | 'invalid';
+  /** Epoch milliseconds. */
+  connectedAt: number;
+  lastUsedAt: number | null;
+  endReason: 'idle' | 'revoked' | null;
+}
+
 export interface Me {
   user: UserInfo;
   /** null when the stored Moodle credential is gone (reconnect required). */
   credential: CredentialInfo | null;
   /** Operator of this instance (sees the usage page). Older servers omit it. */
   isAdmin?: boolean;
+  /** Older servers omit it; null = mail is not offered (hide the Mail tab). */
+  mail?: MailInfo | null;
 }
 
 export interface ConnectResult extends Me {

@@ -7,6 +7,7 @@ const CODE_MESSAGES: Readonly<Record<string, MessageKey>> = {
   not_found: 'error.not_found',
   invalid_input: 'error.invalid_input',
   needs_reconnect: 'error.needs_reconnect',
+  mail_needs_reconnect: 'error.mail_needs_reconnect',
   rate_limited: 'error.rate_limited',
   moodle_unavailable: 'error.moodle_unavailable',
   budget_exceeded: 'error.budget_exceeded',

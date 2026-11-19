@@ -11,13 +11,36 @@ function blockKey(block: PrivacyBlock): string {
   return block.table.head.join('|');
 }
 
+const URL_PATTERN = /(https?:\/\/[^\s)）、。，]*[^\s)）、。，.])/;
+
+/** Plain text in which web addresses become links (the policy content has no markup). */
+function Text({ text }: { text: string }) {
+  return text.split(URL_PATTERN).map((part, i) =>
+    i % 2 === 1 ? (
+      <a key={part} href={part} target="_blank" rel="noopener noreferrer">
+        {part}
+      </a>
+    ) : (
+      part
+    ),
+  );
+}
+
 function Block({ block }: { block: PrivacyBlock }) {
-  if ('p' in block) return <p>{block.p}</p>;
+  if ('p' in block) {
+    return (
+      <p>
+        <Text text={block.p} />
+      </p>
+    );
+  }
   if ('ul' in block) {
     return (
       <ul>
         {block.ul.map((item) => (
-          <li key={item}>{item}</li>
+          <li key={item}>
+            <Text text={item} />
+          </li>
         ))}
       </ul>
     );
@@ -39,7 +62,9 @@ function Block({ block }: { block: PrivacyBlock }) {
           {rows.map((row) => (
             <tr key={row[0]}>
               {row.map((cell) => (
-                <td key={cell}>{cell}</td>
+                <td key={cell}>
+                  <Text text={cell} />
+                </td>
               ))}
             </tr>
           ))}

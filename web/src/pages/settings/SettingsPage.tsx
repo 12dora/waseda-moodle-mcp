@@ -5,13 +5,15 @@ import { ClientCard } from '../../components/ClientCard';
 import { PageHeader } from '../../components/Layout';
 import { TabPanel, Tabs } from '../../components/Tabs';
 import { useT } from '../../i18n';
+import { useSession } from '../../session';
 import { AccountTab } from './Account';
 import { ActivityTab } from './Activity';
 import { AppsTab } from './Apps';
 import { CourseSelectionTab } from './CourseSelection';
 import { GeneralTab } from './General';
 import { KeysTab } from './Keys';
-import { resolveSettingsTab, SETTINGS_TABS, type SettingsTab } from './tabs';
+import { MailTab } from './Mail';
+import { resolveSettingsTab, type SettingsTab, visibleSettingsTabs } from './tabs';
 
 const ID_PREFIX = 'settings';
 
@@ -22,6 +24,7 @@ const PANELS: Record<SettingsTab, ComponentType> = {
   keys: KeysTab,
   apps: AppsTab,
   calendar: CalendarCard,
+  mail: MailTab,
   activity: ActivityTab,
   account: AccountTab,
 };
@@ -30,7 +33,8 @@ const PANELS: Record<SettingsTab, ComponentType> = {
 export function SettingsPage() {
   const t = useT();
   const navigate = useNavigate();
-  const active = resolveSettingsTab(useParams().tab);
+  const tabs = visibleSettingsTabs(Boolean(useSession().me.mail));
+  const active = resolveSettingsTab(useParams().tab, tabs);
   const Panel = PANELS[active];
   return (
     <>
@@ -38,11 +42,11 @@ export function SettingsPage() {
       <Tabs
         idPrefix={ID_PREFIX}
         label={t('settings.title')}
-        items={SETTINGS_TABS.map((id) => ({ id, label: t(`settings.tab.${id}`) }))}
+        items={tabs.map((id) => ({ id, label: t(`settings.tab.${id}`) }))}
         value={active}
         onChange={(id, { via }) => navigate(`/settings/${id}`, { replace: via === 'keyboard' })}
       />
-      {SETTINGS_TABS.map((id) => (
+      {tabs.map((id) => (
         <TabPanel key={id} idPrefix={ID_PREFIX} id={id} active={id === active} className="settings-panel">
           {id === active && <Panel />}
         </TabPanel>

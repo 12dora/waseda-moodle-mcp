@@ -57,6 +57,10 @@ export const getCalendar = () => api.get<CalendarStatus>('/api/calendar');
 export const createCalendar = () => api.post<{ url: string }>('/api/calendar');
 export const deleteCalendar = () => api.del<unknown>('/api/calendar');
 
+/** Starts the Google authorization; the browser must navigate to the returned URL. */
+export const connectMail = () => api.post<{ url: string }>('/api/mail/connect');
+export const disconnectMail = () => api.del<unknown>('/api/mail');
+
 export const listApps = () => api.get<AppGrant[]>('/api/apps');
 export const revokeApp = (grantId: string) => api.del<unknown>(`/api/apps/${id(grantId)}`);
 

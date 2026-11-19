@@ -18,6 +18,7 @@ export const en: PrivacyDoc = {
             'File contents are passed through, never stored.',
             'Your data is not sold, shared, used for advertising, or used to train AI models.',
             'You can delete everything from the console at any time.',
+            'Waseda mail is optional. The contents of your mailbox are never stored.',
           ],
         },
       ],
@@ -63,7 +64,7 @@ export const en: PrivacyDoc = {
               [
                 'Pending and past actions',
                 'The preview-then-confirm write flow',
-                'Includes what you asked to send (for example message text, forum post, submission file names).',
+                'Includes what you asked to send (for example message text, mail, forum post, submission file names).',
               ],
               ['Upload drafts', 'Large file uploads', 'File names and sizes only, not contents.'],
               [
@@ -120,6 +121,24 @@ export const en: PrivacyDoc = {
       ],
     },
     {
+      heading: 'Waseda mail (optional)',
+      blocks: [
+        {
+          ul: [
+            'Only if you connect it in Settings → Mail. Google asks you to authorize access; the service never sees your Google password.',
+            'Stored: your mail address, your Google account id, the Google authorization (encrypted like the Moodle token), the permissions granted (read, and send if allowed), and when you connected and last used it.',
+            'Never stored: the contents of your mailbox. They pass through to your AI client only when it calls a mail tool. Mail is sent only after you confirm it, and a mail you prepare (sent or not) is kept with its action for 90 days.',
+            'A connection unused for the number of days shown in Settings → Mail is disconnected automatically.',
+            'Google limits this app to a fixed number of users. To count against that limit, the service keeps a list of the Moodle user ids that have connected mail, with the date. It holds only these two items and remains after you delete your account.',
+            'Disconnect any time in Settings → Mail, or at https://myaccount.google.com/permissions.',
+          ],
+        },
+        {
+          p: "Waseda Moodle MCP's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements. https://developers.google.com/terms/api-services-user-data-policy",
+        },
+      ],
+    },
+    {
       heading: 'How long data is kept',
       blocks: [
         { p: 'Expired data is purged daily.' },
@@ -134,6 +153,11 @@ export const en: PrivacyDoc = {
               ['Course snapshots', '30 days after last check'],
               ['Class times from Moodle', '30 days after last check'],
               ['Calendar subscription', 'Until you turn it off or delete your account'],
+              [
+                'Waseda mail connection',
+                'Until you disconnect, it is disconnected for inactivity, or you delete your account',
+              ],
+              ['Mail slot list (Moodle user id and date only)', 'Kept, also after you delete your account'],
               [
                 'Sessions, connect handoffs, OAuth requests, upload drafts',
                 'Until they expire (sessions: 30 days of inactivity; handoffs: 2 minutes; upload links: 30 minutes)',
@@ -171,7 +195,8 @@ export const en: PrivacyDoc = {
           ul: [
             'Apps: revoke an MCP client’s OAuth access.',
             'API keys: revoke a key.',
-            'Settings → Delete account: revokes all OAuth grants and permanently deletes your user record, encrypted token and Moodle sign-in session, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.',
+            'Settings → Mail: disconnect your Waseda mail.',
+            'Settings → Delete account: revokes all OAuth grants and permanently deletes your user record, encrypted token and Moodle sign-in session, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle, your calendar subscription and your Waseda mail connection. Your Moodle account is not affected.',
           ],
         },
         {

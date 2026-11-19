@@ -18,6 +18,7 @@ export const zhCN: PrivacyDoc = {
             '文件内容只做中转，从不存储。',
             '你的数据不会被出售、共享、用于广告或用于训练 AI 模型。',
             '你可以随时在控制台中删除全部数据。',
+            '早大邮箱为可选功能，你邮箱中的内容不会被存储。',
           ],
         },
       ],
@@ -47,7 +48,7 @@ export const zhCN: PrivacyDoc = {
               [
                 '待确认及历史操作',
                 '“先预览、后确认”的写入流程',
-                '包括你要求发送的内容（例如消息正文、论坛帖子、提交的文件名）。',
+                '包括你要求发送的内容（例如消息正文、邮件、论坛帖子、提交的文件名）。',
               ],
               ['上传草稿', '大文件上传', '仅文件名和大小，不含内容。'],
               ['活动（审计）日志', '让你查看以你名义执行的操作', '操作名称及 ID、布尔值等不含内容的细节。'],
@@ -100,6 +101,24 @@ export const zhCN: PrivacyDoc = {
       ],
     },
     {
+      heading: '早大邮箱（可选）',
+      blocks: [
+        {
+          ul: [
+            '仅在你于“设置 → 邮箱”中连接后适用。授权由 Google 发起，本服务不会看到你的 Google 密码。',
+            '存储的内容：你的邮箱地址、Google 账号 ID、Google 授权（与 Moodle 令牌一样加密）、已授予的权限（读取；若允许则含发送），以及连接时间和最近使用时间。',
+            '不存储的内容：你邮箱中的内容。仅当 AI 客户端调用邮件工具时，邮件才会中转给该客户端。邮件只有在你确认后才会发送，你准备的邮件（无论是否发出）会随对应操作保留 90 天。',
+            '超过“设置 → 邮箱”中显示的天数未使用的连接，会被自动断开。',
+            'Google 对本应用的用户数设有上限。为计入该上限，本服务保留一份已连接邮箱的 Moodle 用户 ID 名单，并记录日期。名单只含这两项，删除账号后仍会保留。',
+            '你可以随时在“设置 → 邮箱”中断开，或前往 https://myaccount.google.com/permissions 断开。',
+          ],
+        },
+        {
+          p: "Waseda Moodle MCP's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.（Waseda Moodle MCP 对从 Google API 获得的信息的使用和转移，遵守 Google API 服务用户数据政策，包括有限使用要求。） https://developers.google.com/terms/api-services-user-data-policy",
+        },
+      ],
+    },
+    {
       heading: '数据保留期限',
       blocks: [
         { p: '过期数据每天清除。' },
@@ -114,6 +133,8 @@ export const zhCN: PrivacyDoc = {
               ['课程快照', '最后一次检查后 30 天'],
               ['从 Moodle 推断的上课时间', '最后一次检查后 30 天'],
               ['日历订阅', '直到你关闭订阅或删除账号'],
+              ['早大邮箱连接', '直到你断开、因长期未使用而自动断开，或删除账号'],
+              ['邮箱名额名单（仅 Moodle 用户 ID 和日期）', '删除账号后仍会保留'],
               [
                 '会话、连接交接、OAuth 请求、上传草稿',
                 '直至过期（会话：30 天无活动；交接：2 分钟；上传链接：30 分钟）',
@@ -151,7 +172,8 @@ export const zhCN: PrivacyDoc = {
           ul: [
             '应用：撤销某个 MCP 客户端的 OAuth 访问权限。',
             'API 密钥：吊销密钥。',
-            '设置 → 删除账号：撤销所有 OAuth 授权，并永久删除你的用户记录、加密令牌和 Moodle 登录会话、设置、会话、API 密钥、操作、上传草稿、活动日志、课程快照、从 Moodle 推断的上课时间和日历订阅。你的 Moodle 账号不受影响。',
+            '设置 → 邮箱：断开早大邮箱。',
+            '设置 → 删除账号：撤销所有 OAuth 授权，并永久删除你的用户记录、加密令牌和 Moodle 登录会话、设置、会话、API 密钥、操作、上传草稿、活动日志、课程快照、从 Moodle 推断的上课时间、日历订阅和早大邮箱连接。你的 Moodle 账号不受影响。',
           ],
         },
         {

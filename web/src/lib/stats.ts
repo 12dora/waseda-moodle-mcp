@@ -81,6 +81,7 @@ export function hasUsage(stats: UsageStats): boolean {
 export const FAILURE_CLASSES: readonly FailureClass[] = [
   'needs_reconnect',
   'moodle_unavailable',
+  'mail_unavailable',
   'invalid_input',
   'forbidden',
   'budget',

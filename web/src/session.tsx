@@ -2,7 +2,7 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useS
 import { Outlet } from 'react-router';
 import { ApiError } from './api/client';
 import { getMe } from './api/endpoints';
-import type { AppConfig, Me, UserSettings } from './api/types';
+import type { AppConfig, MailInfo, Me, UserSettings } from './api/types';
 import { ErrorBox } from './components/ErrorBox';
 import { PageLoading } from './components/Spinner';
 import { useI18n } from './i18n';
@@ -22,6 +22,8 @@ export function useConfig(): AppConfig {
 export interface Session {
   me: Me;
   setSettings: (settings: UserSettings) => void;
+  /** Replaces the mailbox state after a change made in the console. */
+  setMail: (mail: MailInfo) => void;
 }
 
 const SessionContext = createContext<Session | null>(null);
@@ -63,6 +65,8 @@ export function RequireSession({ children }: { children?: ReactNode }) {
     [],
   );
 
+  const setMail = useCallback((mail: MailInfo) => setMe((m) => (m ? { ...m, mail } : m)), []);
+
   if (error) {
     return (
       <div className="center-page">
@@ -72,5 +76,7 @@ export function RequireSession({ children }: { children?: ReactNode }) {
   }
   if (!me) return <PageLoading label={t('common.loading')} />;
 
-  return <SessionContext.Provider value={{ me, setSettings }}>{children ?? <Outlet />}</SessionContext.Provider>;
+  return (
+    <SessionContext.Provider value={{ me, setSettings, setMail }}>{children ?? <Outlet />}</SessionContext.Provider>
+  );
 }
