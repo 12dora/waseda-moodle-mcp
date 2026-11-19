@@ -1,6 +1,6 @@
 # Privacy
 
-Effective date: 2026-10-15
+Effective date: 2026-11-19
 
 This document describes how Waseda Moodle MCP (the hosted service and the "Waseda Moodle MCP
 Connector" browser extension) handles your data. It applies to any instance run from this
@@ -12,7 +12,8 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 
 - We never ask for or see your Moodle password.
 - Your Moodle token is stored encrypted and is used only to act on Moodle at your request (and for a background sweep of assignments and deadlines). When Moodle gives a private token, the service also keeps a Moodle sign-in session so the weekly-expiring token is renewed automatically.
-- File contents are passed through, never stored.
+- File contents and the mail in your mailbox are passed through, never stored.
+- Connecting your Waseda mail is optional; the service then reads or sends mail only when your AI client calls a mail tool, and sends only after you confirm.
 - Your data is not sold, shared, used for advertising, or used to train AI models.
 - You can delete everything from the console at any time.
 
@@ -22,12 +23,14 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 |---|---|---|
 | Moodle web-service token (and the optional private token) | To call Moodle on your behalf | Encrypted with AES-256-GCM using the instance's `MASTER_KEY`. A hash and the last 4 characters are kept to recognise the token and display it as `••••abcd`. |
 | Moodle sign-in session (only when a private token was received) | To renew the token automatically when Moodle replaces it, so you do not reconnect every week | The session cookie, encrypted like the token, opened once with the private token and refreshed by the service about hourly; sent only to Moodle. Also kept: when the session was last confirmed and when the token was last renewed. Removed when Moodle ends the session or you delete your account. |
+| Waseda mail connection (only if you connect it) | To read and send mail in your Waseda mailbox (Google Workspace Gmail) at your request | Your mail address, your Google account id, the Google authorization (refresh token, encrypted like the Moodle token), the permissions you granted (read, send), when you connected, when a mail tool last used it, and why a connection ended. Sent only to Google. |
+| Mail slot (only if you connected mail) | Google limits an unverified app to 100 users over its lifetime, so the service counts who has ever connected mail | Only your Moodle user id and the date it was taken. Kept after you disconnect or delete your account (otherwise you would count twice); used for nothing else. |
 | Moodle user id, full name, language | To identify your account | Read from Moodle when you connect. |
 | Settings | Write mode, the courses you confirmed for this term, class times you set, console language | |
 | Console sessions | To keep you signed in | Only a hash of the session cookie, plus a short user-agent snippet. |
 | API keys | To authenticate MCP clients | Only a hash, a short prefix, the name and scopes. The full key is shown once. |
 | OAuth grants and tokens | To authenticate MCP clients that use OAuth | Managed by the OAuth library. |
-| Pending and past actions | The preview-then-confirm write flow | Includes what you asked to send (for example message text, forum post, submission file names). |
+| Pending and past actions | The preview-then-confirm write flow | Includes what you asked to send (for example message text, forum post, mail recipients and text, submission file names). |
 | Upload drafts | Large file uploads | File names and sizes only, not contents. |
 | Activity (audit) log | So you can see what was done in your name | Action names and non-content details such as ids and booleans. |
 | Course snapshots | Assignments & deadlines and "what's new" | Compact outline of your courses: activity names, dates, completion, file names and links, and short text snippets (up to about 2 KB) that mention deadlines. |
@@ -42,6 +45,7 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 
 - Your Moodle password. Sign-in happens on Moodle; the service receives only the mobile-app token.
 - File contents. Downloads and uploads are streamed between Moodle and your client. When a client asks for a small file inline (up to 1 MiB), it is included in that one response only.
+- Contents of your mailbox. Mail and attachments are fetched from Google only when your AI client asks and passed straight through; the activity log records the action, never mail text. (A mail you prepare, sent or not, is kept with its action for 90 days, like other writes.)
 - Moodle tokens or session cookies in logs. Server logs contain only error names, not request bodies, tokens or cookies.
 
 ## How long data is kept
@@ -57,6 +61,8 @@ Expired data is purged daily.
 | Course snapshots | 30 days after last check |
 | Class times from Moodle | 30 days after last check |
 | Calendar subscription | Until you turn it off or delete your account |
+| Waseda mail connection | Until you disconnect it or delete your account; revoked automatically after 90 days without use (the instance may set another period) |
+| Mail slot | Permanently (Moodle user id only, see above) |
 | Sessions, connect handoffs, OAuth requests, upload drafts | Until they expire (sessions: 30 days of inactivity; handoffs: 2 minutes; upload links: 30 minutes) |
 | OAuth tokens | Access 12 hours, refresh 90 days, or until you revoke the app |
 | Rate-limit counters | 1 day |
@@ -79,7 +85,8 @@ In the console:
 
 - **Settings → Authorized apps**: revoke an MCP client's OAuth access.
 - **Settings → API keys**: revoke a key.
-- **Settings → Account**: delete account — revokes all OAuth grants and permanently deletes your user record, encrypted token and Moodle sign-in session, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
+- **Settings → Mail**: disconnect Waseda mail — revokes the Google authorization and deletes it. You can also remove access at https://myaccount.google.com/permissions.
+- **Settings → Account**: delete account — revokes all OAuth grants and the Google mail authorization, and permanently deletes your user record, encrypted token and Moodle sign-in session, Waseda mail connection, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
 
 The service never revokes or resets your Moodle token, because it is the same token the
 official Moodle mobile app uses; revoking it would sign your phone out. If you also want to
@@ -106,6 +113,14 @@ Chrome Web Store User Data Policy, including the Limited Use requirements. Data 
 to provide the connect feature, is not transferred except to the service you configured, is
 not used for advertising, credit-worthiness or lending purposes, and is not read by humans
 except where required for security, legal compliance, or with your consent.
+
+## Google user data (Waseda mail)
+
+Waseda Moodle MCP's use and transfer of information received from Google APIs adheres to the
+[Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy),
+including the Limited Use requirements. Mail data is used only to answer your AI client's mail requests and to send
+the mail you confirm; mailbox contents are not stored (a mail you prepare is kept with its action for 90 days), not transferred to anyone else, not used for advertising or to train AI
+models, and not read by humans except where required for security or legal compliance, or with your consent.
 
 ## Changes
 

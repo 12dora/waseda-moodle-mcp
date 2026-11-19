@@ -61,7 +61,11 @@ Edit `wrangler.local.jsonc`:
 | `EXTENSION_URL` | var (optional) | unset | Install URL for the browser extension shown in the console. Unset hides the link. |
 | `CF_BEACON_TOKEN` | var (optional) | `""` | Cloudflare Web Analytics site token (32 hex characters). When set, the three public introduction pages (not the console) load the cookieless Web Analytics beacon; view the numbers in the Cloudflare dashboard. Empty or invalid: no beacon. |
 | `VITE_CONTACT_URL` | console build env (optional) | unset | `https://` or `mailto:` link shown as the contact on the privacy page. Read when the console is built (`web/.env.local` or the build environment), not by the Worker. Unset shows "Contact the operator of this instance." |
-| `MASTER_KEY` | secret | required | 32 random bytes, base64. Encrypts Moodle tokens, Moodle session cookies and short-lived handoff/OAuth blobs, and keys the HMAC for file links. Changing it makes stored tokens unreadable (users must reconnect). |
+| `GOOGLE_CLIENT_ID` | var (optional) | `""` | Google OAuth client id for the optional Waseda mail connection (see [Waseda mail](#13-optional-waseda-mail)). Mail is off unless the id and `GOOGLE_CLIENT_SECRET` are both set. |
+| `MAIL_SLOTS` | var (optional) | `""` (80) | How many Moodle users may ever connect mail. Slots are never given back, matching Google's lifetime cap of 100 users for an unverified app; keep a margin below 100, since Google also counts consents that never completed here. `0` = no new connections, `off` = no limit (only for a verified app). |
+| `MAIL_IDLE_DAYS` | var (optional) | `""` (90) | Days without a mail tool call after which a mail connection is revoked by the daily cleanup. `off` = never. |
+| `GOOGLE_CLIENT_SECRET` | secret (optional) | unset | Google OAuth client secret of the mail connection. |
+| `MASTER_KEY` | secret | required | 32 random bytes, base64. Encrypts Moodle tokens, Moodle session cookies, Google mail authorizations and short-lived handoff/OAuth blobs, and keys the HMAC for file links. Changing it makes stored tokens unreadable (users must reconnect). |
 
 Set the secret:
 
@@ -172,3 +176,24 @@ wrangler deploy --config wrangler.local.jsonc
 
 Compare `wrangler.jsonc` with your `wrangler.local.jsonc` after pulling and copy over any new
 keys (bindings, flags, cron) while keeping your own ids and vars.
+
+## 13. Optional: Waseda mail
+
+Wasedaメール is Google Workspace Gmail, so the mail connection is a Google OAuth app of your own. Each Google Cloud
+project may serve 100 users while the app is unverified (over the project's lifetime); verifying an app that reads
+Gmail requires Google's restricted-scope review and a yearly CASA security assessment.
+
+1. Create a project in the Google Cloud console with a personal Google account and enable the **Gmail API**.
+2. **Google Auth Platform → Branding**: app name and support email; audience **External**.
+3. **Data access**: add `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.send`.
+4. **Audience**: **Publish app** (in testing mode Google expires the authorization after 7 days).
+5. **Clients → Create client**: type **Web application**, authorized redirect URI `<PUBLIC_URL>/api/google/callback`.
+6. Set `GOOGLE_CLIENT_ID` in `wrangler.local.jsonc` and the secret:
+
+```sh
+wrangler secret put GOOGLE_CLIENT_SECRET --config wrangler.local.jsonc
+```
+
+Users connect under **Settings → Mail**. Google shows an "unverified app" warning (Advanced → Continue) until the app
+is verified. Only Waseda Google Workspace accounts (`*.waseda.jp`) are accepted. Attachments up to 5 MB download
+through signed links (Gmail serves them as base64 JSON, decoded within the Free plan's CPU limit); larger ones open in Gmail.

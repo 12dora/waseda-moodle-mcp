@@ -55,6 +55,9 @@ stdio process. Unofficial; not affiliated with Waseda University.
 **Forums, messages and notifications**
 - Forum threads and posts, Moodle conversations, notifications with unread counts.
 
+**Waseda mail (optional, hosted)**
+- Connect your Wasedaメール (Google Workspace Gmail) under **Settings → Mail** to search and read mail and attachments, and to send or reply after you confirm. Connections unused for 90 days are disconnected automatically. Google limits an unverified app to 100 users per project, so the hosted service offers a fixed number of mail slots; when they are taken, self-host with your own Google OAuth client.
+
 **Files**
 - Download any Moodle file through a short-lived signed URL (hosted) or a temp file (stdio); small files can be attached inline.
 
@@ -209,12 +212,16 @@ of writes or `create_upload_link`.
 | `list_notifications` | Notifications and unread count | read |
 | `search_forums` | Keyword search over forum discussions (optionally messages) | read |
 | `search_people` | Find teachers and classmates seen in your course forums or conversations | read |
+| `search_mail` | Search the Waseda mailbox with Gmail search syntax (only after connecting mail) | read |
+| `get_mail` | Read a mail or a whole thread, with attachment links | read |
 | `create_upload_link` | Short-lived upload URL for large files: submissions and forum attachments (hosted only) | write |
 | `prepare_submission` | Preview an assignment submission | write |
 | `prepare_forum_post` | Preview a new discussion or reply, with attachments | write |
 | `prepare_forum_post_change` | Preview editing or deleting your own forum post | write |
 | `prepare_questionnaire` | Preview answers to a questionnaire (submit or save as draft) | write |
 | `prepare_message` | Preview a Moodle message | write |
+| `prepare_mail_send` | Preview a new mail from your Waseda address | write |
+| `prepare_mail_reply` | Preview a reply (or reply all) to a mail | write |
 | `prepare_completion` | Preview marking an activity done / not done | write |
 | `prepare_forum_subscription` | Preview subscribing to / unsubscribing from a forum | write |
 | `prepare_mark_read` | Preview marking notifications, a conversation or a forum discussion as read | write |
@@ -230,6 +237,7 @@ are shown in JST. The server never takes quizzes.
 - No Moodle password is ever requested. The Moodle token is encrypted at rest (AES-256-GCM with the operator's `MASTER_KEY`).
 - Automatic renewal: the hosted server keeps a Moodle web session (stored encrypted, sent only to Moodle) and uses it to pick up a new token when the old one expires, so you do not have to reconnect every week.
 - File contents are streamed, not stored. Download and upload links are HMAC-signed and expire in 15 and 30 minutes.
+- Waseda mail (optional): the server keeps the Google authorization (encrypted), your address, Google account id, granted permissions and connection times. Mail in your mailbox passes through to your AI client and is never stored; a mail you prepare (sent or not) is kept with its action for 90 days. Attachments up to 5 MB download through signed links; larger ones open in Gmail. Reading mail never marks it read.
 - API keys are stored as hashes. OAuth access tokens last 12 hours, refresh tokens 90 days.
 - Deleting your account under **Settings → Account** removes all of your data on the server.
 

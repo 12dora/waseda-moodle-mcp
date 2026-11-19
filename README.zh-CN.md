@@ -51,6 +51,9 @@
 **论坛、消息与通知**
 - 论坛帖子和回复、Moodle 会话、通知及未读数。
 
+**早大邮箱（可选，托管版）**
+- 在 **设置 → 邮箱** 连接 Waseda 邮箱（Google Workspace Gmail）后，可搜索、阅读邮件和附件，并在确认后发信、回信。连续 90 天未使用的连接会自动断开。Google 规定未验证应用每个项目最多 100 名用户，托管版名额有限，满额后请使用自己的 Google OAuth 客户端自托管。
+
 **文件**
 - 通过短时有效的签名 URL（托管版）或临时文件（stdio）下载任意 Moodle 文件；小文件可直接内联附带。
 
@@ -191,12 +194,16 @@ stdio 模式以明文保存令牌（文件权限 0600），不支持在控制台
 | `list_notifications` | 通知和未读数 | read |
 | `search_forums` | 按关键词搜索论坛讨论（可选包括消息） | read |
 | `search_people` | 查找在你的课程论坛或会话中出现过的老师和同学 | read |
+| `search_mail` | 用 Gmail 搜索语法搜索早大邮箱（连接邮箱后可用） | read |
+| `get_mail` | 阅读单封邮件或整个会话，附带附件链接 | read |
 | `create_upload_link` | 大文件的短时上传 URL（仅托管版） | write |
 | `prepare_submission` | 预览作业提交 | write |
 | `prepare_forum_post` | 预览论坛新话题或回复（可带附件） | write |
 | `prepare_forum_post_change` | 预览编辑或删除自己的论坛帖子 | write |
 | `prepare_questionnaire` | 预览问卷作答（提交或存为草稿） | write |
 | `prepare_message` | 预览 Moodle 消息 | write |
+| `prepare_mail_send` | 预览从早大邮箱发出的新邮件 | write |
+| `prepare_mail_reply` | 预览回复（或回复全部） | write |
 | `prepare_completion` | 预览将活动标记为完成 / 未完成 | write |
 | `prepare_forum_subscription` | 预览订阅 / 取消订阅论坛 | write |
 | `prepare_mark_read` | 预览将通知、会话或论坛话题标记为已读 | write |
@@ -210,6 +217,7 @@ stdio 模式以明文保存令牌（文件权限 0600），不支持在控制台
 - 从不索要 Moodle 密码。Moodle 令牌加密存储（AES-256-GCM，使用运营者的 `MASTER_KEY`）。
 - 自动续期：托管版加密保存一个 Moodle 网页会话（只发送给 Moodle），令牌到期时自动取得新令牌，无需每周重新连接。
 - 文件内容以流式传输，不做存储。下载和上传链接使用 HMAC 签名，分别在 15 分钟和 30 分钟后失效。
+- 早大邮箱（可选）：服务器保存加密的 Google 授权、邮箱地址、Google 账号 ID、所授权限和连接时间。邮箱中的邮件只中转给 AI 客户端，从不保存；你准备的邮件（无论是否发出）与写操作记录一同保留 90 天。5 MB 以内的附件通过签名链接下载，更大的附件请在 Gmail 中打开。阅读邮件不会将其标为已读。
 - API 密钥以哈希形式存储。OAuth 访问令牌有效期 12 小时，刷新令牌 90 天。
 - 在 **设置 → 账号** 中删除账号，会清除你在服务器上的全部数据。
 
