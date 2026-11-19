@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { MailConnection, MailInfo } from '../api/types';
-import { canReconnectMail, isoOfMs, mailResultNotice, mailView, withoutMailParam } from './mail';
+import {
+  canReconnectMail,
+  isoOfMs,
+  isSetupView,
+  type MailView,
+  mailNoteKey,
+  mailResultNotice,
+  mailStatusKey,
+  mailView,
+  withoutMailParam,
+} from './mail';
 
 const connection = (over: Partial<MailConnection> = {}): MailConnection => ({
   address: 'taro@akane.waseda.jp',
@@ -14,6 +24,7 @@ const connection = (over: Partial<MailConnection> = {}): MailConnection => ({
 
 const info = (over: Partial<MailInfo> = {}): MailInfo => ({
   connection: null,
+  access: 'approved',
   slotsLeft: 5,
   hasSlot: false,
   idleDays: 90,
@@ -41,6 +52,51 @@ describe('mailView', () => {
   });
 });
 
+describe('mailView and approval', () => {
+  it('asks for an application until the operator approves', () => {
+    expect(mailView(info({ access: 'none' }))).toBe('apply');
+    expect(mailView(info({ access: 'pending' }))).toBe('pending');
+    expect(mailView(info({ access: 'rejected' }))).toBe('rejected');
+    expect(mailView(info({ access: 'approved' }))).toBe('connect');
+  });
+
+  it('shows the full notice when no slot is free and none is held, whatever the access', () => {
+    for (const access of ['none', 'pending', 'rejected', 'approved'] as const) {
+      expect(mailView(info({ access, slotsLeft: 0 }))).toBe('full');
+    }
+  });
+
+  it('lets a slot holder apply or connect when no slot is free', () => {
+    expect(mailView(info({ access: 'none', slotsLeft: 0, hasSlot: true }))).toBe('apply');
+    expect(mailView(info({ access: 'approved', slotsLeft: 0, hasSlot: true }))).toBe('connect');
+  });
+
+  it('keeps showing a connection after the access changed', () => {
+    expect(mailView(info({ access: 'rejected', connection: connection() }))).toBe('active');
+  });
+});
+
+describe('view texts', () => {
+  const ALL: MailView[] = ['active', 'invalid', 'connect', 'apply', 'pending', 'rejected', 'full'];
+
+  it('separates the states without a connection', () => {
+    expect(ALL.filter(isSetupView)).toEqual(['connect', 'apply', 'pending', 'rejected', 'full']);
+  });
+
+  it('has a note for every state without a connection', () => {
+    expect(mailNoteKey('pending')).toBe('mail.pending');
+    expect(mailNoteKey('rejected')).toBe('mail.rejected');
+    expect(mailNoteKey('apply')).toBe(mailNoteKey('connect'));
+  });
+
+  it('has a one-line status for every state', () => {
+    expect(mailStatusKey('pending')).toBe('mail.status.pending');
+    expect(mailStatusKey('active')).toBe('mail.status.connected');
+    expect(mailStatusKey('invalid')).toBe('mail.status.ended');
+    expect(mailStatusKey('apply')).toBe('mail.status.none');
+  });
+});
+
 describe('canReconnectMail', () => {
   it('is offered for a broken or read-only connection only', () => {
     expect(canReconnectMail(connection())).toBe(false);
@@ -61,7 +117,8 @@ describe('mailResultNotice', () => {
     expect(mailResultNotice('connected')).toEqual({ key: 'mail.result.connected', tone: 'success' });
     expect(mailResultNotice('denied')?.tone).toBe('info');
     expect(mailResultNotice('full')?.key).toBe('mail.full');
-    for (const r of ['expired', 'domain', 'scope', 'failed', 'session']) {
+    expect(mailResultNotice('unapproved')).toEqual({ key: 'mail.result.unapproved', tone: 'error' });
+    for (const r of ['expired', 'domain', 'scope', 'failed', 'session', 'unapproved']) {
       expect(mailResultNotice(r)?.tone).toBe('error');
     }
     expect(mailResultNotice('session')?.key).toBe(mailResultNotice('failed')?.key);

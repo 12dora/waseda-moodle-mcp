@@ -9,6 +9,7 @@ import { DueRow } from '../components/DueRow';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBox } from '../components/ErrorBox';
 import { PageHeader } from '../components/Layout';
+import { MailCard } from '../components/MailCard';
 import { ScopeBanner } from '../components/ScopeBanner';
 import { Spinner } from '../components/Spinner';
 import { useI18n, useT } from '../i18n';
@@ -178,6 +179,7 @@ export function OverviewPage() {
       )}
       <div className="grid-2">
         <ConnectionCard me={me} />
+        {me.mail && <MailCard info={me.mail} />}
         <UpcomingCard />
         <TodayCard />
         <UpdatesCard />

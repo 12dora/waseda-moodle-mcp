@@ -1,15 +1,20 @@
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useT } from '../i18n';
 import { errorText } from '../lib/errors';
 import { Button } from './Button';
 import { Dialog } from './Dialog';
 
-/** Confirmation with a destructive primary action; keeps the dialog open and shows the error on failure. */
+/**
+ * Confirmation with a destructive (or, with `variant`, a primary) action; keeps the dialog open and shows the error
+ * on failure.
+ */
 export function ConfirmDialog({
   open,
   title,
   description,
   confirmLabel,
+  variant = 'danger',
+  children,
   onConfirm,
   onClose,
 }: {
@@ -17,6 +22,8 @@ export function ConfirmDialog({
   title: string;
   description?: string;
   confirmLabel: string;
+  variant?: 'danger' | 'primary';
+  children?: ReactNode;
   onConfirm: () => Promise<void>;
   onClose: () => void;
 }) {
@@ -41,7 +48,7 @@ export function ConfirmDialog({
             {t('common.cancel')}
           </Button>
           <Button
-            variant="danger"
+            variant={variant}
             busy={busy}
             onClick={async () => {
               setBusy(true);
@@ -62,6 +69,7 @@ export function ConfirmDialog({
       }
     >
       {description && <p className="muted">{description}</p>}
+      {children}
       {error != null && (
         <p className="field-error" role="alert">
           {errorText(error, t)}

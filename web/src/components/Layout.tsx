@@ -1,6 +1,7 @@
 import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { listActions, logout } from '../api/endpoints';
+import type { Me } from '../api/types';
 import { type MessageKey, useT } from '../i18n';
 import { errorText } from '../lib/errors';
 import { SOURCE_URL } from '../lib/links';
@@ -9,13 +10,14 @@ import { useSession } from '../session';
 import { Button } from './Button';
 import { useToast } from './Toast';
 
-const NAV: ReadonlyArray<{ to: string; key: MessageKey; end?: boolean; admin?: boolean }> = [
+const NAV: ReadonlyArray<{ to: string; key: MessageKey; end?: boolean; admin?: boolean; mail?: boolean }> = [
   { to: '/', key: 'nav.overview', end: true },
   { to: '/due', key: 'nav.due' },
   { to: '/courses', key: 'nav.courses' },
   { to: '/timetable', key: 'nav.timetable' },
   { to: '/actions', key: 'nav.actions' },
   { to: '/stats', key: 'nav.stats', admin: true },
+  { to: '/admin/mail', key: 'nav.mailRequests', admin: true, mail: true },
   { to: '/settings', key: 'nav.settings' },
 ];
 
@@ -61,6 +63,12 @@ function usePendingCount(): number {
   }, [refresh]);
 
   return count;
+}
+
+/** Operator pages need the operator role; mail pages also need mail to be offered. */
+function isNavVisible(item: (typeof NAV)[number], me: Me): boolean {
+  if (item.admin && me.isAdmin !== true) return false;
+  return !item.mail || Boolean(me.mail);
 }
 
 function PendingBadge({ count }: { count: number }) {
@@ -159,7 +167,7 @@ export function Layout() {
         </div>
         <nav aria-label={t('nav.label')}>
           <ul className="nav-list">
-            {NAV.filter((n) => !n.admin || me.isAdmin === true).map((n) => (
+            {NAV.filter((n) => isNavVisible(n, me)).map((n) => (
               <li key={n.to}>
                 <NavLink
                   to={n.to}
@@ -169,6 +177,7 @@ export function Layout() {
                 >
                   <span>{t(n.key)}</span>
                   {n.to === '/actions' && <PendingBadge count={pending} />}
+                  {n.to === '/admin/mail' && <PendingBadge count={me.mail?.pendingRequests ?? 0} />}
                 </NavLink>
               </li>
             ))}

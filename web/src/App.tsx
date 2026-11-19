@@ -14,6 +14,7 @@ import { ActionsPage } from './pages/Actions';
 import { ConnectPage } from './pages/Connect';
 import { CoursesPage } from './pages/Courses';
 import { DuePage } from './pages/Due';
+import { MailRequestsPage } from './pages/MailRequests';
 import { OAuthConsentPage } from './pages/OAuthConsent';
 import { OverviewPage } from './pages/Overview';
 import { PrivacyPage } from './pages/Privacy';
@@ -48,6 +49,7 @@ function AppRoutes() {
           <Route path="timetable" element={<TimetablePage />} />
           <Route path="actions" element={<ActionsPage />} />
           <Route path="stats" element={<StatsPage />} />
+          <Route path="admin/mail" element={<MailRequestsPage />} />
           <Route path="settings/:tab?" element={<SettingsPage />} />
         </Route>
       </Route>

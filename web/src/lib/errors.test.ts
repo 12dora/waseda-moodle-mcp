@@ -19,6 +19,14 @@ describe('serverMessageText', () => {
     expect(serverMessageText(new ApiError(403, 'forbidden', 'nope'), t)).toBe(en['error.forbidden']);
   });
 
+  it('maps the mail decision refusals to their texts', () => {
+    const say = (m: string) => serverMessageText(new ApiError(400, 'invalid_input', m), t);
+    expect(say('The request changed. Reload and try again.')).toBe(en['mail.admin.refusal.changed']);
+    expect(say('The request is not pending.')).toBe(en['mail.admin.refusal.changed']);
+    expect(say('Mail access is not approved.')).toBe(en['mail.rejected']);
+    expect(say('Operators are always approved.')).toBe(en['mail.admin.refusal.operator']);
+  });
+
   it('keeps unknown invalid_input text as sent', () => {
     expect(serverMessageText(new ApiError(400, 'invalid_input', 'Something else.'), t)).toBe('Something else.');
   });
@@ -30,6 +38,10 @@ describe('serverMessageText', () => {
       'This action was cancelled.',
       'This action is already running.',
       'Another action for the same target is running.',
+      'The request changed. Reload and try again.',
+      'The request is not pending.',
+      'Mail access is not approved.',
+      'Operators are always approved.',
     ];
     for (const lang of LANGS.filter((l) => l !== 'en')) {
       const tl: Translate = (key, vars) => translate(DICTIONARIES[lang], key, vars);

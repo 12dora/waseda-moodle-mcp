@@ -27,7 +27,7 @@ export function errorText(e: unknown, t: Translate): string {
   return t('common.requestFailed', { status: '?' });
 }
 
-/** Known approve / cancel refusals (exact server messages) → localized text. */
+/** Known approve / cancel / mail decision refusals (exact server messages) → localized text. */
 const REFUSALS: Readonly<Record<string, MessageKey>> = {
   'Another action for the same target already ran. Prepare it again if you still need it.':
     'actions.refusal.superseded',
@@ -35,6 +35,10 @@ const REFUSALS: Readonly<Record<string, MessageKey>> = {
   'This action was cancelled.': 'actions.refusal.cancelled',
   'This action is already running.': 'actions.refusal.running',
   'Another action for the same target is running.': 'actions.refusal.running',
+  'The request changed. Reload and try again.': 'mail.admin.refusal.changed',
+  'The request is not pending.': 'mail.admin.refusal.changed',
+  'Mail access is not approved.': 'mail.rejected',
+  'Operators are always approved.': 'mail.admin.refusal.operator',
 };
 
 /** Like `errorText`, but an `invalid_input` answer keeps its meaning: known refusals are localized, others show the server text. */

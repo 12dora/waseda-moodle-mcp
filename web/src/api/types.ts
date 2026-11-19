@@ -53,9 +53,15 @@ export interface AppConfig {
   version: string;
 }
 
+/** The user's standing with the operator's approval for mail (operators are always `approved`). */
+export type MailAccess = 'none' | 'pending' | 'approved' | 'rejected';
+
 /** GET /api/me `mail`: the Waseda mailbox connection. `null` = this server does not offer mail. */
 export interface MailInfo {
   connection: MailConnection | null;
+  access: MailAccess;
+  /** Operators only: requests waiting for a decision. */
+  pendingRequests?: number;
   /** Free slots left; null = unlimited. */
   slotsLeft: number | null;
   /** This user already holds a slot (reconnecting never needs a free one). */
@@ -72,6 +78,26 @@ export interface MailConnection {
   connectedAt: number;
   lastUsedAt: number | null;
   endReason: 'idle' | 'revoked' | null;
+}
+
+export type MailRequestStatus = Exclude<MailAccess, 'none'>;
+export type MailRequestAction = 'approve' | 'reject' | 'revoke';
+
+/** One row of the operator's mail request list. Times are epoch milliseconds. */
+export interface MailRequest {
+  userId: number;
+  fullname: string;
+  moodleUserId: number;
+  status: MailRequestStatus;
+  requestedAt: number;
+  decidedAt: number | null;
+  connection: { address: string; status: MailConnection['status'] } | null;
+}
+
+export interface MailRequestList {
+  requests: MailRequest[];
+  /** Mail slots used so far; `limit` null = unlimited. */
+  slots: { used: number; limit: number | null };
 }
 
 export interface Me {

@@ -14,11 +14,18 @@ const ACTIONS: Readonly<Record<string, MessageKey>> = {
   'upload:create': 'audit.action.upload_create',
   'upload:file': 'audit.action.upload_file',
   'settings:update': 'audit.action.settings_update',
+  'mail:connect': 'audit.action.mail_connect',
+  'mail:disconnect': 'audit.action.mail_disconnect',
+  'mail:request': 'audit.action.mail_request',
+  'mail:approved': 'audit.action.mail_approved',
+  'mail:rejected': 'audit.action.mail_rejected',
+  'mail:revoked': 'audit.action.mail_revoked',
 };
 
 const ACTORS: Readonly<Record<string, MessageKey>> = {
   console: 'audit.actor.console',
   extension: 'audit.actor.extension',
+  operator: 'audit.actor.operator',
   system: 'audit.actor.system',
 };
 
@@ -29,7 +36,7 @@ export function auditActionLabel(action: string, t: Translate): string {
   return key ? t(key) : action;
 }
 
-/** "console" / "extension" / "system" are localized; "mcp:<source>" shows the client or API key name. */
+/** "console" / "extension" / "operator" / "system" are localized; "mcp:<source>" shows the client or API key name. */
 export function auditActorLabel(actor: string, t: Translate): string {
   if (actor.startsWith('mcp:')) return actor.slice(4);
   const key = ACTORS[actor];

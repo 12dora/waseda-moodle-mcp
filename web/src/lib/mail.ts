@@ -1,18 +1,54 @@
 import type { MailConnection, MailInfo } from '../api/types';
 import type { MessageKey } from '../i18n/core';
 
-/** What the Mail tab shows: the live connection, a broken one, the connect prompt, or the "slots full" notice. */
-export type MailView = 'active' | 'invalid' | 'connect' | 'full';
+/**
+ * What the mail UI shows: the live or a broken connection, or one of the states without a connection
+ * (connect when approved, apply / pending / rejected for the operator's approval, full when no slot is left).
+ */
+export type MailView = 'active' | 'invalid' | 'connect' | 'apply' | 'pending' | 'rejected' | 'full';
 
-/** A user who holds a slot, or while slots remain (or are unlimited), may connect. */
+/** The views without a connection. */
+export type SetupView = Exclude<MailView, 'active' | 'invalid'>;
+
+/** A user who holds a slot, or while slots remain (or are unlimited), may connect or apply. */
 function mayConnectMail(info: MailInfo): boolean {
   return info.hasSlot || info.slotsLeft === null || info.slotsLeft > 0;
 }
 
+const UNAPPROVED_VIEW = { none: 'apply', pending: 'pending', rejected: 'rejected', approved: 'connect' } as const;
+
 export function mailView(info: MailInfo): MailView {
   if (info.connection) return info.connection.status === 'active' ? 'active' : 'invalid';
-  return mayConnectMail(info) ? 'connect' : 'full';
+  return mayConnectMail(info) ? UNAPPROVED_VIEW[info.access] : 'full';
 }
+
+export function isSetupView(view: MailView): view is SetupView {
+  return view !== 'active' && view !== 'invalid';
+}
+
+/** The explanation shown with the state's action on the Settings page. */
+const NOTE_KEY: Record<SetupView, MessageKey> = {
+  connect: 'mail.desc',
+  apply: 'mail.desc',
+  pending: 'mail.pending',
+  rejected: 'mail.rejected',
+  full: 'mail.full',
+};
+
+export const mailNoteKey = (view: SetupView): MessageKey => NOTE_KEY[view];
+
+/** The one-line status on the Overview card (`{address}` and `{access}` fill the connected text). */
+const STATUS_KEY: Record<MailView, MessageKey> = {
+  active: 'mail.status.connected',
+  invalid: 'mail.status.ended',
+  connect: 'mail.status.none',
+  apply: 'mail.status.none',
+  pending: 'mail.status.pending',
+  rejected: 'mail.rejected',
+  full: 'mail.full',
+};
+
+export const mailStatusKey = (view: MailView): MessageKey => STATUS_KEY[view];
 
 /** Reconnecting is offered for a broken connection, and for a read-only one (sending needs the send permission). */
 export function canReconnectMail(connection: MailConnection): boolean {
@@ -32,6 +68,7 @@ const RESULT_TEXT = {
   domain: { key: 'mail.result.domain', tone: 'error' },
   scope: { key: 'mail.result.scope', tone: 'error' },
   full: { key: 'mail.full', tone: 'error' },
+  unapproved: { key: 'mail.result.unapproved', tone: 'error' },
   failed: { key: 'mail.result.failed', tone: 'error' },
   session: { key: 'mail.result.failed', tone: 'error' },
 } as const satisfies Record<string, { key: MessageKey; tone: 'success' | 'info' | 'error' }>;

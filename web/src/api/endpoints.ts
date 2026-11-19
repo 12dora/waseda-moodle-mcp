@@ -13,6 +13,10 @@ import type {
   CourseOverview,
   CoursesResponse,
   DueList,
+  MailAccess,
+  MailRequestAction,
+  MailRequestList,
+  MailRequestStatus,
   Me,
   OAuthRequestInfo,
   Scope,
@@ -60,6 +64,9 @@ export const deleteCalendar = () => api.del<unknown>('/api/calendar');
 /** Starts the Google authorization; the browser must navigate to the returned URL. */
 export const connectMail = () => api.post<{ url: string }>('/api/mail/connect');
 export const disconnectMail = () => api.del<unknown>('/api/mail');
+/** Applies for mail access; operators and approved users get `approved` straight away. */
+export const requestMailAccess = () =>
+  api.post<{ access: Extract<MailAccess, 'pending' | 'approved'> }>('/api/mail/request');
 
 export const listApps = () => api.get<AppGrant[]>('/api/apps');
 export const revokeApp = (grantId: string) => api.del<unknown>(`/api/apps/${id(grantId)}`);
@@ -80,3 +87,8 @@ export const denyOAuth = (reqId: string) =>
   api.post<{ redirectTo: string }>(`/api/oauth/requests/${id(reqId)}/deny`, {}, { redirectOn401: false });
 
 export const getUsageStats = (days: 7 | 30 | 90) => api.get<UsageStats>('/api/admin/stats', { query: { days } });
+
+export const listMailRequests = (status: MailRequestStatus) =>
+  api.get<MailRequestList>('/api/admin/mail/requests', { query: { status } });
+export const decideMailRequest = (userId: number, action: MailRequestAction) =>
+  api.post<{ status: MailRequestStatus }>(`/api/admin/mail/requests/${id(String(userId))}/${action}`);
