@@ -36,8 +36,14 @@ function makeEnv(over: Partial<Env> = {}): Env {
   };
 }
 
-async function connected(moodleUserId: number, lastUsedAt: number | null, connectedAt = NOW - 200 * DAY) {
+async function connected(
+  moodleUserId: number,
+  lastUsedAt: number | null,
+  connectedAt = NOW - 200 * DAY,
+  approved = true,
+) {
   const user = await store.upsertUser({ moodleUserId, fullname: 'Taro Yamada', lang: 'ja' });
+  if (approved) await store.decideMailAccess(user.id, { status: 'approved', by: 9001, at: 1, from: null });
   const row: MailCredentialRow = {
     userId: user.id,
     address: `u${moodleUserId}@akane.waseda.jp`,
@@ -161,5 +167,63 @@ describe('runMailIdle', () => {
     expect(spy).toHaveBeenCalled();
     expect(String(spy.mock.calls[0])).not.toContain('not-encrypted');
     spy.mockRestore();
+  });
+});
+
+describe('runMailIdle: connections without approval', () => {
+  const recent = NOW - DAY;
+
+  it('disconnects owners neither approved nor operators, revokes their token and keeps the others', async () => {
+    env = makeEnv({ ADMIN_MOODLE_USERIDS: '1009' });
+    const noRow = await connected(1001, recent, NOW - 2 * DAY, false);
+    const rejected = await connected(1002, recent, NOW - 2 * DAY, false);
+    await store.decideMailAccess(rejected, { status: 'rejected', by: 9001, at: 5, from: null });
+    const pending = await connected(1003, recent, NOW - 2 * DAY, false);
+    await store.requestMailAccess(pending, 5);
+    const approved = await connected(1004, recent, NOW - 2 * DAY);
+    const operator = await connected(1009, recent, NOW - 2 * DAY, false);
+    const before = usageRows();
+
+    expect(await runMailIdle(env, new InvocationBudget(10, 20), NOW)).toBe(3);
+    expect(revoked.sort()).toEqual(['rt-1001', 'rt-1002', 'rt-1003']);
+    for (const id of [noRow, rejected, pending]) expect(await store.getMailCredential(id)).toBeNull();
+    for (const id of [approved, operator]) expect((await store.getMailCredential(id))?.status).toBe('active');
+    expect(usageRows()).toBe(before);
+    expect(await runMailIdle(env, new InvocationBudget(10, 20), NOW)).toBe(0);
+  });
+
+  it('runs with MAIL_IDLE_DAYS off and deletes a connection without a token without asking Google', async () => {
+    const id = await connected(1001, recent, NOW - 2 * DAY, false);
+    await store.updateMailCredential(id, { status: 'invalid', refreshEnc: null });
+    expect(await runMailIdle(makeEnv({ MAIL_IDLE_DAYS: 'off' }), new InvocationBudget(10, 20), NOW)).toBe(1);
+    expect(revoked).toEqual([]);
+    expect(await store.getMailCredential(id)).toBeNull();
+  });
+
+  it('keeps a connection whose revoke Google did not confirm, for the next run', async () => {
+    const id = await connected(1001, recent, NOW - 2 * DAY, false);
+    revokeStatus = 503;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await runMailIdle(env, new InvocationBudget(10, 20), NOW)).toBe(0);
+    expect(await store.getMailCredential(id)).not.toBeNull();
+    warn.mockRestore();
+  });
+
+  it('stops when the shared budget runs out and leaves the idle cleanup nothing', async () => {
+    await connected(1001, NOW - 100 * DAY, NOW - 200 * DAY, false);
+    await connected(1002, NOW - 100 * DAY, NOW - 200 * DAY, false);
+    const budget = new InvocationBudget(1, 20);
+    expect(await runMailIdle(env, budget, NOW)).toBe(1);
+    expect(revoked).toEqual(['rt-1001']);
+    expect(budget.moodle).toBe(0);
+  });
+
+  it('fills its batch past the operators', async () => {
+    const operators = Array.from({ length: 12 }, (_, i) => 2001 + i);
+    env = makeEnv({ ADMIN_MOODLE_USERIDS: operators.join(',') });
+    for (const m of operators) await connected(m, recent, NOW - 2 * DAY, false);
+    const last = await connected(1001, recent, NOW - 2 * DAY, false);
+    expect(await runMailIdle(env, new InvocationBudget(20, 50), NOW)).toBe(1);
+    expect(await store.getMailCredential(last)).toBeNull();
   });
 });

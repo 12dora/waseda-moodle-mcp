@@ -104,6 +104,7 @@ const USER_OWNED_TABLES = [
   'inferred_schedules',
   'calendar_feeds',
   'mail_credentials',
+  'mail_access',
   'audit',
 ] as const;
 

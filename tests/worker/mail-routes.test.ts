@@ -55,11 +55,15 @@ function makeEnv(over: Partial<Env> = {}): Env {
   };
 }
 
-async function signIn(e: Env, moodleUserId = 1001): Promise<void> {
+/** Signs in user 1001; their mail access is approved unless `approved` is false. */
+async function signIn(e: Env, approved = true): Promise<void> {
   env = e;
   store = createD1Store(env.DB);
-  user = await store.upsertUser({ moodleUserId, fullname: 'Taro Yamada', lang: 'ja' });
+  user = await store.upsertUser({ moodleUserId: 1001, fullname: 'Taro Yamada', lang: 'ja' });
   cookie = (await startSession(store, user.id, null)).setCookie.split(';')[0] ?? '';
+  if (!approved) return;
+  await store.requestMailAccess(user.id, 1);
+  await store.decideMailAccess(user.id, { status: 'approved', by: 9001, at: 2, from: null });
 }
 
 async function call(path: string, init: RequestInit & { cookies?: string[] } = {}): Promise<Response> {
@@ -440,7 +444,7 @@ describe('GET /api/google/callback', () => {
 describe('DELETE /api/mail and GET /api/me', () => {
   it('reports the mail block, disconnects and revokes', async () => {
     let me = (await (await call('/api/me')).json()) as { mail: Json };
-    expect(me.mail).toEqual({ connection: null, slotsLeft: 80, hasSlot: false, idleDays: 90 });
+    expect(me.mail).toEqual({ connection: null, slotsLeft: 80, hasSlot: false, idleDays: 90, access: 'approved' });
 
     const flow = await startFlow();
     google.token = () => tokenAnswer(flow.nonce);
@@ -519,5 +523,127 @@ describe('DELETE /api/mail and GET /api/me', () => {
     await signIn(makeEnv({ MAIL_SLOTS: '0', MAIL_IDLE_DAYS: '0' }));
     const zero = (await (await call('/api/me')).json()) as { mail: Json };
     expect(zero.mail).toMatchObject({ slotsLeft: 0, idleDays: 90 });
+  });
+});
+
+describe('mail access approval', () => {
+  const errorOf = async (res: Response): Promise<Json> => ((await res.json()) as { error: Json }).error;
+  const meMail = async (): Promise<Json> => ((await (await call('/api/me')).json()) as { mail: Json }).mail;
+
+  it('POST /api/mail/request applies once, re-applies after a rejection and audits it', async () => {
+    await signIn(makeEnv(), false);
+    expect((await meMail()).access).toBe('none');
+    const res = await call('/api/mail/request', { method: 'POST' });
+    expect(await res.json()).toEqual({ access: 'pending' });
+    const first = await store.getMailAccess(user.id);
+    expect(first).toMatchObject({ status: 'pending', decidedAt: null, decidedBy: null });
+    expect((await meMail()).access).toBe('pending');
+
+    // a second application keeps the first request time and writes no second audit row
+    expect(await (await call('/api/mail/request', { method: 'POST' })).json()).toEqual({ access: 'pending' });
+    expect((await store.getMailAccess(user.id))?.requestedAt).toBe(first?.requestedAt);
+    const actions = (await store.listAudit(user.id, { limit: 10 })).map((a) => a.action);
+    expect(actions.filter((a) => a === 'mail:request')).toHaveLength(1);
+
+    await store.decideMailAccess(user.id, { status: 'rejected', by: 9001, at: 5, from: null });
+    expect((await meMail()).access).toBe('rejected');
+    expect(await (await call('/api/mail/request', { method: 'POST' })).json()).toEqual({ access: 'pending' });
+    expect(await store.getMailAccess(user.id)).toMatchObject({ status: 'pending', decidedAt: null, decidedBy: null });
+  });
+
+  it('POST /api/mail/request answers approved for approved users and operators, without a row', async () => {
+    expect(await (await call('/api/mail/request', { method: 'POST' })).json()).toEqual({ access: 'approved' });
+    await signIn(makeEnv({ ADMIN_MOODLE_USERIDS: '1001' }), false);
+    expect(await (await call('/api/mail/request', { method: 'POST' })).json()).toEqual({ access: 'approved' });
+    expect(await store.getMailAccess(user.id)).toBeNull();
+  });
+
+  it('POST /api/mail/request is 404 when mail is off, needs CSRF and refuses when no slot is left', async () => {
+    await signIn(makeEnv({ GOOGLE_CLIENT_ID: '' }), false);
+    expect((await call('/api/mail/request', { method: 'POST' })).status).toBe(404);
+
+    await signIn(makeEnv({ MAIL_SLOTS: '1' }), false);
+    const noCsrf = await app.fetch(
+      new Request(`${ORIGIN}/api/mail/request`, { method: 'POST', headers: { Cookie: cookie } }),
+      env,
+    );
+    expect(noCsrf.status).toBe(403);
+    await store.takeMailSlot(2002, 1, null);
+    const full = await call('/api/mail/request', { method: 'POST' });
+    expect(full.status).toBe(403);
+    expect((await errorOf(full)).message).toBe('Mail slots are full. Self-host the server to use mail.');
+    expect(await store.getMailAccess(user.id)).toBeNull();
+    // a returning user holds their slot
+    await store.takeMailSlot(user.moodleUserId, 2, null);
+    expect(await (await call('/api/mail/request', { method: 'POST' })).json()).toEqual({ access: 'pending' });
+  });
+
+  it('POST /api/mail/connect refuses unapproved users before the slot check', async () => {
+    await signIn(makeEnv({ MAIL_SLOTS: '0' }), false);
+    for (const prepare of [async () => undefined, () => store.requestMailAccess(user.id, 1)]) {
+      await prepare();
+      const res = await call('/api/mail/connect', { method: 'POST' });
+      expect(res.status).toBe(403);
+      expect((await errorOf(res)).message).toBe('Mail access is not approved.');
+    }
+    await store.decideMailAccess(user.id, { status: 'rejected', by: 9001, at: 2, from: null });
+    expect((await call('/api/mail/connect', { method: 'POST' })).status).toBe(403);
+  });
+
+  it('operators connect without an application', async () => {
+    await signIn(makeEnv({ ADMIN_MOODLE_USERIDS: '1001' }), false);
+    const flow = await startFlow();
+    google.token = () => tokenAnswer(flow.nonce);
+    expect(await callback(flow)).toBe('connected');
+    expect(await store.getMailAccess(user.id)).toBeNull();
+  });
+
+  it('the callback re-checks approval and revokes what Google issued', async () => {
+    const flow = await startFlow();
+    await store.decideMailAccess(user.id, { status: 'rejected', by: 9001, at: 3, from: null });
+    google.token = () => tokenAnswer(flow.nonce);
+    expect(await callback(flow)).toBe('unapproved');
+    expect(google.revoked).toEqual(['rt-new']);
+    expect(await store.getMailCredential(user.id)).toBeNull();
+    // Google counted the user
+    expect(await store.hasMailSlot(user.moodleUserId)).toBe(true);
+
+    // a failed exchange still answers unapproved and revokes nothing
+    await store.decideMailAccess(user.id, { status: 'approved', by: 9001, at: 4, from: null });
+    const again = await startFlow();
+    await store.decideMailAccess(user.id, { status: 'rejected', by: 9001, at: 5, from: null });
+    google.token = () => new Response('', { status: 500 });
+    expect(await callback(again)).toBe('unapproved');
+    expect(google.revoked).toEqual(['rt-new']);
+  });
+
+  it('access revoked while the code was exchanged: the stored connection is disconnected again', async () => {
+    const flow = await startFlow();
+    google.token = () => {
+      // the operator revokes between the approval check and storing the connection
+      sqlite.prepare("UPDATE mail_access SET status = 'rejected' WHERE user_id = ?").run(user.id);
+      return tokenAnswer(flow.nonce);
+    };
+    expect(await callback(flow)).toBe('unapproved');
+    expect(await store.getMailCredential(user.id)).toBeNull();
+    expect(google.revoked).toEqual(['rt-new']);
+  });
+
+  it('GET /api/me reports access, and pending requests only to operators', async () => {
+    const other = await store.upsertUser({ moodleUserId: 1002, fullname: 'Hanako Sato', lang: 'ja' });
+    await store.requestMailAccess(other.id, 10);
+    let mail = await meMail();
+    expect(mail.access).toBe('approved');
+    expect(mail).not.toHaveProperty('pendingRequests');
+
+    await signIn(makeEnv({ ADMIN_MOODLE_USERIDS: '1001' }), false);
+    mail = await meMail();
+    expect(mail).toMatchObject({ access: 'approved', pendingRequests: 0 });
+    const applicant = await store.upsertUser({ moodleUserId: 1002, fullname: 'Hanako Sato', lang: 'ja' });
+    await store.requestMailAccess(applicant.id, 10);
+    expect(await meMail()).toMatchObject({ pendingRequests: 1 });
+    // an operator's own application is no request to decide
+    await store.requestMailAccess(user.id, 11);
+    expect(await meMail()).toMatchObject({ pendingRequests: 1 });
   });
 });

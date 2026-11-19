@@ -22,4 +22,10 @@ export class WorkerOnlyMethods {
   readonly countMailSlots = localOnly;
   readonly hasMailSlot = localOnly;
   readonly takeMailSlot = localOnly;
+  readonly getMailAccess = localOnly;
+  readonly requestMailAccess = localOnly;
+  readonly decideMailAccess = localOnly;
+  readonly listMailAccess = localOnly;
+  readonly countMailAccess = localOnly;
+  readonly listUnapprovedMailOwners = localOnly;
 }

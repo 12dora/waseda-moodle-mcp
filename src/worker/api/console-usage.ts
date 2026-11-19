@@ -24,9 +24,10 @@ const FEATURES: readonly (readonly [RegExp, string])[] = [
   [/^\w+ \/api\/keys(\/|$)/, 'keys'],
   [/^\w+ \/api\/apps(\/|$)/, 'apps'],
   [/^\w+ \/api\/calendar$/, 'calendar'],
-  [/^(POST|DELETE) \/api\/mail(\/connect)?$/, 'mail'],
+  [/^(POST|DELETE) \/api\/mail(\/(connect|request))?$/, 'mail'],
   [/^\w+ \/api\/oauth\/requests\//, 'consent'],
   [/^GET \/api\/admin\/stats$/, 'stats'],
+  [/^\w+ \/api\/admin\/mail\//, 'mail_requests'],
 ];
 
 /** Feature label of a console API request; null = not counted. */

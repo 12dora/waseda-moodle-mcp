@@ -8,6 +8,7 @@ import { type HandoffMethods, handoffMethods } from './store/handoffs';
 import { inferredMethods } from './store/inferred';
 import { logMethods, purgeExpired } from './store/logs';
 import { mailMethods } from './store/mail';
+import { mailAccessMethods } from './store/mail-access';
 import { apiKeyMethods, sessionMethods } from './store/sessions';
 import { snapshotMethods } from './store/snapshots';
 import { type UsageMethods, usageMethods } from './store/usage';
@@ -33,6 +34,7 @@ export function createD1Store(db: D1Database): D1Store {
     ...inferredMethods(db),
     ...calendarMethods(db),
     ...mailMethods(db),
+    ...mailAccessMethods(db),
     ...logMethods(db),
     ...handoffMethods(db),
     ...ephemeralMethods(db),

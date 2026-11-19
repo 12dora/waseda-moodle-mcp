@@ -18,6 +18,7 @@ import { dataRoutes } from './data';
 import { handoffRoutes } from './handoff';
 import { keyRoutes } from './keys';
 import { mailRoutes } from './mail';
+import { mailAdminRoutes } from './mail-admin';
 import { oauthRoutes } from './oauth';
 import { CSRF_EXEMPT_PATHS } from './shared';
 import { statsRoutes } from './stats';
@@ -61,6 +62,7 @@ export function createApi(): Hono<AppEnv> {
   app.route('/', coursesViewRoutes());
   app.route('/', calendarRoutes());
   app.route('/', statsRoutes());
+  app.route('/', mailAdminRoutes());
   app.route('/', landingRoutes());
   app.route('/', oauthRoutes());
   // signed file tickets (no cookies, CORS *)

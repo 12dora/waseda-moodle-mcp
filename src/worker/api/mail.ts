@@ -1,17 +1,19 @@
 /**
- * Waseda mail connection (Google OAuth, authorization code + PKCE): POST /api/mail/connect parks the state and returns
- * Google's consent URL, GET /api/google/callback stores the refresh token, DELETE /api/mail revokes it. The console
- * reads the state from GET /api/me (`mail`, built by mailInfo).
+ * Waseda mail connection (Google OAuth, authorization code + PKCE): POST /api/mail/request applies for access (an
+ * operator approves it, api/mail-admin.ts), POST /api/mail/connect parks the state and returns Google's consent URL,
+ * GET /api/google/callback stores the refresh token, DELETE /api/mail revokes it. The console reads the state from
+ * GET /api/me (`mail`, built by mailInfo).
  */
 
 import { type Context, Hono } from 'hono';
 import type { MailCredentialRow, UserRow } from '../../core/context';
 import { b64urlDecode, b64urlEncode, randomId } from '../../core/crypto';
 import { Forbidden, NotFound, WmmError } from '../../core/errors';
+import type { MailAccessRow, MailAccessStatus } from '../../core/mail/access';
 import { GMAIL_READ_SCOPE, GMAIL_SEND_SCOPE, GOOGLE_TOKEN_URL, revokeGoogleToken } from '../../core/mail/client';
 import { type AppEnv, deferOn, hostCookie, memoryRateLimit, readCookie } from '../auth';
 import { getRuntime } from '../context';
-import { type Env, googleClientOf, mailIdleDaysOf, mailSlotsOf, publicUrlOf } from '../env';
+import { adminMoodleUserIds, type Env, googleClientOf, mailIdleDaysOf, mailSlotsOf, publicUrlOf } from '../env';
 import type { D1Store } from '../store-d1';
 import { auditConsole, optionalSessionUser, session } from './shared';
 
@@ -25,9 +27,22 @@ const WASEDA_ADDRESS = /^[^@\s]+@([a-z0-9-]+\.)*waseda\.jp$/i;
 /** The `hd` claim (hosted domain): present only for Google Workspace accounts, not for a consumer account. */
 const WASEDA_HD = /^([a-z0-9-]+\.)*waseda\.jp$/i;
 const SLOTS_FULL = 'Mail slots are full. Self-host the server to use mail.';
+/** Refusal of a user without approved mail access (connect; an operator revoking a user who has none). */
+export const NOT_APPROVED = 'Mail access is not approved.';
+const MAIL_OFF = 'Mail is not available.';
 
 type GoogleClient = NonNullable<ReturnType<typeof googleClientOf>>;
-type ConnectResult = 'connected' | 'denied' | 'expired' | 'domain' | 'scope' | 'full' | 'failed' | 'session';
+type ConnectResult =
+  | 'connected'
+  | 'denied'
+  | 'expired'
+  | 'domain'
+  | 'scope'
+  | 'full'
+  | 'failed'
+  | 'session'
+  | 'unapproved';
+type MailAccess = MailAccessStatus | 'none';
 
 /** Parked between connect and callback (encrypted in oauth_requests). */
 interface PendingMail {
@@ -77,6 +92,15 @@ const doFetch: typeof fetch = (input, init) => globalThis.fetch(input, init);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 const redirectUri = (env: Env): string => `${publicUrlOf(env)}/api/google/callback`;
 const b64url = (bytes: ArrayBuffer | Uint8Array): string => b64urlEncode(new Uint8Array(bytes));
+
+/** The rule of mail access, used everywhere: operators are always approved, everyone else by their application. */
+function mailAccessOf(env: Env, user: UserRow, row: MailAccessRow | null): MailAccess {
+  if (adminMoodleUserIds(env).has(user.moodleUserId)) return 'approved';
+  return row?.status ?? 'none';
+}
+
+const mailApproved = async (env: Env, store: D1Store, user: UserRow): Promise<boolean> =>
+  mailAccessOf(env, user, await store.getMailAccess(user.id)) === 'approved';
 
 /** The user may connect: unlimited slots, a slot of their own (a returning user), or slots left. */
 async function slotAvailable(env: Env, store: D1Store, moodleUserId: number): Promise<boolean> {
@@ -250,6 +274,20 @@ async function connectGrant(c: Context<AppEnv>, user: UserRow, grant: IssuedGran
   }
 }
 
+/**
+ * Mail access was revoked while the user was at Google. Google counted the user once the code was issued (the slot is
+ * taken, like in acceptGrant); the code is exchanged only to revoke what Google issued.
+ */
+async function refuseUnapproved(
+  c: Context<AppEnv>,
+  user: UserRow,
+  exchange: { google: GoogleClient; code: string; verifier: string },
+): Promise<never> {
+  await (await getRuntime(c.env)).store.takeMailSlot(user.moodleUserId, Date.now(), null);
+  const tokens = await exchangeCode(c.env, exchange.google, exchange.code, exchange.verifier).catch(() => null);
+  throw new ConnectStop('unapproved', tokens ? (tokens.refreshToken ?? tokens.accessToken) : undefined);
+}
+
 /** The callback's steps; any failure ends as a result code (Google's error text never reaches the redirect). */
 async function finishConnect(c: Context<AppEnv>): Promise<ConnectResult> {
   const user = await optionalSessionUser(c);
@@ -261,9 +299,14 @@ async function finishConnect(c: Context<AppEnv>): Promise<ConnectResult> {
   const google = googleClientOf(c.env);
   const code = c.req.query('code');
   if (!google || !code) return 'failed';
+  const exchange = { google, code, verifier: pending.verifier };
+  if (!(await mailApproved(c.env, (await getRuntime(c.env)).store, user))) return refuseUnapproved(c, user, exchange);
   const tokens = await exchangeCode(c.env, google, code, pending.verifier);
   await connectGrant(c, user, { tokens, identity: verifiedIdentity(tokens.idToken, google, pending.nonce) });
-  return 'connected';
+  // an operator may have revoked the access while the code was exchanged: a stored connection must not outlive that
+  if (await mailApproved(c.env, (await getRuntime(c.env)).store, user)) return 'connected';
+  await disconnectMail(c.env, user.id);
+  return 'unapproved';
 }
 
 function logConnectFailure(e: unknown): void {
@@ -275,16 +318,28 @@ function logConnectFailure(e: unknown): void {
  * the row is deleted anyway when Google cannot be asked (the user asked for it); the token then lives on at Google,
  * known to nobody, and a warning names the failure.
  */
-export async function revokeStoredMail(env: Env, userId: number): Promise<void> {
+/** Revokes the user's stored refresh token at Google (best effort); true when it is gone there (or there was none). */
+export async function revokeStoredMail(env: Env, userId: number, doRevoke = doFetch): Promise<boolean> {
   try {
     const rt = await getRuntime(env);
     const row = await rt.store.getMailCredential(userId);
-    if (!row?.refreshEnc) return;
-    const revoked = await revokeGoogleToken(await rt.key.decrypt(row.refreshEnc));
+    if (!row?.refreshEnc) return true;
+    const revoked = await revokeGoogleToken(await rt.key.decrypt(row.refreshEnc), doRevoke);
     if (!revoked) console.warn('mail revoke failed: Google not reachable');
+    return revoked;
   } catch (e) {
     console.warn('mail revoke failed:', e instanceof Error ? e.name : 'unknown');
+    return false;
   }
+}
+
+/**
+ * Ends the user's mail connection: revokes the token at Google (best effort, through `doRevoke`) and deletes the row;
+ * false when none.
+ */
+export async function disconnectMail(env: Env, userId: number, doRevoke = doFetch): Promise<boolean> {
+  await revokeStoredMail(env, userId, doRevoke);
+  return (await getRuntime(env)).store.deleteMailCredential(userId);
 }
 
 type EndReason = 'idle' | 'revoked' | null;
@@ -294,14 +349,21 @@ function endReasonOf(row: MailCredentialRow): EndReason {
   return row.refreshEnc === null ? 'idle' : 'revoked';
 }
 
-/** `mail` of GET /api/me: null when mail is not configured. Never carries lastError (the console localises). */
+/**
+ * `mail` of GET /api/me: null when mail is not configured. Never carries lastError (the console localises).
+ * `pendingRequests` (applications waiting for a decision) only for operators.
+ */
 export async function mailInfo(env: Env, store: D1Store, user: UserRow) {
   if (!googleClientOf(env)) return null;
   const limit = mailSlotsOf(env);
-  const [row, hasSlot, taken] = await Promise.all([
+  const operators = adminMoodleUserIds(env);
+  const operator = operators.has(user.moodleUserId);
+  const [row, hasSlot, taken, accessRow, pendingRequests] = await Promise.all([
     store.getMailCredential(user.id),
     store.hasMailSlot(user.moodleUserId),
     limit === null ? Promise.resolve(0) : store.countMailSlots(),
+    store.getMailAccess(user.id),
+    operator ? store.countMailAccess('pending', [...operators]) : Promise.resolve(0),
   ]);
   const connection = row && {
     address: row.address,
@@ -316,18 +378,35 @@ export async function mailInfo(env: Env, store: D1Store, user: UserRow) {
     slotsLeft: limit === null ? null : Math.max(0, limit - taken),
     hasSlot,
     idleDays: mailIdleDaysOf(env),
+    access: mailAccessOf(env, user, accessRow),
+    ...(operator ? { pendingRequests } : {}),
   };
 }
 
 export function mailRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
+  // operators and approved users need no application; an application is pointless while no slot is left for the user
+  app.post('/api/mail/request', session, async (c) => {
+    if (!googleClientOf(c.env)) throw new NotFound(MAIL_OFF);
+    const user = c.get('user');
+    memoryRateLimit(`mail:request:${user.id}`, 20, 10 * 60_000);
+    const rt = await getRuntime(c.env);
+    const before = await rt.store.getMailAccess(user.id);
+    if (mailAccessOf(c.env, user, before) === 'approved') return c.json({ access: 'approved' });
+    if (!(await slotAvailable(c.env, rt.store, user.moodleUserId))) throw new Forbidden(SLOTS_FULL);
+    const row = await rt.store.requestMailAccess(user.id, Date.now());
+    if (before?.status !== 'pending') auditConsole(c, user, 'mail:request', {});
+    return c.json({ access: row.status });
+  });
+
   app.post('/api/mail/connect', session, async (c) => {
     const google = googleClientOf(c.env);
-    if (!google) throw new NotFound('Mail is not available.');
+    if (!google) throw new NotFound(MAIL_OFF);
     const user = c.get('user');
     memoryRateLimit(`mail:connect:${user.id}`, 20, 10 * 60_000);
     const rt = await getRuntime(c.env);
+    if (!(await mailApproved(c.env, rt.store, user))) throw new Forbidden(NOT_APPROVED);
     if (!(await slotAvailable(c.env, rt.store, user.moodleUserId))) throw new Forbidden(SLOTS_FULL);
     return c.json({ url: await startConnect(c, google, user) });
   });
@@ -347,9 +426,7 @@ export function mailRoutes(): Hono<AppEnv> {
 
   app.delete('/api/mail', session, async (c) => {
     const user = c.get('user');
-    await revokeStoredMail(c.env, user.id);
-    const rt = await getRuntime(c.env);
-    if (await rt.store.deleteMailCredential(user.id)) auditConsole(c, user, 'mail:disconnect', {});
+    if (await disconnectMail(c.env, user.id)) auditConsole(c, user, 'mail:disconnect', {});
     return c.json({ ok: true });
   });
 

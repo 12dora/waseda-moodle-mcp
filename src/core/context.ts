@@ -3,6 +3,7 @@
  * (memory) provide implementations.
  */
 
+import type { MailAccessMethods } from './mail/access';
 import type {
   ActionKind,
   ActionStatus,
@@ -224,7 +225,8 @@ export interface CalendarFeedRow extends CalendarFeedInfo {
   cacheIcs: string | null;
 }
 
-export interface Store {
+/** Persistence; the mail access approvals are declared in core/mail/access.ts. */
+export interface Store extends MailAccessMethods {
   // users
   getUser(id: number): Promise<UserRow | null>;
   getUserByMoodleId(moodleUserId: number): Promise<UserRow | null>;

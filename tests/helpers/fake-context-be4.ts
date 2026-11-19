@@ -283,6 +283,24 @@ export function createMemoryStoreForTests(): MemoryStore {
     async takeMailSlot() {
       return false;
     },
+    async getMailAccess() {
+      return null;
+    },
+    async requestMailAccess(userId, at) {
+      return { userId, status: 'pending', requestedAt: at, decidedAt: null, decidedBy: null };
+    },
+    async decideMailAccess() {
+      return false;
+    },
+    async listMailAccess() {
+      return [];
+    },
+    async countMailAccess() {
+      return 0;
+    },
+    async listUnapprovedMailOwners() {
+      return [];
+    },
 
     async audit(row) {
       auditLog.push({ ...row, id: nextAuditId++ });
