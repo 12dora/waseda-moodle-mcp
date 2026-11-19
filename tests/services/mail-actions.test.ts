@@ -214,6 +214,12 @@ describe('prepareMailReply', () => {
     await expect(prepareMailReply(ctx, { messageId: MSG_ID, body: 'x' })).rejects.toThrow('No recipients to reply to.');
   });
 
+  it('replies to yourself when you sent the mail only to yourself', async () => {
+    const { ctx } = replyMail({ From: `Taro Yamada <${SELF}>`, To: SELF, Cc: '', Subject: 'Note' });
+    const p = await prepareMailReply(ctx, { messageId: MSG_ID, body: 'x' });
+    expect(p.details).toContain(`To: ${SELF}`);
+  });
+
   it('quotes display names that contain specials or @ in the preview', async () => {
     const { ctx } = replyMail({
       From: '"Info, evil@example.com," <hanako@akane.waseda.jp>',

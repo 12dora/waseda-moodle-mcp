@@ -178,8 +178,18 @@ function replyToSource(p: ReplyPeople): Mailbox[] {
 
 function replyRecipients(p: ReplyPeople): { to: Mailbox[]; cc: Mailbox[] } {
   const seen = new Set<string>();
+  const source = replyToSource(p);
+  const to = takeMailboxes(source, p.self, seen);
+  // a mail you sent only to yourself: the reply goes to yourself, as in Gmail
+  // (only when you are the sender: an announcement from undisclosed-recipients must not loop back to you)
+  const isSelf = (m: Mailbox) => m.address.toLowerCase() === p.self.toLowerCase();
+  const me = to.length === 0 && p.primary.some(isSelf) ? source.find(isSelf) : undefined;
+  if (me) {
+    to.push(me);
+    seen.add(me.address.toLowerCase());
+  }
   const ccSrc = p.replyAll ? [...p.originalCc, ...p.extraCc] : p.extraCc;
-  return { to: takeMailboxes(replyToSource(p), p.self, seen), cc: takeMailboxes(ccSrc, p.self, seen) };
+  return { to, cc: takeMailboxes(ccSrc, p.self, seen) };
 }
 
 function replySubject(subject: string | null): string {
