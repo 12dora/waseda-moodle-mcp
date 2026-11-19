@@ -3,6 +3,24 @@
 import { htmlToMarkdown } from '../../html';
 import { bytesOfBase64Url, decodeCharset, type GmailPart, header } from '../../mail/gmail';
 
+const UTF8 = new TextDecoder('utf-8', { fatal: true });
+
+/**
+ * Text of a body part. Gmail usually hands body.data over already converted to UTF-8 although the part still declares
+ * its original charset (verified live: a quoted-printable iso-2022-jp part arrived as UTF-8 bytes). Valid UTF-8 without
+ * ESC (ISO-2022-JP's shift sequences are 7-bit, hence also valid UTF-8) is read as UTF-8; anything else by its label.
+ */
+function bodyText(bytes: Uint8Array, charset: string | null): string {
+  if (!bytes.includes(0x1b)) {
+    try {
+      return UTF8.decode(bytes);
+    } catch {
+      // not UTF-8: Gmail passed the original bytes through
+    }
+  }
+  return decodeCharset(bytes, charset);
+}
+
 export interface RawMailAttachment {
   filename: string;
   mimeType: string;
@@ -36,7 +54,7 @@ function mimeOf(part: GmailPart): string {
 
 function decodeText(part: GmailPart): { text: string; large: boolean } {
   if (part.body?.data) {
-    return { text: decodeCharset(bytesOfBase64Url(part.body.data), charsetOf(part)), large: false };
+    return { text: bodyText(bytesOfBase64Url(part.body.data), charsetOf(part)), large: false };
   }
   if (part.body?.attachmentId) return { text: '', large: true };
   return { text: '', large: false };

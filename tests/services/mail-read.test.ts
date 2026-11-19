@@ -139,6 +139,26 @@ describe('getMail', () => {
     expect(r.webUrl).toBe(gmailWebUrl(ADDR, iso2022Message.threadId));
   });
 
+  it('reads UTF-8 bytes Gmail already converted, whatever charset the part declares', async () => {
+    const text = '差出人: 早稲田 太郎';
+    const asIso = gmailMessage({
+      id: 'aa0000a1',
+      threadId: 'ff0000a1',
+      extraHeaders: [{ name: 'Content-Type', value: 'text/plain; charset="iso-2022-jp"' }],
+      body: { data: b64urlUtf8(text) },
+    });
+    const sjisBytes = new Uint8Array([0x82, 0xa0]); // 'あ' in Shift_JIS: not UTF-8, so the label applies
+    const asSjis = gmailMessage({
+      id: 'aa0000a2',
+      threadId: 'ff0000a2',
+      extraHeaders: [{ name: 'Content-Type', value: 'text/plain; charset=shift_jis' }],
+      body: { data: btoa(String.fromCharCode(...sjisBytes)).replace(/=+$/, '') },
+    });
+    const mail = makeFakeMail({ answers: { 'GET messages/aa0000a1': asIso, 'GET messages/aa0000a2': asSjis } });
+    expect((await getMail(ctxOf(mail), { messageId: 'aa0000a1' })).messages[0]?.text).toBe(text);
+    expect((await getMail(ctxOf(mail), { messageId: 'aa0000a2' })).messages[0]?.text).toBe('あ');
+  });
+
   it('converts an HTML-only part to markdown', async () => {
     const mail = makeFakeMail({ answers: { [`GET messages/${htmlOnlyMessage.id}`]: htmlOnlyMessage } });
     const r = await getMail(ctxOf(mail), { messageId: htmlOnlyMessage.id });
