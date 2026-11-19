@@ -318,7 +318,11 @@ export const zhCN: Dictionary = {
   'mail.endIdle': '已因 {days} 天未使用而断开连接。',
   'mail.endIdleNoDays': '已因长期未使用而断开连接。',
   'mail.endRevoked': '连接已被撤销或已过期。',
-  'mail.unverified': 'Google 会显示“未经验证的应用”警告。请选择“高级”，再点击“继续”。',
+  'mail.warnWhy':
+    'Google 显示该警告，是因为这项免费的开源服务尚未通过 Google 的付费验证。它只请求读取和发送邮件的权限，未经你确认不会发送任何邮件。',
+  'mail.step1': '选择你的早大账号（…@*.waseda.jp）。',
+  'mail.step2': '在“Google 尚未验证此应用”页面，选择“高级”，再选择“转至 Waseda Moodle MCP（不安全）”。',
+  'mail.step3': '勾选两项权限（没有发送权限时只能读取邮件），然后选择“继续”。',
   'mail.idleNote': '连续 {days} 天未使用将自动断开连接。',
   'mail.slotsLeft': '剩余名额：{n}',
   'mail.full': '邮箱名额已满。如需使用邮箱，请自托管。',

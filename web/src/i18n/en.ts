@@ -319,7 +319,11 @@ export const en = {
   'mail.endIdle': 'Disconnected after {days} days without use.',
   'mail.endIdleNoDays': 'Disconnected after a period without use.',
   'mail.endRevoked': 'The connection was revoked or expired.',
-  'mail.unverified': 'Google shows an "unverified app" warning. Choose Advanced, then Continue.',
+  'mail.warnWhy':
+    "Google shows a warning because this free, open-source service has not completed Google's paid verification. It only asks to read and send your mail, and nothing is sent without your confirmation.",
+  'mail.step1': 'Choose your Waseda account (…@*.waseda.jp).',
+  'mail.step2': 'On "Google hasn\'t verified this app", select "Advanced", then "Go to Waseda Moodle MCP (unsafe)".',
+  'mail.step3': 'Tick both permissions (without send permission you can only read mail), then select "Continue".',
   'mail.idleNote': 'Disconnects automatically after {days} days without use.',
   'mail.slotsLeft': 'Slots left: {n}',
   'mail.full': 'Mail slots are full. To use mail, self-host the server.',

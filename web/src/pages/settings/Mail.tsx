@@ -7,7 +7,7 @@ import { Card } from '../../components/Card';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { useToast } from '../../components/Toast';
 import { useI18n } from '../../i18n';
-import type { Translate } from '../../i18n/core';
+import type { MessageKey, Translate } from '../../i18n/core';
 import { errorText } from '../../lib/errors';
 import { SOURCE_URL } from '../../lib/links';
 import { canReconnectMail, isoOfMs, mailResultNotice, mailView, withoutMailParam } from '../../lib/mail';
@@ -50,6 +50,23 @@ interface ActionProps {
   onConnect: () => void;
 }
 
+const GOOGLE_STEPS: readonly MessageKey[] = ['mail.step1', 'mail.step2', 'mail.step3'];
+
+/** What to expect on Google's "has not verified this app" screens, shown right before the authorization starts. */
+function GoogleSteps() {
+  const { t } = useI18n();
+  return (
+    <div>
+      <p className="muted small">{t('mail.warnWhy')}</p>
+      <ol className="muted small">
+        {GOOGLE_STEPS.map((k) => (
+          <li key={k}>{t(k)}</li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function ConnectedDetails({ connection }: { connection: MailConnection }) {
   const { t, lang } = useI18n();
   const lastUsed = isoOfMs(connection.lastUsedAt);
@@ -84,6 +101,7 @@ function ConnectionCard({
 }: ActionProps & { info: MailInfo; connection: MailConnection; onDisconnect: () => void }) {
   const { t } = useI18n();
   const active = connection.status === 'active';
+  const reconnect = canReconnectMail(connection);
   return (
     <Card>
       {active ? (
@@ -92,8 +110,9 @@ function ConnectionCard({
         <InvalidNote connection={connection} idleDays={info.idleDays} />
       )}
       {active && !connection.canSend && <p className="muted small">{t('mail.needSend')}</p>}
+      {reconnect && <GoogleSteps />}
       <div className="button-row">
-        {canReconnectMail(connection) && (
+        {reconnect && (
           <Button variant="primary" busy={connecting} onClick={onConnect}>
             {t('mail.reconnect')}
           </Button>
@@ -111,16 +130,16 @@ function ConnectCard({ info, connecting, onConnect }: ActionProps & { info: Mail
   return (
     <Card>
       <p className="muted">{t('mail.desc')}</p>
+      <GoogleSteps />
       <div className="button-row">
         <Button variant="primary" busy={connecting} onClick={onConnect}>
           {t('mail.connect')}
         </Button>
       </div>
-      <ul className="muted small">
-        <li>{t('mail.unverified')}</li>
-        {info.idleDays !== null && <li>{t('mail.idleNote', { days: info.idleDays })}</li>}
-        {info.slotsLeft !== null && !info.hasSlot && <li>{t('mail.slotsLeft', { n: info.slotsLeft })}</li>}
-      </ul>
+      {info.idleDays !== null && <p className="muted small">{t('mail.idleNote', { days: info.idleDays })}</p>}
+      {info.slotsLeft !== null && !info.hasSlot && (
+        <p className="muted small">{t('mail.slotsLeft', { n: info.slotsLeft })}</p>
+      )}
     </Card>
   );
 }
