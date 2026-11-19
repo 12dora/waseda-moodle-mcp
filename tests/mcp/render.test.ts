@@ -35,6 +35,33 @@ describe('assembleTail', () => {
     expect(t.endsWith('FOOTER LINE')).toBe(true);
     expect(t).not.toContain('old block');
   });
+
+  it('keeps a mail-sized block when given a 40k budget', () => {
+    const body = 'x'.repeat(12_000);
+    const t = assembleTail({
+      head: ['head'],
+      blocks: [body],
+      footer: ['FOOT'],
+      noun: 'messages',
+      budget: 40_000,
+    });
+    expect(t).toContain(body);
+    expect(t.endsWith('FOOT')).toBe(true);
+  });
+
+  it('names how much was cut when onCut is passed', () => {
+    const t = assembleTail({
+      head: ['h'],
+      blocks: ['x'.repeat(9000)],
+      footer: ['F'],
+      noun: 'messages',
+      onCut: (shown, total) =>
+        `body cut at ${shown} of ${total} chars; full text in structured result / open in Gmail.`,
+    });
+    expect(t).toMatch(/body cut at \d+ of 9000 chars/);
+    expect(t).toContain('structured result');
+    expect(t.endsWith('F')).toBe(true);
+  });
 });
 
 describe('fileLines', () => {

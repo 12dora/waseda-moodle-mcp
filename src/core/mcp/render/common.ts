@@ -1,6 +1,7 @@
 /**
- * Shared helpers for the markdown renderers. Every renderer returns at most ~4k characters
- * (lists are cut with "… N more (hint)"); the complete data always travels in structuredContent.
+ * Shared helpers for the markdown renderers. The default cap is ~4k characters
+ * (lists are cut with "… N more (hint)"); assembleTail accepts a larger `budget` (mail uses 40k).
+ * The complete data always travels in structuredContent.
  */
 
 import { formatBytes } from '../../format';
@@ -29,8 +30,9 @@ export interface Entry {
 }
 
 /** Last line of defence so no renderer can exceed the cap. */
-export function hardCap(text: string): string {
-  return text.length <= MAX_TEXT_CHARS + 200 ? text : clip(text, MAX_TEXT_CHARS + 200);
+export function hardCap(text: string, budget = MAX_TEXT_CHARS): string {
+  const cap = budget + 200;
+  return text.length <= cap ? text : clip(text, cap);
 }
 
 interface ListParts {
@@ -65,28 +67,41 @@ interface TailParts {
   footer?: string[];
   /** Plural noun for the "… N earlier <noun> omitted" line. */
   noun: string;
+  /** Character cap for the whole render (default MAX_TEXT_CHARS). Mail uses 40 000. */
+  budget?: number;
+  /** When the newest block is clipped to fit, a line after it (mail: how much was cut / Gmail). */
+  onCut?: (shown: number, total: number) => string;
+}
+
+function newestBlocks(blocks: string[], startRoom: number, onCut?: (shown: number, total: number) => string): string[] {
+  const kept: string[] = [];
+  let room = startRoom;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i] ?? '';
+    if (block.length + 1 <= room) {
+      kept.unshift(block);
+      room -= block.length + 1;
+      continue;
+    }
+    if (kept.length === 0) {
+      const shown = Math.max(200, room - 1);
+      const head = clip(block, shown);
+      kept.push(onCut ? `${head}\n${onCut(shown, block.length)}` : head);
+    }
+    break;
+  }
+  return kept;
 }
 
 /** Like assemble, but keeps the NEWEST blocks (chronological lists: posts, messages). */
-export function assembleTail({ head, blocks, footer = [], noun }: TailParts): string {
-  let budget = MAX_TEXT_CHARS - head.join('\n').length - footer.join('\n').length - 120;
-  const kept: string[] = [];
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    const block = blocks[i] ?? '';
-    if (block.length + 1 <= budget) {
-      kept.unshift(block);
-      budget -= block.length + 1;
-    } else {
-      // the newest block always shows, clipped so the footer survives; older ones are dropped
-      if (kept.length === 0) kept.push(clip(block, Math.max(200, budget - 1)));
-      break;
-    }
-  }
+export function assembleTail({ head, blocks, footer = [], noun, budget = MAX_TEXT_CHARS, onCut }: TailParts): string {
+  const room = budget - head.join('\n').length - footer.join('\n').length - 120;
+  const kept = newestBlocks(blocks, room, onCut);
   const omitted = blocks.length - kept.length;
   const lines = [...head];
   if (omitted > 0) lines.push(`… ${omitted} earlier ${noun} omitted`);
   lines.push(...kept, ...footer);
-  return hardCap(lines.join('\n'));
+  return hardCap(lines.join('\n'), budget);
 }
 
 /** A file list always ends with how to open its files, so a text-only client knows the next call. */

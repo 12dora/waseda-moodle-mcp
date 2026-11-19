@@ -30,7 +30,7 @@ import { nameFromHeaders } from './file-http';
 
 export { type FileRouteEnv, streamDownload, streamUpload } from './file-http';
 
-const DOWNLOAD_TTL_SEC = 15 * 60;
+export const DOWNLOAD_TTL_SEC = 15 * 60;
 const UPLOAD_TTL_SEC = 30 * 60;
 const INLINE_MAX_BYTES = 1024 * 1024;
 

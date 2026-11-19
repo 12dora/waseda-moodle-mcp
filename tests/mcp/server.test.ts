@@ -23,6 +23,7 @@ import { getSyllabusDetails } from '../../src/core/services/syllabus-details';
 import type { Course, CourseUpdate, DueList, ScheduleOverride, Scope } from '../../src/core/types';
 import { DEFAULT_SETTINGS } from '../../src/core/types';
 import { type FakeContextOptions, makeFakeContext } from '../helpers/fake-context';
+import { makeFakeMail } from '../helpers/fake-mail';
 
 vi.mock('../../src/core/services/actions', () => ({
   prepareSubmission: vi.fn(),
@@ -32,6 +33,8 @@ vi.mock('../../src/core/services/actions', () => ({
   prepareCompletion: vi.fn(),
   prepareMarkRead: vi.fn(),
   prepareForumSubscription: vi.fn(),
+  prepareMailSend: vi.fn(),
+  prepareMailReply: vi.fn(),
   confirmAction: vi.fn(),
   cancelAction: vi.fn(),
 }));
@@ -152,6 +155,31 @@ describe('tool registration', () => {
     const props = submissionProps(tools);
     expect(props.upload_id).toBeUndefined();
     expect(props.files?.items?.properties?.path).toBeDefined();
+  });
+
+  it('adds two mail read tools when ctx.mail is set, and two write tools with write scope', async () => {
+    const mail = makeFakeMail();
+    const read = await connect(fake({ mail }).ctx);
+    const readNames = (await read.listTools()).tools.map((t) => t.name);
+    expect(readNames).toEqual(expect.arrayContaining(['search_mail', 'get_mail']));
+    expect(readNames).toHaveLength(READ_TOOLS.length + 2);
+    expect(readNames).not.toContain('prepare_mail_send');
+
+    const write = await connect(fake({ scopes: WRITE, mail }).ctx);
+    const writeNames = (await write.listTools()).tools.map((t) => t.name);
+    expect(writeNames).toHaveLength(31 + 4);
+    expect(writeNames).toEqual(
+      expect.arrayContaining(['search_mail', 'get_mail', 'prepare_mail_send', 'prepare_mail_reply']),
+    );
+  });
+
+  it('does not add mail tools without ctx.mail, including stdio', async () => {
+    const worker = await connect(fake({ scopes: WRITE }).ctx);
+    expect((await worker.listTools()).tools).toHaveLength(31);
+    const local = await connect(fake({ scopes: WRITE, mode: 'stdio', publicUrl: '' }).ctx);
+    const localNames = (await local.listTools()).tools.map((t) => t.name);
+    expect(localNames).toHaveLength(30);
+    expect(localNames).not.toContain('search_mail');
   });
 
   it('keeps path out of the worker schema and offers upload_id', async () => {
