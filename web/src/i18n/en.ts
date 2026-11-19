@@ -84,6 +84,7 @@ export const en = {
   'overview.title': 'Overview',
   'overview.conn.title': 'Connections',
   'overview.conn.moodle': 'Moodle',
+  'overview.conn.client': 'AI client',
   'overview.conn.active': 'Connected',
   'overview.conn.invalid': 'Reconnect required',
   'overview.conn.none': 'No Moodle connection. Reconnect to continue.',

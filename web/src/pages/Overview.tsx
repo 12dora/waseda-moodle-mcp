@@ -21,6 +21,21 @@ import { todayJst } from '../lib/timetable';
 import { useAsync } from '../lib/useAsync';
 import { useConfig, useSession } from '../session';
 
+/** MCP URL at hand; the per-client setup lives in Settings → AI clients. */
+function ClientSection() {
+  const t = useT();
+  const { mcpUrl } = useConfig();
+  return (
+    <div className="conn-section">
+      <div className="conn-head">
+        <h3 className="conn-title">{t('overview.conn.client')}</h3>
+        <Link to="/settings/connect">{t('overview.client.guide')}</Link>
+      </div>
+      <CopyField label={t('client.mcpUrl')} value={mcpUrl} />
+    </div>
+  );
+}
+
 function ConnectionCard({ me }: { me: Me }) {
   const { t, lang } = useI18n();
   const navigate = useNavigate();
@@ -67,6 +82,7 @@ function ConnectionCard({ me }: { me: Me }) {
         </Button>
       </div>
       {me.mail && <MailRow info={me.mail} />}
+      <ClientSection />
     </Card>
   );
 }
@@ -115,17 +131,6 @@ function TodayCard() {
           ))}
         </div>
       )}
-    </Card>
-  );
-}
-
-/** MCP URL at hand; the per-client setup lives in Settings → AI clients. */
-function ConnectCard() {
-  const t = useT();
-  const { mcpUrl } = useConfig();
-  return (
-    <Card title={t('client.title')} actions={<Link to="/settings/connect">{t('overview.client.guide')}</Link>}>
-      <CopyField label={t('client.mcpUrl')} value={mcpUrl} />
     </Card>
   );
 }
@@ -185,7 +190,6 @@ export function OverviewPage() {
         <TodayCard />
         <UpdatesCard />
       </div>
-      <ConnectCard />
     </>
   );
 }

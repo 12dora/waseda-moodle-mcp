@@ -85,6 +85,7 @@ export const zhCN: Dictionary = {
   'overview.title': '概览',
   'overview.conn.title': '连接',
   'overview.conn.moodle': 'Moodle',
+  'overview.conn.client': 'AI 客户端',
   'overview.conn.active': '已连接',
   'overview.conn.invalid': '需要重新连接',
   'overview.conn.none': '尚未连接 Moodle。请重新连接。',

@@ -85,6 +85,7 @@ export const ja: Dictionary = {
   'overview.title': '概要',
   'overview.conn.title': '連携',
   'overview.conn.moodle': 'Moodle',
+  'overview.conn.client': 'AI クライアント',
   'overview.conn.active': '接続済み',
   'overview.conn.invalid': '再接続が必要です',
   'overview.conn.none': 'Moodle に接続されていません。再接続してください。',
