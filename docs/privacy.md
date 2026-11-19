@@ -24,6 +24,7 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 | Moodle web-service token (and the optional private token) | To call Moodle on your behalf | Encrypted with AES-256-GCM using the instance's `MASTER_KEY`. A hash and the last 4 characters are kept to recognise the token and display it as `••••abcd`. |
 | Moodle sign-in session (only when a private token was received) | To renew the token automatically when Moodle replaces it, so you do not reconnect every week | The session cookie, encrypted like the token, opened once with the private token and refreshed by the service about hourly; sent only to Moodle. Also kept: when the session was last confirmed and when the token was last renewed. Removed when Moodle ends the session or you delete your account. |
 | Waseda mail connection (only if you connect it) | To read and send mail in your Waseda mailbox (Google Workspace Gmail) at your request | Your mail address, your Google account id, the Google authorization (refresh token, encrypted like the Moodle token), the permissions you granted (read, send), when you connected, when a mail tool last used it, and why a connection ended. Sent only to Google. |
+| Mail access request (when you apply, connect or an administrator decides) | An administrator approves who may connect mail, because Google limits the number of users | Your request status and the request and decision times. Administrators see your name, Moodle user id, request time, and your connected mail address and whether the connection is active while reviewing requests. Deleted with your account. |
 | Mail slot (only if you connected mail) | Google limits an unverified app to 100 users over its lifetime, so the service counts who has ever connected mail | Only your Moodle user id and the date it was taken. Kept after you disconnect or delete your account (otherwise you would count twice); used for nothing else. |
 | Moodle user id, full name, language | To identify your account | Read from Moodle when you connect. |
 | Settings | Write mode, the courses you confirmed for this term, class times you set, console language | |
@@ -61,7 +62,8 @@ Expired data is purged daily.
 | Course snapshots | 30 days after last check |
 | Class times from Moodle | 30 days after last check |
 | Calendar subscription | Until you turn it off or delete your account |
-| Waseda mail connection | Until you disconnect it or delete your account; revoked automatically after 90 days without use (the instance may set another period) |
+| Waseda mail connection | Until you disconnect it, an administrator revokes your access, or you delete your account; revoked automatically after 90 days without use (the instance may set another period) and when your access is no longer approved |
+| Mail access request | Until you delete your account |
 | Mail slot | Permanently (Moodle user id only, see above) |
 | Sessions, connect handoffs, OAuth requests, upload drafts | Until they expire (sessions: 30 days of inactivity; handoffs: 2 minutes; upload links: 30 minutes) |
 | OAuth tokens | Access 12 hours, refresh 90 days, or until you revoke the app |
@@ -86,7 +88,7 @@ In the console:
 - **Settings → Authorized apps**: revoke an MCP client's OAuth access.
 - **Settings → API keys**: revoke a key.
 - **Settings → Mail**: disconnect Waseda mail — revokes the Google authorization and deletes it. You can also remove access at https://myaccount.google.com/permissions.
-- **Settings → Account**: delete account — revokes all OAuth grants and the Google mail authorization, and permanently deletes your user record, encrypted token and Moodle sign-in session, Waseda mail connection, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
+- **Settings → Account**: delete account — revokes all OAuth grants and the Google mail authorization, and permanently deletes your user record, encrypted token and Moodle sign-in session, Waseda mail connection and mail access request, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
 
 The service never revokes or resets your Moodle token, because it is the same token the
 official Moodle mobile app uses; revoking it would sign your phone out. If you also want to

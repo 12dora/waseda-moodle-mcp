@@ -56,7 +56,7 @@ stdio process. Unofficial; not affiliated with Waseda University.
 - Forum threads and posts, Moodle conversations, notifications with unread counts.
 
 **Waseda mail (optional, hosted)**
-- Connect your Wasedaメール (Google Workspace Gmail) under **Settings → Mail** to search and read mail and attachments, and to send or reply after you confirm. Connections unused for 90 days are disconnected automatically. Google limits an unverified app to 100 users per project, so the hosted service offers a fixed number of mail slots; when they are taken, self-host with your own Google OAuth client.
+- Apply for access, and once an administrator approves, connect your Wasedaメール (Google Workspace Gmail) under **Settings → Mail** or on the Overview page, to search and read mail and attachments, and to send or reply after you confirm. Connections unused for 90 days are disconnected automatically. Google limits an unverified app to 100 users per project, so the hosted service offers a fixed number of mail slots; when they are taken, self-host with your own Google OAuth client.
 
 **Files**
 - Download any Moodle file through a short-lived signed URL (hosted) or a temp file (stdio); small files can be attached inline.
