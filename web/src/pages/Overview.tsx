@@ -9,7 +9,7 @@ import { DueRow } from '../components/DueRow';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBox } from '../components/ErrorBox';
 import { PageHeader } from '../components/Layout';
-import { MailCard } from '../components/MailCard';
+import { MailRow } from '../components/MailRow';
 import { ScopeBanner } from '../components/ScopeBanner';
 import { Spinner } from '../components/Spinner';
 import { useI18n, useT } from '../i18n';
@@ -27,44 +27,46 @@ function ConnectionCard({ me }: { me: Me }) {
   const cred = me.credential;
   const active = cred?.status === 'active';
   return (
-    <Card
-      title={t('overview.conn.title')}
-      actions={
-        <span className={`badge ${active ? 'badge-ok' : 'badge-danger'}`}>
-          {active ? t('overview.conn.active') : t('overview.conn.invalid')}
-        </span>
-      }
-    >
-      {!cred && <p className="alert alert-error">{t('overview.conn.none')}</p>}
-      {cred && !active && cred.lastError && <p className="alert alert-error">{cred.lastError}</p>}
-      <dl className="kv">
-        <dt>{t('overview.conn.account')}</dt>
-        <dd>{me.user.fullname}</dd>
-        {cred && (
-          <>
-            <dt>{t('overview.conn.via')}</dt>
-            <dd>{t(`via.${cred.connectedVia}`)}</dd>
-            <dt>{t('overview.conn.lastOk')}</dt>
-            <dd>{cred.lastOkAt ? formatDateTime(cred.lastOkAt, lang) : t('common.never')}</dd>
-            <dt>{t('overview.conn.token')}</dt>
-            <dd className="mono">••••{cred.tokenHint}</dd>
-            <dt>{t('overview.conn.autoRenew')}</dt>
-            <dd>
-              {cred.autoRenew ? t('overview.conn.autoRenewOn') : t('overview.conn.autoRenewOff')}
-              {cred.autoRenew && cred.renewedAt && (
-                <span className="muted">
-                  {' · '}
-                  {t('overview.conn.autoRenewLast', { time: formatDateTime(cred.renewedAt, lang) })}
-                </span>
-              )}
-              {!cred.autoRenew && active && <div className="muted small">{t('overview.conn.autoRenewHint')}</div>}
-            </dd>
-          </>
-        )}
-      </dl>
-      <Button variant={active ? 'secondary' : 'primary'} onClick={() => navigate('/connect')}>
-        {t('overview.conn.reconnect')}
-      </Button>
+    <Card title={t('overview.conn.title')}>
+      <div className="conn-section">
+        <div className="conn-head">
+          <h3 className="conn-title">{t('overview.conn.moodle')}</h3>
+          <span className={`badge ${active ? 'badge-ok' : 'badge-danger'}`}>
+            {active ? t('overview.conn.active') : t('overview.conn.invalid')}
+          </span>
+        </div>
+        {!cred && <p className="alert alert-error">{t('overview.conn.none')}</p>}
+        {cred && !active && cred.lastError && <p className="alert alert-error">{cred.lastError}</p>}
+        <dl className="kv">
+          <dt>{t('overview.conn.account')}</dt>
+          <dd>{me.user.fullname}</dd>
+          {cred && (
+            <>
+              <dt>{t('overview.conn.via')}</dt>
+              <dd>{t(`via.${cred.connectedVia}`)}</dd>
+              <dt>{t('overview.conn.lastOk')}</dt>
+              <dd>{cred.lastOkAt ? formatDateTime(cred.lastOkAt, lang) : t('common.never')}</dd>
+              <dt>{t('overview.conn.token')}</dt>
+              <dd className="mono">••••{cred.tokenHint}</dd>
+              <dt>{t('overview.conn.autoRenew')}</dt>
+              <dd>
+                {cred.autoRenew ? t('overview.conn.autoRenewOn') : t('overview.conn.autoRenewOff')}
+                {cred.autoRenew && cred.renewedAt && (
+                  <span className="muted">
+                    {' · '}
+                    {t('overview.conn.autoRenewLast', { time: formatDateTime(cred.renewedAt, lang) })}
+                  </span>
+                )}
+                {!cred.autoRenew && active && <div className="muted small">{t('overview.conn.autoRenewHint')}</div>}
+              </dd>
+            </>
+          )}
+        </dl>
+        <Button variant={active ? 'secondary' : 'primary'} onClick={() => navigate('/connect')}>
+          {t('overview.conn.reconnect')}
+        </Button>
+      </div>
+      {me.mail && <MailRow info={me.mail} />}
     </Card>
   );
 }
@@ -179,7 +181,6 @@ export function OverviewPage() {
       )}
       <div className="grid-2">
         <ConnectionCard me={me} />
-        {me.mail && <MailCard info={me.mail} />}
         <UpcomingCard />
         <TodayCard />
         <UpdatesCard />

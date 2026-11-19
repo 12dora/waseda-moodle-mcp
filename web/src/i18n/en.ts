@@ -82,7 +82,8 @@ export const en = {
   'via.stdio': 'Local (stdio)',
 
   'overview.title': 'Overview',
-  'overview.conn.title': 'Moodle connection',
+  'overview.conn.title': 'Connections',
+  'overview.conn.moodle': 'Moodle',
   'overview.conn.active': 'Connected',
   'overview.conn.invalid': 'Reconnect required',
   'overview.conn.none': 'No Moodle connection. Reconnect to continue.',

@@ -884,6 +884,30 @@ fieldset {
   }
 }
 
+.conn-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.conn-section + .conn-section {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.conn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.conn-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.conn-section p {
+  margin: 0;
+}
+
 .badge,
 .tag {
   display: inline-flex;

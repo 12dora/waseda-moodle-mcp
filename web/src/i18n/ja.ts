@@ -83,7 +83,8 @@ export const ja: Dictionary = {
   'via.stdio': 'ローカル (stdio)',
 
   'overview.title': '概要',
-  'overview.conn.title': 'Moodle 接続',
+  'overview.conn.title': '連携',
+  'overview.conn.moodle': 'Moodle',
   'overview.conn.active': '接続済み',
   'overview.conn.invalid': '再接続が必要です',
   'overview.conn.none': 'Moodle に接続されていません。再接続してください。',
