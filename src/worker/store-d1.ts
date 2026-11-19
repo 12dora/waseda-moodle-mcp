@@ -7,6 +7,7 @@ import { type EphemeralMethods, ephemeralMethods } from './store/ephemeral';
 import { type HandoffMethods, handoffMethods } from './store/handoffs';
 import { inferredMethods } from './store/inferred';
 import { logMethods, purgeExpired } from './store/logs';
+import { mailMethods } from './store/mail';
 import { apiKeyMethods, sessionMethods } from './store/sessions';
 import { snapshotMethods } from './store/snapshots';
 import { type UsageMethods, usageMethods } from './store/usage';
@@ -31,6 +32,7 @@ export function createD1Store(db: D1Database): D1Store {
     ...snapshotMethods(db),
     ...inferredMethods(db),
     ...calendarMethods(db),
+    ...mailMethods(db),
     ...logMethods(db),
     ...handoffMethods(db),
     ...ephemeralMethods(db),

@@ -45,7 +45,10 @@
     "ALLOWED_MOODLE_USERIDS": "",
     "ADMIN_MOODLE_USERIDS": "",
     "SYLLABUS_LOOKUP": "on",
-    "CF_BEACON_TOKEN": ""
+    "CF_BEACON_TOKEN": "",
+    "GOOGLE_CLIENT_ID": "",
+    "MAIL_SLOTS": "",
+    "MAIL_IDLE_DAYS": ""
   },
   "triggers": { "crons": ["17 0-14,16,19,22-23 * * *"] }
 }

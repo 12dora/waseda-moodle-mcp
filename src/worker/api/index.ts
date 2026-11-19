@@ -17,6 +17,7 @@ import { coursesViewRoutes } from './courses-view';
 import { dataRoutes } from './data';
 import { handoffRoutes } from './handoff';
 import { keyRoutes } from './keys';
+import { mailRoutes } from './mail';
 import { oauthRoutes } from './oauth';
 import { CSRF_EXEMPT_PATHS } from './shared';
 import { statsRoutes } from './stats';
@@ -55,6 +56,7 @@ export function createApi(): Hono<AppEnv> {
   app.route('/', accountRoutes());
   app.route('/', handoffRoutes());
   app.route('/', keyRoutes());
+  app.route('/', mailRoutes());
   app.route('/', dataRoutes());
   app.route('/', coursesViewRoutes());
   app.route('/', calendarRoutes());

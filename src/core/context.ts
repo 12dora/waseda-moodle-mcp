@@ -43,6 +43,32 @@ export interface MoodleApi {
   ): Promise<DraftUploadResult>;
 }
 
+// ------------------------------------------------------------------ Waseda mailbox client (Gmail REST)
+
+/** Query values of a Gmail REST call; arrays repeat the parameter (metadataHeaders=From&metadataHeaders=To). */
+export type MailQuery = Record<string, string | number | boolean | readonly string[] | undefined>;
+
+/**
+ * The user's Waseda mailbox (Google Workspace Gmail) through the Gmail REST API, `/gmail/v1/users/me/<path>`.
+ * Access tokens come from the stored refresh token (cached per isolate until shortly before they expire).
+ * Throws MailNeedsReconnect (connection revoked / expired), MailUnavailable (network, timeout, 5xx), RateLimited (429),
+ * NotFound (404), Forbidden (403, e.g. a scope that was not granted), InvalidInput (other 4xx), BudgetExceeded.
+ */
+export interface MailApi {
+  /** The connected address, e.g. taro@akane.waseda.jp. */
+  readonly address: string;
+  /** gmail.send was granted. */
+  readonly canSend: boolean;
+  /** Gmail calls made so far in this request (budget accounting; the token refresh counts too). */
+  readonly callsMade: number;
+  /** GET users/me/<path>, e.g. get('messages', { q: 'in:inbox', maxResults: 10 }) or get(`threads/${id}`). */
+  get<T = unknown>(path: string, query?: MailQuery): Promise<T>;
+  /** Like get, but the raw body text (large answers such as attachments, parsed by the caller without JSON.parse). */
+  getText(path: string, query?: MailQuery): Promise<string>;
+  /** POST users/me/<path> with a JSON body, e.g. post('messages/send', { raw, threadId }). Never retried. */
+  post<T = unknown>(path: string, body: unknown): Promise<T>;
+}
+
 // ------------------------------------------------------------------ persistence rows
 
 export interface UserRow {
@@ -92,6 +118,30 @@ export interface RenewalCandidate {
   user: UserRow;
   credential: CredentialRow;
 }
+
+/** A user's Waseda mailbox connection (optional, one per user; services/mail). */
+export interface MailCredentialRow {
+  userId: number;
+  address: string;
+  /** Google account id (id_token `sub`); null for a row stored without it (the address then identifies the account). */
+  googleSub: string | null;
+  /** Google refresh token, encrypted like CredentialRow.tokenEnc; null once revoked (the row only explains why). */
+  refreshEnc: string | null;
+  /** Granted Google scopes. */
+  scopes: string[];
+  status: 'active' | 'invalid';
+  connectedAt: number;
+  /** Last mail tool call that reached Gmail (idle cleanup); null = not used since connecting. */
+  lastUsedAt: number | null;
+  /** Why the connection stopped working (shown in the console); null while active. */
+  lastError: string | null;
+  /** The idle cleanup's last failed attempt to end it (such rows go behind the others); null = none. */
+  idleTriedAt: number | null;
+}
+
+export type MailCredentialPatch = Partial<
+  Pick<MailCredentialRow, 'refreshEnc' | 'status' | 'lastUsedAt' | 'lastError' | 'idleTriedAt'>
+>;
 
 export interface SessionRow {
   idHash: string; // sha256 hex of the cookie value
@@ -207,6 +257,37 @@ export interface Store {
     mustVisit: { after: number; until: number };
     limit: number;
   }): Promise<RenewalCandidate[]>;
+
+  // Waseda mailbox connection (Worker only; the local entry throws)
+  getMailCredential(userId: number): Promise<MailCredentialRow | null>;
+  /** Insert or replace the user's connection (a reconnect replaces every field). */
+  putMailCredential(row: MailCredentialRow): Promise<void>;
+  updateMailCredential(userId: number, patch: MailCredentialPatch): Promise<void>;
+  /**
+   * Compare-and-set (like updateCredentialIf): applies `patch` only while the row still holds `expect.refreshEnc`, so a
+   * request or run that used an older token never touches a newer connection. Returns whether it did.
+   */
+  updateMailCredentialIf(
+    userId: number,
+    expect: Pick<MailCredentialRow, 'refreshEnc'>,
+    patch: MailCredentialPatch,
+  ): Promise<boolean>;
+  /** false when the user had none. */
+  deleteMailCredential(userId: number): Promise<boolean>;
+  /**
+   * Active connections whose last use (or, never used, their connection) is at or before `before`. Rows never tried
+   * (or tried longest ago) by the idle cleanup first, then oldest use first. The idle cleanup revokes them.
+   */
+  listIdleMailCredentials(before: number, limit: number): Promise<MailCredentialRow[]>;
+  /** Mail slots ever taken (they are never given back, see migrations/0012_mail.sql). */
+  countMailSlots(): Promise<number>;
+  hasMailSlot(moodleUserId: number): Promise<boolean>;
+  /**
+   * Takes a slot for the Moodle user in one statement (no race between two users and the last slot): a new slot only
+   * while fewer than `limit` are taken (null = no limit); a user's existing slot is kept as is. Returns whether the
+   * user holds a slot now.
+   */
+  takeMailSlot(moodleUserId: number, at: number, limit: number | null): Promise<boolean>;
 
   // console sessions
   createSession(row: SessionRow): Promise<void>;
@@ -326,6 +407,12 @@ export interface ServiceContext {
   signer: Signer;
   /** Lazily decrypts the stored token and builds a budgeted client. Throws NeedsReconnect. */
   moodle(): Promise<MoodleApi>;
+  /**
+   * The Waseda mailbox client; undefined when the user has no stored mail connection (or mail is not configured, or
+   * stdio mode, or the context does not serve mail: only `/mcp` and the console's action approval build it). Lazily
+   * built once per request; throws MailNeedsReconnect when the stored connection no longer works.
+   */
+  mail?: () => Promise<MailApi>;
   publicUrl: string; // e.g. https://wasemoodle.example.com (no trailing slash); '' in stdio mode
   mode: 'worker' | 'stdio';
   scopes: Scope[];

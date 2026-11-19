@@ -24,6 +24,7 @@ const FEATURES: readonly (readonly [RegExp, string])[] = [
   [/^\w+ \/api\/keys(\/|$)/, 'keys'],
   [/^\w+ \/api\/apps(\/|$)/, 'apps'],
   [/^\w+ \/api\/calendar$/, 'calendar'],
+  [/^(POST|DELETE) \/api\/mail(\/connect)?$/, 'mail'],
   [/^\w+ \/api\/oauth\/requests\//, 'consent'],
   [/^GET \/api\/admin\/stats$/, 'stats'],
 ];

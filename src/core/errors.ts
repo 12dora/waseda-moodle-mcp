@@ -27,12 +27,35 @@ export class MoodleUnavailable extends WmmError {
   }
 }
 
+/**
+ * Gmail (the Waseda mailbox) is unreachable: network failure, timeout or HTTP 5xx. `maybeSent` is false when the request
+ * never reached the Gmail API (e.g. the token refresh failed), so a write cannot have gone through.
+ */
+export class MailUnavailable extends WmmError {
+  readonly maybeSent: boolean;
+  constructor(
+    message = 'Waseda mail (Gmail) is not reachable right now. Try again later.',
+    opts: { maybeSent?: boolean } = {},
+  ) {
+    super(message, 'mail_unavailable');
+    this.maybeSent = opts.maybeSent ?? true;
+  }
+}
+
 /** Stored token missing/invalid/expired (errorcode invalidtoken, or accessexception with "token expired"). */
 export class NeedsReconnect extends WmmError {
   constructor(
     message = 'The Moodle connection has expired. Connect again (in the console, or with the connect command in local mode).',
+    code = 'needs_reconnect',
   ) {
-    super(message, 'needs_reconnect');
+    super(message, code);
+  }
+}
+
+/** The Waseda mail connection is missing, expired or revoked: the user reconnects mail (Settings → Mail), not Moodle. */
+export class MailNeedsReconnect extends NeedsReconnect {
+  constructor(message: string) {
+    super(message, 'mail_needs_reconnect');
   }
 }
 

@@ -2,7 +2,7 @@
 
 import { type Context, Hono } from 'hono';
 import { type FileRouteEnv, streamDownload, streamUpload } from '../core/services/files';
-import { getRuntime, makeMoodleFactory, tryExecutionContext, type WaitUntil } from './context';
+import { getRuntime, makeMailFactory, makeMoodleFactory, tryExecutionContext, type WaitUntil } from './context';
 import type { Env } from './env';
 import { errorPayload } from './http-errors';
 
@@ -35,7 +35,12 @@ export function filesRoutes(): Hono<{ Bindings: Env }> {
 
   async function fileEnv(env: Env, execCtx: WaitUntil | undefined): Promise<FileRouteEnv> {
     const rt = await getRuntime(env);
-    return { store: rt.store, signer: rt.signer, makeMoodle: makeMoodleFactory(env, execCtx) };
+    return {
+      store: rt.store,
+      signer: rt.signer,
+      makeMoodle: makeMoodleFactory(env, execCtx),
+      makeMail: makeMailFactory(env, execCtx),
+    };
   }
 
   const execOf = tryExecutionContext;

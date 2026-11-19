@@ -1,7 +1,7 @@
 import type { CallToolResult, McpServer, StandardSchemaWithJSON } from '@modelcontextprotocol/server';
 import type * as z from 'zod';
 import type { ServiceContext } from '../../context';
-import { NeedsReconnect, WmmError } from '../../errors';
+import { MailNeedsReconnect, NeedsReconnect, WmmError } from '../../errors';
 import { type FailureClass, failureClass } from '../../usage';
 import { RECONNECT_STDIO } from '../wording';
 import type { ToolDef } from './define';
@@ -21,14 +21,21 @@ function auditDetail(args: unknown): Record<string, unknown> {
   return out;
 }
 
+/** Where the user reconnects: mail on its settings page, Moodle on /connect. */
+function withReconnectHint(e: NeedsReconnect, publicUrl: string): NeedsReconnect {
+  const mail = e instanceof MailNeedsReconnect;
+  const target = mail ? { what: 'mail ', path: '/settings/mail' } : { what: '', path: '/connect' };
+  if (e.message.includes(target.path)) return e;
+  const url = `${publicUrl}${target.path}`;
+  const hint = `${e.message.trimEnd()} Ask the user to reconnect ${target.what}at ${url}, then try again.`;
+  return mail ? new MailNeedsReconnect(hint) : new NeedsReconnect(hint);
+}
+
 /** WmmError messages are user-safe and pass through; anything else is replaced by a generic message. */
 export function toToolError(ctx: ServiceContext, e: unknown): Error {
   if (e instanceof NeedsReconnect) {
     if (ctx.mode === 'stdio' || !ctx.publicUrl) return new NeedsReconnect(RECONNECT_STDIO);
-    if (e.message.includes('/connect')) return e;
-    return new NeedsReconnect(
-      `${e.message.trimEnd()} Ask the user to reconnect at ${ctx.publicUrl}/connect, then try again.`,
-    );
+    return withReconnectHint(e, ctx.publicUrl);
   }
   if (e instanceof WmmError) return e;
   console.error('[waseda-moodle] unexpected tool error:', e instanceof Error ? e.name : typeof e);

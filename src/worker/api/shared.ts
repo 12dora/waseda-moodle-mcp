@@ -113,10 +113,13 @@ export function cleanLabel(s: string, max = 80): string {
   return printable.replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
-/** Service context for console-originated calls (full authority of the signed-in user). */
-export function consoleContext(c: Context<AppEnv>, user: UserRow) {
+/**
+ * Service context for console-originated calls (full authority of the signed-in user). `mail`: the route may use the
+ * Waseda mailbox (approving a mail action); other routes skip its D1 read.
+ */
+export function consoleContext(c: Context<AppEnv>, user: UserRow, opts: { mail?: boolean } = {}) {
   const touchUser = !isBackgroundRequest(c.req.raw);
-  return buildServiceContext(c.env, tryExecutionContext(c), consoleProps(user), { user, touchUser });
+  return buildServiceContext(c.env, tryExecutionContext(c), consoleProps(user), { user, touchUser, mail: opts.mail });
 }
 
 /** Best-effort audit entry written after the response. */

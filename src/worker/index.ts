@@ -13,6 +13,7 @@ import { createApi } from './api';
 import { clientIp, rateLimit, resolveApiKey } from './auth';
 import { makeDefer } from './context';
 import { type Env, publicUrlOf } from './env';
+import { runMailIdle } from './mail-idle';
 import { mcpApiHandler } from './mcp';
 import { meterD1 } from './metered-d1';
 import { runRenewal } from './renew-cron';
@@ -111,14 +112,18 @@ export function isPurgeRun(scheduledTime: number): boolean {
 }
 
 /**
- * One cron run: the purge when it is the daily slot, the credential keepalive, then the course sweep (07–24 JST).
+ * One cron run: the purge and the idle mail cleanup when it is the daily slot, the credential keepalive, then the
+ * course sweep (07–24 JST).
  * All three spend ONE invocation budget of Moodle requests and D1 queries (D1 is metered here), so the run stays
  * under the Free plan's per-invocation limits. Each part survives the others' failure.
  */
 export async function runScheduled(env: Env, scheduledTime: number, execCtx?: ExecutionContext): Promise<void> {
   const budget = new InvocationBudget(SWEEP_CALL_BUDGET, SCHEDULED_QUERY_BUDGET);
   const metered: Env = { ...env, DB: meterD1(env.DB, budget) };
-  if (isPurgeRun(scheduledTime)) await runPurge(metered);
+  if (isPurgeRun(scheduledTime)) {
+    await runPurge(metered);
+    await runMailIdle(metered, budget);
+  }
   const sweep = !KEEPALIVE_ONLY_HOURS_UTC.has(new Date(scheduledTime).getUTCHours());
   try {
     await runRenewal(metered, budget, sweep ? SWEEP_RESERVE : undefined);

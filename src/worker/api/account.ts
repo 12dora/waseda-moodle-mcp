@@ -24,6 +24,7 @@ import { adminMoodleUserIds, publicUrlOf, registrationMode, VERSION } from '../e
 import { normalizeSettings } from '../store/rows';
 import type { D1Store } from '../store-d1';
 import { consumeHandoff, peekHandoff } from './handoff';
+import { mailInfo, revokeStoredMail } from './mail';
 import {
   auditConsole,
   consoleContext,
@@ -185,7 +186,7 @@ async function extensionRefresh(c: Context<AppEnv>): Promise<Response> {
   return c.json({ status: r.tokenChanged ? 'updated' : 'unchanged' });
 }
 
-/** Revokes the account's OAuth grants, then deletes the account and everything it owns. */
+/** Revokes the account's OAuth grants and its Google mail token, then deletes the account and everything it owns. */
 async function deleteAccount(c: Context<AppEnv>): Promise<Response> {
   const user = c.get('user');
   const oauth = c.env.OAUTH_PROVIDER;
@@ -196,6 +197,7 @@ async function deleteAccount(c: Context<AppEnv>): Promise<Response> {
     if (page.items.length === 0) break;
     for (const g of page.items) await oauth.revokeGrant(g.id, grantUser);
   }
+  await revokeStoredMail(c.env, user.id); // best effort, never throws: the row goes with the account
   await storeOf(c.env).deleteUser(user.id);
   c.header('Set-Cookie', clearSessionCookieHeader());
   return c.json({ ok: true });
@@ -237,11 +239,13 @@ export function accountRoutes(): Hono<AppEnv> {
   // `credential` is null only for an account without a stored token (never after a successful connect).
   app.get('/api/me', session, async (c) => {
     const user = c.get('user');
-    const cred = await storeOf(c.env).getCredential(user.id);
+    const store = storeOf(c.env);
+    const [cred, mail] = await Promise.all([store.getCredential(user.id), mailInfo(c.env, store, user)]);
     return c.json({
       user: toUserInfo(user),
       credential: cred ? toCredentialInfo(cred) : null,
       isAdmin: adminMoodleUserIds(c.env).has(user.moodleUserId),
+      mail,
     });
   });
 

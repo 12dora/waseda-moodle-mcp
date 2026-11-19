@@ -3,9 +3,10 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 import type { ServiceContext } from '../../src/core/context';
-import { MoodleUnavailable, WmmError } from '../../src/core/errors';
+import { MailNeedsReconnect, MoodleUnavailable, NeedsReconnect, WmmError } from '../../src/core/errors';
+import { MAIL_RECONNECT } from '../../src/core/mail/connection';
 import { defineTool } from '../../src/core/mcp/tools/define';
-import { registerTool } from '../../src/core/mcp/tools/register';
+import { registerTool, toToolError } from '../../src/core/mcp/tools/register';
 import { MoodleClient } from '../../src/core/moodle/client';
 import { makeFakeContext } from '../helpers/fake-context';
 
@@ -146,5 +147,30 @@ describe('registerTool usage counting', () => {
       ['site', 'needs_reconnect'],
     ]);
     expect(fetch).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('toToolError reconnect hints', () => {
+  const ORIGIN = 'https://wasemoodle.example.com';
+
+  it('sends mail users to the mail settings page and Moodle users to /connect', () => {
+    const { ctx } = makeFakeContext({ publicUrl: ORIGIN });
+    const mail = toToolError(ctx, new MailNeedsReconnect(MAIL_RECONNECT));
+    expect(mail).toBeInstanceOf(MailNeedsReconnect);
+    const hint = `Ask the user to reconnect mail at ${ORIGIN}/settings/mail, then try again.`;
+    expect(mail.message).toBe(`${MAIL_RECONNECT} ${hint}`);
+    expect(mail.message).not.toContain('/connect');
+
+    const moodle = toToolError(ctx, new NeedsReconnect('Expired.'));
+    expect(moodle).not.toBeInstanceOf(MailNeedsReconnect);
+    expect(moodle.message).toBe(`Expired. Ask the user to reconnect at ${ORIGIN}/connect, then try again.`);
+  });
+
+  it('keeps a message that already names its page', () => {
+    const { ctx } = makeFakeContext({ publicUrl: ORIGIN });
+    const mail = new MailNeedsReconnect(`Reconnect at ${ORIGIN}/settings/mail.`);
+    expect(toToolError(ctx, mail)).toBe(mail);
+    const moodle = new NeedsReconnect(`Reconnect at ${ORIGIN}/connect.`);
+    expect(toToolError(ctx, moodle)).toBe(moodle);
   });
 });

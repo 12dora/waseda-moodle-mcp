@@ -22,6 +22,17 @@ export interface Env {
   SYLLABUS_LOOKUP?: string;
   /** Cloudflare Web Analytics site token (32 hex chars). When valid, the landing pages carry the cookieless beacon. */
   CF_BEACON_TOKEN?: string;
+  /** Google OAuth client id of the Waseda mail connection. Mail is off unless both id and secret are set. */
+  GOOGLE_CLIENT_ID?: string;
+  /** Secret: Google OAuth client secret. */
+  GOOGLE_CLIENT_SECRET?: string;
+  /**
+   * Mail slots (Moodle users who may ever connect a mailbox); empty = 80, 'off' = no limit (a verified Google app),
+   * 0 = no new connections (users who already hold a slot may still reconnect).
+   */
+  MAIL_SLOTS?: string;
+  /** Days without a mail tool call after which a mail connection is revoked; empty or 0 = 90, 'off' = never. */
+  MAIL_IDLE_DAYS?: string;
   /** Injected by workers-oauth-provider on every request that reaches our handlers. */
   OAUTH_PROVIDER: OAuthHelpers;
 }
@@ -63,3 +74,33 @@ export function adminMoodleUserIds(env: Pick<Env, 'ADMIN_MOODLE_USERIDS'>): Set<
   }
   return out;
 }
+
+/** Google OAuth client of the mail connection; null = mail is not configured. */
+export function googleClientOf(
+  env: Pick<Env, 'GOOGLE_CLIENT_ID' | 'GOOGLE_CLIENT_SECRET'>,
+): { clientId: string; clientSecret: string } | null {
+  const clientId = (env.GOOGLE_CLIENT_ID ?? '').trim();
+  const clientSecret = (env.GOOGLE_CLIENT_SECRET ?? '').trim();
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+/**
+ * Integer setting of at least `min` with a default; 'off' = null (no limit). Anything unparsable or below `min` falls
+ * back to the default.
+ */
+function limitSetting(raw: string | undefined, fallback: number, min: number): number | null {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (v === 'off') return null;
+  return /^\d+$/.test(v) && Number(v) >= min ? Number(v) : fallback;
+}
+
+const DEFAULT_MAIL_SLOTS = 80;
+const DEFAULT_MAIL_IDLE_DAYS = 90;
+
+/** Mail slot limit; null = unlimited, 0 = no new connections. */
+export const mailSlotsOf = (env: Pick<Env, 'MAIL_SLOTS'>): number | null =>
+  limitSetting(env.MAIL_SLOTS, DEFAULT_MAIL_SLOTS, 0);
+
+/** Idle days before a mail connection is revoked; null = never. */
+export const mailIdleDaysOf = (env: Pick<Env, 'MAIL_IDLE_DAYS'>): number | null =>
+  limitSetting(env.MAIL_IDLE_DAYS, DEFAULT_MAIL_IDLE_DAYS, 1);

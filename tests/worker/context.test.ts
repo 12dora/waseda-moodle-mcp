@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex } from '../../src/core/crypto';
-import { NeedsReconnect, NotFound } from '../../src/core/errors';
+import { MailNeedsReconnect, NeedsReconnect, NotFound } from '../../src/core/errors';
 import {
   buildServiceContext,
   consoleProps,
@@ -322,5 +322,74 @@ describe('makeMoodleFactory', () => {
     await make(userId);
     expect(created[0]).toMatchObject({ moodleUserId: 1001 });
     await expect(make(4242)).rejects.toBeInstanceOf(NotFound);
+  });
+});
+
+describe('ctx.mail', () => {
+  const props = () => ({ userId, scopes: ['moodle:read' as const], source: 'Claude' });
+  let mailEnv: Env;
+
+  async function storeMail(over: { status?: 'active' | 'invalid'; lastError?: string | null } = {}) {
+    const rt = await getRuntime(mailEnv);
+    await store.putMailCredential({
+      userId,
+      address: 'taro@akane.waseda.jp',
+      googleSub: 'sub-1',
+      refreshEnc: await rt.key.encrypt('rt-old'),
+      scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+      status: over.status ?? 'active',
+      connectedAt: 1,
+      lastUsedAt: null,
+      lastError: over.lastError ?? null,
+      idleTriedAt: null,
+    });
+  }
+
+  beforeEach(() => {
+    mailEnv = { ...env, GOOGLE_CLIENT_ID: 'cid', GOOGLE_CLIENT_SECRET: 'secret' } as Env;
+    // Google rejects every refresh token
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ error: 'invalid_grant' }, { status: 400 })),
+    );
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('is built only for contexts that serve mail (no D1 read elsewhere)', async () => {
+    await storeMail();
+    const rt = await getRuntime(mailEnv);
+    const read = vi.spyOn(rt.store, 'getMailCredential');
+    const plain = await buildServiceContext(mailEnv, execCtx(), props());
+    expect(plain.mail).toBeUndefined();
+    expect(read).not.toHaveBeenCalled();
+    const withMail = await buildServiceContext(mailEnv, execCtx(), props(), { mail: true });
+    expect((await withMail.mail?.())?.address).toBe('taro@akane.waseda.jp');
+    expect(read).toHaveBeenCalledTimes(1);
+    read.mockRestore();
+  });
+
+  it('an ended connection asks to reconnect mail with its reason', async () => {
+    await storeMail({ status: 'invalid', lastError: 'Disconnected after 90 days without use.' });
+    const ctx = await buildServiceContext(mailEnv, execCtx(), props(), { mail: true });
+    const err = await ctx.mail?.().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MailNeedsReconnect);
+    expect((err as Error).message).toBe('Disconnected after 90 days without use.');
+  });
+
+  it('a rejected refresh token marks the row invalid, unless the user reconnected meanwhile', async () => {
+    await storeMail();
+    const ctx = await buildServiceContext(mailEnv, execCtx(), props(), { mail: true });
+    const api = await ctx.mail?.();
+    await storeMail(); // a reconnect: a new encryption of a new token
+    await expect(api?.get('labels')).rejects.toBeInstanceOf(MailNeedsReconnect);
+    expect((await store.getMailCredential(userId))?.status).toBe('active');
+
+    const again = await buildServiceContext(mailEnv, execCtx(), props(), { mail: true });
+    await expect((await again.mail?.())?.get('labels')).rejects.toBeInstanceOf(MailNeedsReconnect);
+    expect(await store.getMailCredential(userId)).toMatchObject({
+      status: 'invalid',
+      lastError: 'Google rejected the stored mail authorization.',
+    });
   });
 });

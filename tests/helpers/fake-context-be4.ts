@@ -260,6 +260,29 @@ export function createMemoryStoreForTests(): MemoryStore {
       return false;
     },
     async recordCalendarFetch() {},
+    async getMailCredential() {
+      return null;
+    },
+    async putMailCredential() {},
+    async updateMailCredential() {},
+    async updateMailCredentialIf() {
+      return false;
+    },
+    async deleteMailCredential() {
+      return false;
+    },
+    async listIdleMailCredentials() {
+      return [];
+    },
+    async countMailSlots() {
+      return 0;
+    },
+    async hasMailSlot() {
+      return false;
+    },
+    async takeMailSlot() {
+      return false;
+    },
 
     async audit(row) {
       auditLog.push({ ...row, id: nextAuditId++ });

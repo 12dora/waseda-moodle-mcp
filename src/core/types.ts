@@ -358,7 +358,9 @@ export type ActionKind =
   | 'forum_subscription' // subscribe to / unsubscribe from a forum
   | 'forum_post_edit' // edit one's own forum post
   | 'forum_post_delete' // delete one's own forum post (and its replies)
-  | 'questionnaire_submit'; // answer a questionnaire (submit, or save as a draft)
+  | 'questionnaire_submit' // answer a questionnaire (submit, or save as a draft)
+  | 'mail_send' // send a new mail from the Waseda mailbox
+  | 'mail_reply'; // reply to a mail in the Waseda mailbox
 export type ActionStatus = 'pending' | 'executing' | 'executed' | 'cancelled' | 'expired' | 'failed' | 'superseded'; // final: another action for the same target ran while it was pending
 /**
  * The one status Store.updateAction may move an action FROM, per target status (pending -> executing is claimAction;

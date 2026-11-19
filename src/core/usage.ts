@@ -84,6 +84,7 @@ export function clientLabel(source: string): string {
 export const FAILURE_CLASSES = [
   'needs_reconnect',
   'moodle_unavailable',
+  'mail_unavailable',
   'invalid_input',
   'forbidden',
   'budget',
@@ -94,7 +95,9 @@ export type FailureClass = (typeof FAILURE_CLASSES)[number];
 /** Error code (src/core/errors.ts) -> class. forbidden covers not_found; budget the call budget and rate limits. */
 const FAILURE_BY_CODE: ReadonlyMap<string, FailureClass> = new Map<string, FailureClass>([
   ['needs_reconnect', 'needs_reconnect'],
+  ['mail_needs_reconnect', 'needs_reconnect'],
   ['moodle_unavailable', 'moodle_unavailable'], // includes request timeouts
+  ['mail_unavailable', 'mail_unavailable'],
   ['invalid_input', 'invalid_input'],
   ['forbidden', 'forbidden'],
   ['not_found', 'forbidden'],

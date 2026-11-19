@@ -401,6 +401,7 @@ describe('getUsageStats (finer sections)', () => {
         failures: {
           needs_reconnect: 0,
           moodle_unavailable: 1,
+          mail_unavailable: 0,
           invalid_input: 0,
           forbidden: 0,
           budget: 0,

@@ -28,6 +28,7 @@ import {
   type UserSettings,
 } from '../core/types';
 import { type PersistedState, restoredSettings, StateFile } from './state-file';
+import { WorkerOnlyMethods } from './store-worker-only';
 
 const MAX_AUDIT_ROWS = 1000;
 /** Finished actions (any status but pending) are dropped from the state file after this long. */
@@ -44,16 +45,12 @@ interface MemoryStoreOptions {
 
 const clone = <T>(v: T): T => structuredClone(v);
 
-const localOnly = async (): Promise<never> => {
-  throw new Error('Calendar feeds are not available in local mode.');
-};
-
 /** Removes the rows of one user from a map keyed by anything. */
 function dropOwnedBy(rows: Map<string, { userId: number }>, userId: number): void {
   for (const [k, v] of rows) if (v.userId === userId) rows.delete(k);
 }
 
-export class MemoryStore implements Store {
+export class MemoryStore extends WorkerOnlyMethods implements Store {
   private readonly users = new Map<number, UserRow>();
   private readonly credentials = new Map<number, CredentialRow>();
   private readonly sessions = new Map<string, SessionRow>();
@@ -70,6 +67,7 @@ export class MemoryStore implements Store {
   private readonly file: StateFile | undefined;
 
   constructor(opts: MemoryStoreOptions = {}) {
+    super();
     if (opts.persistPath) {
       this.file = new StateFile(opts.persistPath, opts.onPersistError ?? (() => undefined));
       this.file.load((data) => this.restore(data));
@@ -441,13 +439,6 @@ export class MemoryStore implements Store {
     for (const [courseId, s] of schedules) this.inferredSchedules.set(`${userId}:${courseId}`, clone(s));
     this.persist();
   }
-
-  // secret calendar feeds are a Worker feature
-  readonly getCalendarFeed = localOnly;
-  readonly getCalendarFeedByHash = localOnly;
-  readonly replaceCalendarFeed = localOnly;
-  readonly deleteCalendarFeed = localOnly;
-  readonly recordCalendarFetch = localOnly;
 
   // ------------------------------------------------------------------ audit
 

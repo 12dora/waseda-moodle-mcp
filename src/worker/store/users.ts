@@ -103,6 +103,7 @@ const USER_OWNED_TABLES = [
   'course_snapshots',
   'inferred_schedules',
   'calendar_feeds',
+  'mail_credentials',
   'audit',
 ] as const;
 

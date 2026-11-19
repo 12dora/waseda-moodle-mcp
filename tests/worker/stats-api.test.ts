@@ -74,7 +74,15 @@ const tool = (name: string, calls: number, errors: number) => ({
   name,
   calls,
   errors,
-  failures: { needs_reconnect: 0, moodle_unavailable: 0, invalid_input: 0, forbidden: 0, budget: 0, other: 0 },
+  failures: {
+    needs_reconnect: 0,
+    moodle_unavailable: 0,
+    mail_unavailable: 0,
+    invalid_input: 0,
+    forbidden: 0,
+    budget: 0,
+    other: 0,
+  },
   latency: { lt1s: 0, '1to3s': 0, '3to10s': 0, gt10s: 0 },
 });
 

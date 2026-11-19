@@ -9,6 +9,7 @@ import type {
   AuditRow,
   CourseSnapshotRow,
   DraftUploadResult,
+  MailApi,
   MoodleApi,
   ServiceContext,
   Signer,
@@ -248,12 +249,14 @@ function makeFakeStore(): FakeStore {
 
 const fakeSigner: Signer = {
   async sign(payload, ttlSec) {
-    return `fake.${btoa(JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + ttlSec }))}`;
+    const json = JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + ttlSec });
+    return `fake.${btoa(String.fromCharCode(...new TextEncoder().encode(json)))}`;
   },
   async verify<T extends Record<string, unknown>>(ticket: string) {
     if (!ticket.startsWith('fake.')) return null;
     try {
-      const payload = JSON.parse(atob(ticket.slice(5))) as T & { exp: number };
+      const bytes = Uint8Array.from(atob(ticket.slice(5)), (c) => c.charCodeAt(0));
+      const payload = JSON.parse(new TextDecoder().decode(bytes)) as T & { exp: number };
       return payload.exp < Math.floor(Date.now() / 1000) ? null : payload;
     } catch {
       return null;
@@ -282,6 +285,8 @@ export interface FakeContextOptions extends FakeMoodleOptions {
   mode?: 'worker' | 'stdio';
   publicUrl?: string;
   source?: string;
+  /** Mail client of a user with a mail connection (tests/helpers/fake-mail.ts); omitted = no mail connection. */
+  mail?: MailApi;
 }
 
 export interface FakeContext {
@@ -310,5 +315,7 @@ export function makeFakeContext(opts: FakeContextOptions = {}): FakeContext {
     source: opts.source ?? 'Test',
     defer: (p) => void deferred.push(p),
   };
+  const { mail } = opts;
+  if (mail) ctx.mail = async () => mail;
   return { ctx, api, store: fake.store, state: fake.state, deferred };
 }

@@ -10,9 +10,11 @@ const STATUS_BY_CODE: Record<string, ContentfulStatusCode> = {
   invalid_input: 400,
   budget_exceeded: 400,
   needs_reconnect: 409,
+  mail_needs_reconnect: 409,
   account_switch: 409,
   rate_limited: 429,
   moodle_unavailable: 502,
+  mail_unavailable: 502,
 };
 
 function httpStatusFor(err: WmmError): ContentfulStatusCode {

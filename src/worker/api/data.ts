@@ -71,7 +71,7 @@ export function dataRoutes(): Hono<AppEnv> {
   });
 
   app.post('/api/actions/:id/approve', session, async (c) => {
-    const ctx = await consoleContext(c, c.get('user'));
+    const ctx = await consoleContext(c, c.get('user'), { mail: true });
     return c.json(await confirmAction(ctx, c.req.param('id'), 'console'));
   });
 

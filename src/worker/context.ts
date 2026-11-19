@@ -1,16 +1,27 @@
 /** Builds the per-request ServiceContext (and Moodle clients for the file routes) from Worker bindings. */
 
 import type { InvocationBudget } from '../core/budget';
-import type { CredentialRow, MoodleApi, ServiceContext, Signer, UsageRecorder, UserRow } from '../core/context';
+import type {
+  CredentialRow,
+  MailApi,
+  MailCredentialRow,
+  MoodleApi,
+  ServiceContext,
+  Signer,
+  UsageRecorder,
+  UserRow,
+} from '../core/context';
 import { createSigner, importMasterKey, type MasterKey, sha256Hex } from '../core/crypto';
 import { NeedsReconnect, NotFound } from '../core/errors';
+import { GmailClient } from '../core/mail/client';
+import { mailReconnect } from '../core/mail/connection';
 import { MoodleClient } from '../core/moodle/client';
 import { type RenewalDeps, type RenewalOutcome, refreshCredential } from '../core/services/credential-renewal';
 import { clientLabel, renewalCounts } from '../core/usage';
-import { type Env, type McpProps, publicUrlOf } from './env';
+import { type Env, googleClientOf, type McpProps, publicUrlOf } from './env';
 import { createD1Store, type D1Store } from './store-d1';
 
-/** lastOkAt is written at most this often per credential. */
+/** lastOkAt (Moodle) and lastUsedAt (mail) are written at most this often per credential. */
 export const LAST_OK_INTERVAL_MS = 10 * 60_000;
 
 interface Runtime {
@@ -129,6 +140,75 @@ export function makeMoodleFactory(env: Env, execCtx: WaitUntil | undefined): (us
   };
 }
 
+// ------------------------------------------------------------------ mail
+
+type GoogleClient = NonNullable<ReturnType<typeof googleClientOf>>;
+
+interface MailSetup extends ClientOptions {
+  rt: Runtime;
+  defer: Defer;
+  /** The context represents the user: a successful call refreshes lastUsedAt (idle cleanup). Background work: false. */
+  trackUse: boolean;
+}
+
+/**
+ * Gmail client for a stored mail connection. An ended connection (invalid, or revoked by the idle cleanup) throws
+ * MailNeedsReconnect with the reason; a refresh token Google rejects marks the row invalid, unless the row holds
+ * another token meanwhile (a reconnect while this request was running).
+ */
+async function createMailClient(s: MailSetup, google: GoogleClient, row: MailCredentialRow): Promise<MailApi> {
+  const refreshEnc = row.refreshEnc;
+  if (row.status === 'invalid' || !refreshEnc) throw mailReconnect(row.lastError);
+  const { store } = s.rt;
+  const lastUsed = row.lastUsedAt ?? 0;
+  return new GmailClient({
+    address: row.address,
+    scopes: row.scopes,
+    refreshToken: await s.rt.key.decrypt(refreshEnc),
+    ...google,
+    maxCalls: s.maxCalls,
+    budget: s.budget,
+    onInvalid: () =>
+      store.updateMailCredentialIf(
+        row.userId,
+        { refreshEnc },
+        { status: 'invalid', lastError: 'Google rejected the stored mail authorization.' },
+      ),
+    onUsed: () => {
+      const now = Date.now();
+      if (!s.trackUse || now - lastUsed < LAST_OK_INTERVAL_MS) return;
+      s.defer(store.updateMailCredential(row.userId, { lastUsedAt: now }));
+    },
+  });
+}
+
+/** ctx.mail of a user: undefined when mail is not configured or the user has no stored connection (one D1 read). */
+async function mailOf(env: Env, s: MailSetup, userId: number): Promise<(() => Promise<MailApi>) | undefined> {
+  const google = googleClientOf(env);
+  if (!google) return undefined;
+  const row = await s.rt.store.getMailCredential(userId);
+  if (!row) return undefined;
+  let client: Promise<MailApi> | null = null;
+  return () => {
+    // one budgeted client per request; a rejected promise is kept so NeedsReconnect is not retried
+    client ??= createMailClient(s, google, row);
+    return client;
+  };
+}
+
+/** For `/f/*` (mail attachments): mail client by user id (ticket payloads carry the id). */
+export function makeMailFactory(env: Env, execCtx: WaitUntil | undefined): (userId: number) => Promise<MailApi> {
+  const defer = makeDefer(execCtx);
+  return async (userId) => {
+    const rt = await getRuntime(env);
+    const user = await rt.store.getUser(userId);
+    if (!user) throw new NotFound('Account not found.');
+    const mail = await mailOf(env, { rt, defer, trackUse: true }, user.id);
+    if (!mail) throw new NotFound('Mail is not connected.');
+    return mail();
+  };
+}
+
 interface BuildContextOptions {
   /** Already loaded user row (console sessions load it with the session). */
   user?: UserRow;
@@ -140,6 +220,11 @@ interface BuildContextOptions {
   touchUser?: boolean;
   /** true for `/mcp` requests: tool calls feed the operator statistics (not the console, not the sweep). Default false. */
   recordUsage?: boolean;
+  /**
+   * true when the context may use the Waseda mailbox (`/mcp`, the console's action approval): ctx.mail costs one D1
+   * read, so every other context (sweep, calendar feed, other console routes) leaves it undefined. Default false.
+   */
+  mail?: boolean;
 }
 
 /** Tool calls of one MCP request, counted past the response (never throws into the tool). */
@@ -167,6 +252,9 @@ export async function buildServiceContext(
   const stale = user.lastSeenAt === null || now - user.lastSeenAt > 3_600_000;
   if (stale && opts.touchUser !== false) defer(rt.store.touchUser(user.id, now));
 
+  const clientOpts = { maxCalls: opts.maxCalls, budget: opts.budget };
+  const mailSetup = { rt, defer, trackUse: opts.touchUser !== false, ...clientOpts };
+  const mail = opts.mail ? await mailOf(env, mailSetup, user.id) : undefined;
   let moodle: Promise<MoodleApi> | null = null;
   return {
     user,
@@ -174,9 +262,10 @@ export async function buildServiceContext(
     signer: rt.signer,
     moodle: () => {
       // one budgeted client per request; a rejected promise is kept so NeedsReconnect is not retried
-      moodle ??= createMoodleClient(rt, user, defer, { maxCalls: opts.maxCalls, budget: opts.budget });
+      moodle ??= createMoodleClient(rt, user, defer, clientOpts);
       return moodle;
     },
+    mail,
     publicUrl: publicUrlOf(env),
     mode: 'worker',
     scopes: props.scopes,
