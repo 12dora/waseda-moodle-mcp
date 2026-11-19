@@ -311,7 +311,8 @@ const confirmActionTool = defineTool({
   name: 'confirm_action',
   title: 'Confirm action',
   description:
-    'Step 2 of 2: executes a prepared action (submission, questionnaire answers, forum post, post edit or delete, forum subscription, message, completion mark, mark as read) in Moodle. ' +
+    'Step 2 of 2: executes a prepared action (submission, questionnaire answers, forum post, post edit or delete, ' +
+    'forum subscription, Moodle message, completion mark, mark as read, or a Waseda mailbox send/reply). ' +
     'Call it only after the user has seen the preview and clearly agreed in this conversation; never to "test" or on your own judgment. ' +
     'If the preview said the action must be approved in the console, this tool cannot do it.',
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },

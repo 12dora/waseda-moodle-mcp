@@ -6,6 +6,7 @@ export { fileTypeAccepted, sanitizeFileName, unverifiableTypes } from './filenam
 export { prepareForumPost } from './forum';
 export { prepareForumPostChange } from './forum-edit';
 export { prepareForumSubscription } from './forum-subscription';
+export { prepareMailReply, prepareMailSend } from './mail';
 export { prepareMessage } from './message';
 export { prepareQuestionnaire } from './questionnaire';
 export { prepareMarkRead } from './read-state';

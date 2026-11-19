@@ -48,6 +48,7 @@ describe('actionTarget', () => {
     expect(actionTarget('completion', { cmid: 99, completed: true })).toBe('completion:99');
     expect(actionTarget('forum_subscription', { forumId: 99, subscribe: true })).toBe('forum_subscription:99');
     expect(actionTarget('questionnaire_submit', { cmid: 99, questionnaireId: 7 })).toBe('questionnaire_submit:99');
+    expect(actionTarget('mail_reply', { messageId: 'a1b2c3d4e5f67890' })).toBe('mail_reply:a1b2c3d4e5f67890');
   });
 
   it('gives no target to mark_read and to missing or invalid ids', () => {
@@ -60,6 +61,9 @@ describe('actionTarget', () => {
     expect(actionTarget('message', { conversationId: -1, toUserId: 101 })).toBeNull();
     expect(actionTarget('message', { conversationId: null, toUserId: null })).toBeNull();
     expect(actionTarget('questionnaire_submit', {})).toBeNull();
+    expect(actionTarget('mail_send', { to: ['taro@akane.waseda.jp'] })).toBeNull();
+    expect(actionTarget('mail_reply', { messageId: 'nope' })).toBeNull();
+    expect(actionTarget('mail_reply', { messageId: 1 })).toBeNull();
   });
 });
 

@@ -1,13 +1,23 @@
 /** Confirm / cancel / list: owner checks, expiry, approval mode, idempotent execution and audit. */
 
-import type { ActionRow, MoodleApi, ServiceContext, Store } from '../../context';
-import { Forbidden, InvalidInput, MoodleUnavailable, NeedsReconnect, NotFound, WmmError } from '../../errors';
+import type { ActionRow, MailApi, MoodleApi, ServiceContext, Store } from '../../context';
+import {
+  Forbidden,
+  InvalidInput,
+  MailUnavailable,
+  MoodleUnavailable,
+  NeedsReconnect,
+  NotFound,
+  WmmError,
+} from '../../errors';
+import { requireMail } from '../../mail/connection';
 import { isoJst, nowMs } from '../../time';
 import type { ActionKind, ActionRecord, ActionResult, ActionStatus } from '../../types';
 import { executeCompletion } from './completion';
 import { executeForumDiscussion, executeForumReply } from './forum';
 import { executeForumPostDelete, executeForumPostEdit } from './forum-edit';
 import { executeForumSubscription } from './forum-subscription';
+import { executeMailReply, executeMailSend, isMailKind, type MailKind } from './mail';
 import { executeMessage } from './message';
 import { executeQuestionnaire } from './questionnaire';
 import { executeMarkRead } from './read-state';
@@ -21,7 +31,10 @@ const ALREADY_RUNNING = 'This action is already running.';
 const RIVAL_RUNNING = 'Another action for the same target is running.';
 const SUPERSEDED = 'Another action for the same target already ran. Prepare it again if you still need it.';
 
-const EXECUTORS: Record<ActionKind, (api: MoodleApi, payload: Raw) => Promise<ActionOutcome>> = {
+const MOODLE_EXECUTORS: Record<
+  Exclude<ActionKind, MailKind>,
+  (api: MoodleApi, payload: Raw) => Promise<ActionOutcome>
+> = {
   assign_submit: executeSubmission,
   forum_reply: executeForumReply,
   forum_discussion: executeForumDiscussion,
@@ -33,6 +46,13 @@ const EXECUTORS: Record<ActionKind, (api: MoodleApi, payload: Raw) => Promise<Ac
   forum_post_delete: executeForumPostDelete,
   questionnaire_submit: executeQuestionnaire,
 };
+
+const MAIL_EXECUTORS: Record<MailKind, (api: MailApi, p: Raw) => Promise<ActionOutcome>> = {
+  mail_send: executeMailSend,
+  mail_reply: executeMailReply,
+};
+
+const checkUncertain = (kind: ActionKind) => `Check ${isMailKind(kind) ? 'Sent mail' : 'Moodle'} ${UNCERTAIN_MARK}`;
 
 /** Pending rows past their expiry read as expired even before anyone touches them. */
 function effectiveStatus(row: ActionRow): ActionStatus {
@@ -74,9 +94,15 @@ async function recordOutcome(ctx: ServiceContext, id: string, patch: Parameters<
   }
 }
 
+function failDetail(row: ActionRow, error: string): Record<string, unknown> {
+  const base = { id: row.id, kind: row.kind, status: 'failed' };
+  // Mail errors can echo third-party addresses (Gmail 400); the action row still holds `error`.
+  return isMailKind(row.kind) ? base : { ...base, error };
+}
+
 async function failAction(ctx: ServiceContext, row: ActionRow, via: Via, error: string): Promise<ActionResult> {
   await recordOutcome(ctx, row.id, { status: 'failed', executedAt: nowMs(), error });
-  await auditSafe(ctx, 'action:execute', { id: row.id, kind: row.kind, status: 'failed', error }, via);
+  await auditSafe(ctx, 'action:execute', failDetail(row, error), via);
   if (error.includes(UNCERTAIN_MARK)) await supersedeRivals(ctx, row, via); // it may have gone through
   return { actionId: row.id, status: 'failed', message: error, url: null };
 }
@@ -84,7 +110,7 @@ async function failAction(ctx: ServiceContext, row: ActionRow, via: Via, error: 
 /** An 'executing' row is normally another request mid-flight; one long past its expiry lost its worker. */
 async function settleExecuting(ctx: ServiceContext, row: ActionRow, via: Via): Promise<ActionResult> {
   if (nowMs() <= row.expiresAt + STALE_EXECUTING_MS) throw new InvalidInput(ALREADY_RUNNING);
-  const error = `The action was interrupted. ${UNCERTAIN_MARK} before preparing it again.`;
+  const error = `The action was interrupted. ${checkUncertain(row.kind)} before preparing it again.`;
   return failAction(ctx, row, via, error);
 }
 
@@ -149,19 +175,55 @@ async function refuseBlocked(ctx: ServiceContext, row: ActionRow, via: Via): Pro
   throw new InvalidInput(RIVAL_RUNNING);
 }
 
+/** Resolves the API client. A throw here means the write never left (missing mail, reconnect). */
+async function bindExecutor(ctx: ServiceContext, row: ActionRow): Promise<() => Promise<ActionOutcome>> {
+  if (isMailKind(row.kind)) {
+    const run = MAIL_EXECUTORS[row.kind];
+    const api = await requireMail(ctx);
+    return () => run(api, row.payload);
+  }
+  const run = MOODLE_EXECUTORS[row.kind];
+  const api = await ctx.moodle();
+  return () => run(api, row.payload);
+}
+
+/** Hands the claim back: the write never left, so the row stays pending. */
+async function handBack(ctx: ServiceContext, id: string, e: unknown): Promise<never> {
+  await ctx.store.updateAction(id, { status: 'pending' }).catch(() => undefined);
+  throw e;
+}
+
+function isUncertain(e: unknown): boolean {
+  if (e instanceof MoodleUnavailable) return true;
+  return e instanceof MailUnavailable && e.maybeSent;
+}
+
+function failMessage(kind: ActionKind, e: unknown): string {
+  const base = e instanceof WmmError ? e.message : 'Unexpected error while executing the action.';
+  return isUncertain(e) ? `${base} ${checkUncertain(kind)} before retrying.` : base;
+}
+
+/** Missing mail connection (requireMail). Gmail 404 from the executor is a definite failure, not this. */
+function clientMissing(kind: ActionKind, e: unknown): boolean {
+  if (e instanceof NeedsReconnect) return true; // includes MailNeedsReconnect
+  return isMailKind(kind) && e instanceof NotFound;
+}
+
 async function runAction(ctx: ServiceContext, row: ActionRow, via: Via): Promise<ActionResult> {
+  let run: () => Promise<ActionOutcome>;
+  try {
+    run = await bindExecutor(ctx, row);
+  } catch (e) {
+    if (clientMissing(row.kind, e)) return handBack(ctx, row.id, e);
+    return failAction(ctx, row, via, failMessage(row.kind, e));
+  }
   let outcome: ActionOutcome;
   try {
-    outcome = await EXECUTORS[row.kind](await ctx.moodle(), row.payload);
+    outcome = await run();
   } catch (e) {
-    if (e instanceof NeedsReconnect) {
-      // The rejected call did nothing and the earlier steps are idempotent saves: hand the action back for a retry.
-      await ctx.store.updateAction(row.id, { status: 'pending' }).catch(() => undefined);
-      throw e;
-    }
-    let error = e instanceof WmmError ? e.message : 'Unexpected error while executing the action.';
-    if (e instanceof MoodleUnavailable) error += ` ${UNCERTAIN_MARK} before retrying.`;
-    return failAction(ctx, row, via, error);
+    // reconnect during execute: nothing was sent. A Gmail 404 (deleted thread) fails definitely.
+    if (e instanceof NeedsReconnect) return handBack(ctx, row.id, e);
+    return failAction(ctx, row, via, failMessage(row.kind, e));
   }
   await recordOutcome(ctx, row.id, { status: 'executed', executedAt: nowMs(), result: encodeResult(outcome) });
   await auditSafe(ctx, 'action:execute', { id: row.id, kind: row.kind, status: 'executed' }, via);

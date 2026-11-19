@@ -5,6 +5,7 @@
  */
 
 import type { ActionRow } from '../../context';
+import { GMAIL_ID_RE } from '../../mail/gmail';
 import type { ActionKind } from '../../types';
 
 type Raw = Record<string, unknown>;
@@ -15,6 +16,8 @@ const forumType = (v: unknown): string | null => (v === 'forum' || v === 'hsufor
 
 const keyOf = (kind: ActionKind, ...parts: Array<string | number | null>): string | null =>
   parts.some((p) => p === null) ? null : [kind, ...parts].join(':');
+
+const gmailId = (v: unknown): string | null => (typeof v === 'string' && GMAIL_ID_RE.test(v) ? v : null);
 
 function messageTarget(p: Raw): string | null {
   // the executor sends to the conversation whenever there is one
@@ -43,16 +46,21 @@ export function actionTarget(kind: ActionKind, payload: Raw): string | null {
       return keyOf(kind, id(payload.cmid));
     case 'message':
       return messageTarget(payload);
+    case 'mail_reply':
+      return keyOf(kind, gmailId(payload.messageId));
+    case 'mail_send':
+      return null; // independent mails never conflict
     default:
       return null; // mark_read is idempotent
   }
 }
 
 /**
- * Part of the error of a failed run that may still have gone through in Moodle (unreachable mid-write, worker lost).
- * Such a failure counts as a run for its rivals: they are blocked / superseded like after an executed one.
+ * Part of the error of a failed run that may still have gone through (Moodle or Gmail unreachable mid-write, worker
+ * lost). Such a failure counts as a run for its rivals: they are blocked / superseded like after an executed one.
+ * Errors read "Check Moodle <mark>" / "Check Sent mail <mark>"; rows from before mail still contain the mark.
  */
-export const UNCERTAIN_MARK = 'Check Moodle to see whether it went through';
+export const UNCERTAIN_MARK = 'to see whether it went through';
 
 /** Stored as the result of a superseded action. */
 export const SUPERSEDED_RESULT = 'Another action for the same target already ran.';
