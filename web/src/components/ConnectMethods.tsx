@@ -29,10 +29,10 @@ function ExtensionCard({ url }: { url: string | null }) {
     <Card title={t('connect.ext.title')} actions={<span className="badge badge-ok">{t('connect.ext.badge')}</span>}>
       <div className="stack">
         <p className="muted">{t('connect.ext.desc')}</p>
-        {url ? null : <ManualInstall />}
         <a className="btn btn-primary" href={url ?? '/extension.zip'} target="_blank" rel="noopener noreferrer">
           {t(url ? 'connect.ext.install' : 'connect.ext.download')}
         </a>
+        {url ? null : <ManualInstall />}
       </div>
     </Card>
   );

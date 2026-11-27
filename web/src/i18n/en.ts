@@ -61,7 +61,7 @@ export const en = {
   'connect.ext.desc': 'Connects in one click and reconnects by itself after you sign in to Moodle again.',
   'connect.ext.install': 'Install extension',
   'connect.ext.download': 'Download extension (.zip)',
-  'connect.ext.manual1': 'Unzip it into a folder you keep (the browser runs it from there).',
+  'connect.ext.manual1': 'Download it above and unzip it into a folder you keep (the browser runs it from there).',
   'connect.ext.manual2': 'Open chrome://extensions (Edge: edge://extensions) and turn on Developer mode.',
   'connect.ext.manual3': 'Click “Load unpacked” and choose the unzipped folder (the one with manifest.json).',
   'connect.ext.manual4':

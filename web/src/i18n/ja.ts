@@ -62,7 +62,8 @@ export const ja: Dictionary = {
   'connect.ext.desc': 'ワンクリックで接続します。Moodle に再サインインすると自動で再接続します。',
   'connect.ext.install': '拡張機能をインストール',
   'connect.ext.download': '拡張機能をダウンロード（.zip）',
-  'connect.ext.manual1': '保管しておくフォルダに展開します（ブラウザはそこから実行します）。',
+  'connect.ext.manual1':
+    '上のボタンでダウンロードし、保管しておくフォルダに展開します（ブラウザはそこから実行します）。',
   'connect.ext.manual2': 'chrome://extensions（Edge は edge://extensions）を開き、デベロッパーモードをオンにします。',
   'connect.ext.manual3':
     '「パッケージ化されていない拡張機能を読み込む」で展開したフォルダ（manifest.json があるフォルダ）を選びます。',

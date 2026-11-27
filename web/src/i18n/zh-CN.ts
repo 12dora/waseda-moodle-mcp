@@ -62,7 +62,7 @@ export const zhCN: Dictionary = {
   'connect.ext.desc': '一键连接。重新登录 Moodle 后会自动重新连接。',
   'connect.ext.install': '安装扩展',
   'connect.ext.download': '下载扩展（.zip）',
-  'connect.ext.manual1': '解压到一个固定保留的文件夹（浏览器从那里运行扩展）。',
+  'connect.ext.manual1': '点击上方按钮下载，解压到一个固定保留的文件夹（浏览器从那里运行扩展）。',
   'connect.ext.manual2': '打开 chrome://extensions（Edge 为 edge://extensions），开启「开发者模式」。',
   'connect.ext.manual3': '点击「加载已解压的扩展程序」，选择解压后的文件夹（包含 manifest.json 的那一层）。',
   'connect.ext.manual4': '在扩展设置中填写 {url}，勾选同意并保存，然后在扩展弹窗中点击「连接」。',
