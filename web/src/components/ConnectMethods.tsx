@@ -9,14 +9,29 @@ import { Card } from './Card';
 
 type Connect = (body: ConnectRequest) => Promise<void>;
 
-function ExtensionCard({ url }: { url: string }) {
+/** Without a store listing: the package this service ships, loaded unpacked (developer mode). */
+function ManualInstall() {
+  const t = useT();
+  return (
+    <ol className="steps">
+      <li>{t('connect.ext.manual1')}</li>
+      <li>{t('connect.ext.manual2')}</li>
+      <li>{t('connect.ext.manual3')}</li>
+      <li>{t('connect.ext.manual4', { url: window.location.origin })}</li>
+    </ol>
+  );
+}
+
+/** The browser extension: the store listing when the instance has one, else the package from this service. */
+function ExtensionCard({ url }: { url: string | null }) {
   const t = useT();
   return (
     <Card title={t('connect.ext.title')} actions={<span className="badge badge-ok">{t('connect.ext.badge')}</span>}>
       <div className="stack">
         <p className="muted">{t('connect.ext.desc')}</p>
-        <a className="btn btn-primary" href={url} target="_blank" rel="noopener noreferrer">
-          {t('connect.ext.install')}
+        {url ? null : <ManualInstall />}
+        <a className="btn btn-primary" href={url ?? '/extension.zip'} target="_blank" rel="noopener noreferrer">
+          {t(url ? 'connect.ext.install' : 'connect.ext.download')}
         </a>
       </div>
     </Card>
@@ -101,13 +116,13 @@ function PasteCard({ onConnect }: { onConnect: Connect }) {
   );
 }
 
-/** The ways to connect Moodle: the browser extension (when the instance publishes it) or pasting. */
+/** The ways to connect Moodle: the browser extension (store listing or this service's package) or pasting. */
 export function ConnectMethods({ onConnect }: { onConnect: Connect }) {
   const t = useT();
   const { extensionUrl } = useConfig();
   return (
     <div className="stack">
-      {extensionUrl && <ExtensionCard url={extensionUrl} />}
+      <ExtensionCard url={extensionUrl} />
       <PasteCard onConnect={onConnect} />
       <p className="muted small">{t('connect.phoneHint')}</p>
     </div>

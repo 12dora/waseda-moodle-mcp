@@ -60,6 +60,12 @@ export const en = {
   'connect.ext.badge': 'Recommended',
   'connect.ext.desc': 'Connects in one click and reconnects by itself after you sign in to Moodle again.',
   'connect.ext.install': 'Install extension',
+  'connect.ext.download': 'Download extension (.zip)',
+  'connect.ext.manual1': 'Unzip it into a folder you keep (the browser runs it from there).',
+  'connect.ext.manual2': 'Open chrome://extensions (Edge: edge://extensions) and turn on Developer mode.',
+  'connect.ext.manual3': 'Click “Load unpacked” and choose the unzipped folder (the one with manifest.json).',
+  'connect.ext.manual4':
+    'In the extension’s settings enter {url}, tick the consent box, Save, then click Connect in its popup.',
   'connect.paste.title': 'Paste session cookie',
   'connect.paste.step1': 'Sign in to Waseda Moodle.',
   'connect.paste.open': 'Open Waseda Moodle',

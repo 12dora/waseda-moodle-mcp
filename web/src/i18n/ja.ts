@@ -61,6 +61,13 @@ export const ja: Dictionary = {
   'connect.ext.badge': '推奨',
   'connect.ext.desc': 'ワンクリックで接続します。Moodle に再サインインすると自動で再接続します。',
   'connect.ext.install': '拡張機能をインストール',
+  'connect.ext.download': '拡張機能をダウンロード（.zip）',
+  'connect.ext.manual1': '保管しておくフォルダに展開します（ブラウザはそこから実行します）。',
+  'connect.ext.manual2': 'chrome://extensions（Edge は edge://extensions）を開き、デベロッパーモードをオンにします。',
+  'connect.ext.manual3':
+    '「パッケージ化されていない拡張機能を読み込む」で展開したフォルダ（manifest.json があるフォルダ）を選びます。',
+  'connect.ext.manual4':
+    '拡張機能の設定に {url} を入力し、同意にチェックして保存し、ポップアップの「接続」を押します。',
   'connect.paste.title': 'セッション Cookie を貼り付け',
   'connect.paste.step1': 'Waseda Moodle にサインインします。',
   'connect.paste.open': 'Waseda Moodle を開く',
