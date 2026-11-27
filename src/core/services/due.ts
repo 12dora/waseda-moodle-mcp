@@ -7,6 +7,7 @@ import { isMidnight, isoJst, nowSec, toMs } from '../time';
 import type { DueItem, DueKind, DueList } from '../types';
 import { resolveScope } from './scope';
 import { attachSubmissions } from './submission';
+import type { WebStatusMode } from './submission/web-status';
 import { collectSweepItems } from './sweep';
 import { optionalPositiveInt } from './validate';
 
@@ -239,6 +240,8 @@ interface DueOptions {
   sweep?: 'live' | 'cached';
   /** Distinct activities whose submission state is looked up (nearest deadline first). Default 40. */
   maxSubmissionChecks?: number;
+  /** On the web channel, where every status read is a page: 'light' reads only a few (submission/web-status). */
+  webStatus?: WebStatusMode;
 }
 
 function kindFilter(kinds: readonly DueKind[] | undefined): (i: DueItem) => boolean {
@@ -285,6 +288,7 @@ export async function getDueItems(ctx: ServiceContext, opts: DueOptions = {}): P
   const others = otherCourses.filter(wanted);
   const checked = await attachSubmissions(ctx, [...listed, ...others], {
     maxSubmissionChecks: opts.maxSubmissionChecks,
+    webStatus: opts.webStatus,
   });
   const keep = opts.includeSubmitted === false ? notSubmitted : () => true;
 

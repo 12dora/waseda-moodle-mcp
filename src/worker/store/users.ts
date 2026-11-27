@@ -31,6 +31,8 @@ interface CredentialRaw {
   renewed_at: number | null;
   autologin_at: number | null;
   sesskey_enc: string | null; // 0014
+  busy_until: number | null; // 0017
+  session_used_at: number | null; // 0017
 }
 
 function scopeIds(raw: string | null | undefined): number[] | undefined {
@@ -66,6 +68,8 @@ const toCredential = (r: CredentialRaw): CredentialRow => ({
   renewedAt: r.renewed_at,
   autologinAt: r.autologin_at,
   sesskeyEnc: r.sesskey_enc,
+  busyUntil: r.busy_until,
+  sessionUsedAt: r.session_used_at,
 });
 
 const CREDENTIAL_COLUMNS: Record<keyof CredentialPatch, string> = {
@@ -84,6 +88,8 @@ const CREDENTIAL_COLUMNS: Record<keyof CredentialPatch, string> = {
   renewedAt: 'renewed_at',
   autologinAt: 'autologin_at',
   sesskeyEnc: 'sesskey_enc',
+  busyUntil: 'busy_until',
+  sessionUsedAt: 'session_used_at',
 };
 
 /** Patch fields -> column values (undefined fields are left out by updateColumns / setClause). */

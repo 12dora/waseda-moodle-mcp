@@ -3,8 +3,8 @@
  * a web session after 4 h idle. A run first asks Moodle whether its mobile web service is on (the site flag), then
  * visits every stored session not used in the last KEEPALIVE_AFTER_MS, most idle first, within the invocation budget:
  * launch.php while the service is on and a private token is stored (which also renews the token), otherwise one
- * `core_session_touch`. Background work: no activity statistics, no user activity stamp; the outcomes only feed the
- * credential-health counters (one batch per run).
+ * `core_session_touch`; a session marked busy (a request ran out of time) is skipped. Background work: no activity
+ * statistics, no user activity stamp; the outcomes only feed the credential-health counters (one batch per run).
  */
 
 import type { InvocationBudget } from '../core/budget';
@@ -83,6 +83,11 @@ export async function runRenewal(
   const deps = { ...renewalDeps(rt), fetch: doFetch };
   for (const { user, credential } of candidates) {
     if (!room(1, 2)) break;
+    // a session marked busy is in use and still working through earlier requests: a touch would only queue behind
+    if ((credential.busyUntil ?? 0) > now) {
+      tally(summary, { status: 'skipped', reason: 'busy', calls: 0 });
+      continue;
+    }
     const outcome = await keepSession(deps, user, credential, { mobileService, room });
     tally(summary, outcome);
     counts.push(...renewalCounts(outcome));

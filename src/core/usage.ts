@@ -97,6 +97,7 @@ const FAILURE_BY_CODE: ReadonlyMap<string, FailureClass> = new Map<string, Failu
   ['needs_reconnect', 'needs_reconnect'],
   ['mail_needs_reconnect', 'needs_reconnect'],
   ['moodle_unavailable', 'moodle_unavailable'], // includes request timeouts
+  ['moodle_busy', 'moodle_unavailable'], // the web session is still busy after a timeout
   ['mail_unavailable', 'mail_unavailable'],
   ['invalid_input', 'invalid_input'],
   ['forbidden', 'forbidden'],

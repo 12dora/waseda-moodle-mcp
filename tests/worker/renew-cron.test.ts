@@ -148,6 +148,19 @@ describe('runRenewal', () => {
     expect((await credentialOf(recent)).sessionOkAt).toBe(now - 10 * 60_000);
   });
 
+  it('skips a session marked busy (a request ran out of time) without a request, and visits it once the mark ran out', async () => {
+    const now = Date.now();
+    const busy = await addUser(1001, { sessionOkAt: now - 2 * HOUR });
+    await store.updateCredentialStatus(busy.id, { busyUntil: now + 60_000 });
+    expect(await tick()).toMatchObject({ kept: 0, skipped: 1, calls: 0, reasons: { busy: 1 } });
+    expect(paths()).toEqual(['/lib/ajax/service-nologin.php']);
+    expect(await counters()).toEqual([]); // a skip is no credential-health event
+    expect((await credentialOf(busy)).sessionOkAt).toBe(now - 2 * HOUR);
+
+    vi.setSystemTime(now + 61_000);
+    expect(await tick()).toMatchObject({ kept: 1, skipped: 0, calls: 1 });
+  });
+
   it('reads a missing sesskey once', async () => {
     const user = await addUser(1001, { sesskey: false });
     expect(await tick()).toMatchObject({ kept: 1, calls: 2 });

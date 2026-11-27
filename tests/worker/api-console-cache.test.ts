@@ -4,7 +4,7 @@
  */
 
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
-import { InvalidInput } from '../../src/core/errors';
+import { InvalidInput, MoodleBusy } from '../../src/core/errors';
 import { connectAccount } from '../../src/core/services/account';
 import { confirmAction } from '../../src/core/services/actions';
 import { getCourseOverview, getSyllabusSummary } from '../../src/core/services/course-overview';
@@ -206,6 +206,72 @@ describe.each(ROUTES)('GET $route', (r) => {
   it('needs a session', async () => {
     cookie = '';
     expect((await call(r.path)).status).toBe(401);
+  });
+});
+
+describe('while the Moodle web session is busy (a request ran out of time)', () => {
+  const OVERVIEW = '/api/courses/overview?';
+  const busyFor = async (ms: number) => {
+    await store.putCredential({
+      userId,
+      tokenEnc: null,
+      privateTokenEnc: null,
+      tokenHash: null,
+      tokenHint: null,
+      status: 'active',
+      connectedVia: 'extension',
+      connectedAt: 1,
+      lastOkAt: 1,
+      lastError: null,
+    });
+    await store.updateCredentialStatus(userId, { sessionEnc: 'enc-cookie', busyUntil: Date.now() + ms });
+  };
+
+  it.each(ROUTES)('$route: refresh=1 answers the stored copy as stale and busy, without computing', async (r) => {
+    await busyFor(60_000);
+    await put(r.key, r.body('古い'), 5);
+    const sep = r.path.includes('?') ? '&' : '?';
+    const res = await call(`${r.path}${sep}refresh=1`);
+    expect(res.status).toBe(200);
+    expect(await answer(res)).toEqual({ ...r.body('古い'), cachedAt: isoJst(5), stale: true, busy: true });
+    expect(r.service).not.toHaveBeenCalled();
+    expect(await stored(r.key)).toEqual(r.body('古い'));
+  });
+
+  it('without a copy answers moodle_busy (503, Retry-After) instead of calling Moodle', async () => {
+    await busyFor(60_000);
+    for (const path of ['/api/courses/overview', '/api/courses/overview?refresh=1']) {
+      const res = await call(path);
+      expect(res.status, path).toBe(503);
+      expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(55);
+      const body = (await res.json()) as { error: { code: string; retryAfter: number } };
+      expect(body.error).toMatchObject({ code: 'moodle_busy', retryAfter: expect.any(Number) });
+    }
+    expect(getCourseOverview).not.toHaveBeenCalled();
+  });
+
+  it('a plain read still answers its copy as usual; an expired mark computes again', async () => {
+    await busyFor(60_000);
+    await put(OVERVIEW, { dueError: false, courses: [] }, 5);
+    expect(await answer(await call('/api/courses/overview'))).toEqual({
+      dueError: false,
+      courses: [],
+      cachedAt: isoJst(5),
+      stale: true,
+    });
+    await busyFor(-1);
+    vi.mocked(getCourseOverview).mockResolvedValue({ dueError: false, courses: [{ id: 2 }] } as never);
+    expect(await answer(await call('/api/courses/overview?refresh=1'))).toMatchObject({ stale: false });
+    expect(getCourseOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it('a compute that finds the session busy answers the copy (or moodle_busy) and stores nothing', async () => {
+    vi.mocked(getCourseOverview).mockRejectedValue(new MoodleBusy(Date.now() + 120_000));
+    expect((await call('/api/courses/overview')).status).toBe(503);
+    await put(OVERVIEW, { dueError: false, courses: [{ id: 1 }] }, 5);
+    const res = await answer(await call('/api/courses/overview?refresh=1'));
+    expect(res).toMatchObject({ courses: [{ id: 1 }], stale: true, busy: true });
+    expect(await stored(OVERVIEW)).toEqual({ dueError: false, courses: [{ id: 1 }] });
   });
 });
 

@@ -12,7 +12,7 @@ import type {
   UserRow,
 } from '../core/context';
 import { createSigner, importMasterKey, type MasterKey } from '../core/crypto';
-import { NeedsReconnect, NotFound } from '../core/errors';
+import { MoodleBusy, NeedsReconnect, NotFound } from '../core/errors';
 import { GmailClient } from '../core/mail/client';
 import { mailReconnect } from '../core/mail/connection';
 import { MoodleClient } from '../core/moodle/client';
@@ -32,6 +32,8 @@ import { createD1Store, type D1Store } from './store-d1';
 
 /** lastOkAt / sessionOkAt (Moodle) and lastUsedAt (mail) are written at most this often per credential. */
 export const LAST_OK_INTERVAL_MS = 10 * 60_000;
+/** sessionUsedAt (a console / MCP request used the web session) is written at most this often; the sweep reads it. */
+export const SESSION_USE_STAMP_MS = 60_000;
 
 interface Runtime {
   store: D1Store;
@@ -92,6 +94,11 @@ interface ClientOptions {
   budget?: InvocationBudget;
 }
 
+interface MoodleClientSetup extends ClientOptions {
+  /** The cron's own work: it does not stamp the session's use (sessionUsedAt). */
+  scheduled?: boolean;
+}
+
 type ChannelOptions = Parameters<typeof createChannelClient>[0];
 
 /** What the two channels of one client share. */
@@ -104,7 +111,27 @@ interface Connection {
 }
 
 /** Whether a stamp is old enough to be written again. */
-const isStale = (at: number | null | undefined): boolean => Date.now() - (at ?? 0) >= LAST_OK_INTERVAL_MS;
+const isStale = (at: number | null | undefined, interval = LAST_OK_INTERVAL_MS): boolean =>
+  Date.now() - (at ?? 0) >= interval;
+
+/** Requests take the web session (moodle/web/channel: no token, or the mobile web service is off). */
+const takesWebSession = (cred: CredentialRow, mobileService: boolean): boolean =>
+  Boolean(cred.sessionEnc) && !(cred.tokenEnc && mobileService);
+
+/**
+ * Until when the web session counts as busy (one of its requests ran out of time, see MoodleBusy); null = it does
+ * not, or requests take the token channel, which the mark does not concern.
+ */
+function busyUntilOf(cred: CredentialRow, mobileService: boolean, now = Date.now()): number | null {
+  const until = cred.busyUntil ?? 0;
+  return until > now && takesWebSession(cred, mobileService) ? until : null;
+}
+
+/** The user's web-session busy mark as the next Moodle client would see it (null = not busy). */
+export async function sessionBusyUntil(store: D1Store, userId: number): Promise<number | null> {
+  const cred = await store.getCredential(userId);
+  return cred ? busyUntilOf(cred, await mobileServiceOn(store)) : null;
+}
 
 /**
  * The token channel. When Moodle rejects the token, a stored web session is asked for the current one first (launch.php
@@ -136,7 +163,8 @@ async function tokenChannel(c: Connection, tokenEnc: string): Promise<NonNullabl
 /**
  * The web session channel: a rotated cookie or new sesskey is stored, an ended session forgotten (the credential then
  * turns invalid unless a usable token remains), and a successful call stamps `sessionOkAt` lazily, which also spares
- * the keepalive a visit.
+ * the keepalive a visit. A request that ran out of time marks the session busy (busyUntil); the next success clears
+ * the mark this client read (a newer one, set meanwhile, stays).
  */
 async function webChannel(
   c: Connection,
@@ -164,7 +192,11 @@ async function webChannel(
       onUpdate: (change) => later(stored.update(change)),
       onEnded: () => later(ended()),
     },
+    busyUntil: cred.busyUntil,
+    onBusy: (until) => defer(rt.store.updateCredentialStatus(user.id, { busyUntil: until })),
     onSuccess: () => {
+      const { busyUntil } = cred;
+      if (busyUntil) defer(rt.store.updateCredentialIf(user.id, { busyUntil }, { busyUntil: null }));
       if (cred.status === 'active' && !isStale(cred.sessionOkAt)) return;
       defer(stored.confirm(Date.now()));
     },
@@ -174,14 +206,16 @@ async function webChannel(
 /**
  * Moodle client for a stored credential: the token channel while the mobile web service is on and a token exists, the
  * web session otherwise (moodle/web/channel). A credential with neither needs a reconnect. An `invalid` credential
- * with a session is still tried: the session works on its own, and it renews a rejected token.
+ * with a session is still tried: the session works on its own, and it renews a rejected token. While the web session
+ * is busy (busyUntilOf) no client is made: MoodleBusy at once. A request (not the cron) stamps the session's use.
  */
 async function createMoodleClient(
   rt: Runtime,
   user: UserRow,
   defer: Defer,
-  limits: ClientOptions = {},
+  setup: MoodleClientSetup = {},
 ): Promise<MoodleApi> {
+  const { scheduled, ...limits } = setup;
   const cred = await rt.store.getCredential(user.id);
   if (!cred) {
     throw new NeedsReconnect(
@@ -190,6 +224,11 @@ async function createMoodleClient(
   }
   let mobileService = await mobileServiceOn(rt.store);
   if (!isUsable(cred, mobileService)) throw new NeedsReconnect();
+  const busyUntil = busyUntilOf(cred, mobileService);
+  if (busyUntil !== null) throw new MoodleBusy(busyUntil);
+  if (!scheduled && takesWebSession(cred, mobileService) && isStale(cred.sessionUsedAt, SESSION_USE_STAMP_MS)) {
+    defer(rt.store.updateCredentialStatus(user.id, { sessionUsedAt: Date.now() }));
+  }
   const connection: Connection = { rt, user, cred, defer, limits };
   const { tokenEnc, sessionEnc } = cred;
   return createChannelClient({
@@ -293,6 +332,8 @@ interface BuildContextOptions {
   budget?: InvocationBudget;
   /** false for background work (sweep, console background requests): not the user being active. Default true. */
   touchUser?: boolean;
+  /** true for the cron's own work (course sweep): it never stamps the web session's use. Default false. */
+  scheduled?: boolean;
   /** true for `/mcp` requests: tool calls feed the operator statistics (not the console, not the sweep). Default false. */
   recordUsage?: boolean;
   /**
@@ -329,6 +370,7 @@ export async function buildServiceContext(
 
   const clientOpts = { maxCalls: opts.maxCalls, budget: opts.budget };
   const mailSetup = { rt, defer, trackUse: opts.touchUser !== false, ...clientOpts };
+  const moodleSetup = { ...clientOpts, scheduled: opts.scheduled };
   const mail = opts.mail ? await mailOf(env, mailSetup, user.id) : undefined;
   let moodle: Promise<MoodleApi> | null = null;
   return {
@@ -337,7 +379,7 @@ export async function buildServiceContext(
     signer: rt.signer,
     moodle: () => {
       // one budgeted client per request; a rejected promise is kept so NeedsReconnect is not retried
-      moodle ??= createMoodleClient(rt, user, defer, clientOpts);
+      moodle ??= createMoodleClient(rt, user, defer, moodleSetup);
       return moodle;
     },
     mail,

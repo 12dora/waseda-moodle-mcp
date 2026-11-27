@@ -543,6 +543,32 @@ describe('course snapshots', () => {
     await store.putSiteState('mobile_service', '1', 0);
     expect(await ids()).toEqual([tokenOnly.id, both.id, sessionOnly.id, deadToken.id]);
   });
+
+  it('listSweepUsers quiet: web-session users busy or just used are left out; a usable token never is', async () => {
+    const now = 1_000_000;
+    const mk = async (moodleUserId: number, stamps: Partial<CredentialRow>, token = false) => {
+      const u = await store.upsertUser({ moodleUserId, fullname: `U${moodleUserId}`, lang: 'en' });
+      const noToken = { tokenEnc: null, tokenHash: null, tokenHint: null };
+      await store.putCredential(credential(u.id, token ? { tokenHash: `h${moodleUserId}` } : noToken));
+      await store.updateCredentialStatus(u.id, { sessionEnc: 'enc', ...stamps });
+      return u;
+    };
+    const idle = await mk(2201, {});
+    const busy = await mk(2202, { busyUntil: now + 1 });
+    const busyOver = await mk(2203, { busyUntil: now });
+    const used = await mk(2204, { sessionUsedAt: now - 10 });
+    const usedBefore = await mk(2205, { sessionUsedAt: now - 500 });
+    const token = await mk(2206, { busyUntil: now + 1, sessionUsedAt: now }, true);
+    expect(await store.getCredential(busy.id)).toMatchObject({ busyUntil: now + 1, sessionUsedAt: null });
+    expect(await store.getCredential(used.id)).toMatchObject({ busyUntil: null, sessionUsedAt: now - 10 });
+    const ids = async (quiet?: { now: number; usedAfter: number }) =>
+      (await store.listSweepUsers(10, quiet)).map((u) => u.id).sort((a, b) => a - b);
+    expect(await ids()).toEqual([idle.id, busy.id, busyOver.id, used.id, usedBefore.id, token.id]);
+    // the mobile service is off (0014): the token user's requests take the session too
+    expect(await ids({ now, usedAfter: now - 100 })).toEqual([idle.id, busyOver.id, usedBefore.id]);
+    await store.putSiteState('mobile_service', '1', 0);
+    expect(await ids({ now, usedAfter: now - 100 })).toEqual([idle.id, busyOver.id, usedBefore.id, token.id]);
+  });
 });
 
 describe('scope course ids', () => {

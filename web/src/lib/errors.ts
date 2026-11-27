@@ -10,6 +10,7 @@ const CODE_MESSAGES: Readonly<Record<string, MessageKey>> = {
   mail_needs_reconnect: 'error.mail_needs_reconnect',
   rate_limited: 'error.rate_limited',
   moodle_unavailable: 'error.moodle_unavailable',
+  moodle_busy: 'error.moodle_busy',
   budget_exceeded: 'error.budget_exceeded',
   service_paused: 'paused.desc',
   edge_challenge: 'paused.unavailable',

@@ -27,6 +27,8 @@ export interface MoodleWebSessionOptions {
   onUpdate?: (update: { cookie?: string; sesskey?: string }) => void | Promise<void>;
   /** Moodle sent the request to its login page: the session is over. Called once. */
   onEnded?: () => void | Promise<void>;
+  /** A request ran out of `timeoutMs` (we gave up; Moodle may still be running it). Best effort. */
+  onTimeout?: () => void;
 }
 
 /** Calls whose point is the request itself (keepalive) or that consume what they read: never from the memo. */
@@ -133,6 +135,7 @@ export class MoodleWebSession implements WebSession {
       if (res.status >= 500) throw await unavailable(res);
       return await read(res);
     } catch (e) {
+      if (ac.signal.aborted) best(() => this.opts.onTimeout?.());
       throw e instanceof WmmError ? e : new MoodleUnavailable();
     } finally {
       clearTimeout(timer);

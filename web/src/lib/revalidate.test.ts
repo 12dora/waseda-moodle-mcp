@@ -16,6 +16,11 @@ describe('revalidate', () => {
     expect(await revalidate({ stale: true, n: 1 }, async () => fresh)).toBe(fresh);
   });
 
+  it('keeps the shown answer when the refresh comes back stale again (Moodle busy: the stored copy)', async () => {
+    const first = { stale: true, n: 1 };
+    expect(await revalidate(first, async () => ({ stale: true, n: 2 }))).toBe(first);
+  });
+
   it('keeps the stale answer when the refresh fails', async () => {
     const first = { stale: true, n: 1 };
     expect(await revalidate(first, () => Promise.reject(new Error('offline')))).toBe(first);

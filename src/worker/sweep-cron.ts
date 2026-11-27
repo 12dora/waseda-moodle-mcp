@@ -4,16 +4,17 @@
  * each. The whole invocation stays under the Free plan's 50-subrequest limit by capping the Moodle calls it may
  * spend in total, and under its 10 ms CPU limit by refetching at most one large course; it makes no syllabus fetches
  * (cached rows only). The courses are the cron's own cheap scope plus, in auto mode, the ones the last interactive
- * call used.
+ * call used. Users whose web session is busy (a request ran out of time) or was just used by a console or MCP request
+ * are left for a later run: Moodle serialises one session's requests, and the sweep would queue behind the user's own.
  */
 
 import { InvocationBudget } from '../core/budget';
 import type { MoodleApi, ServiceContext, Store, UserRow } from '../core/context';
-import { BudgetExceeded, NeedsReconnect } from '../core/errors';
+import { BudgetExceeded, MoodleBusy, NeedsReconnect } from '../core/errors';
 import { type CourseScope, resolveScope } from '../core/services/scope';
 import { CRON_MAX_AGE_MS, refreshSnapshots } from '../core/services/sweep/refresh';
 import type { Course } from '../core/types';
-import { buildServiceContext, getRuntime, type WaitUntil } from './context';
+import { buildServiceContext, getRuntime, SESSION_USE_STAMP_MS, type WaitUntil } from './context';
 import type { Env } from './env';
 
 export const SWEEP_MAX_USERS = 20;
@@ -36,6 +37,12 @@ const MIN_QUERIES_PER_USER = 12;
 /** Moodle calls one user's refresh may spend, after the scope calls. */
 const REFRESH_CALLS_PER_USER = 12;
 const SWEEP_SOURCE = 'Scheduled sweep';
+/**
+ * A user whose web session a console or MCP request used this recently is left for a later run: Moodle serialises the
+ * session's requests, so the sweep would only queue behind (and slow down) what the user is doing. About 2 minutes,
+ * plus the stamp's granularity (sessionUsedAt is written at most once a SESSION_USE_STAMP_MS).
+ */
+const IN_USE_MS = 2 * 60_000 + SESSION_USE_STAMP_MS;
 
 interface SweepRunSummary {
   swept: number;
@@ -82,7 +89,7 @@ async function sweepUser(
       env,
       execCtx,
       { userId: user.id, scopes: ['moodle:read'], source: SWEEP_SOURCE },
-      { user, maxCalls, budget: allowance.budget, touchUser: false },
+      { user, maxCalls, budget: allowance.budget, touchUser: false, scheduled: true },
     );
     // remembers the client so the calls it made can be added to the invocation's budget
     const ctx: ServiceContext = {
@@ -110,7 +117,8 @@ async function sweepUser(
   } catch (e) {
     const calls = spent();
     const large = tally.large;
-    if (e instanceof NeedsReconnect) return { outcome: 'skipped', calls, large };
+    // a session that turned busy since the listing is left alone like a disconnected one
+    if (e instanceof NeedsReconnect || e instanceof MoodleBusy) return { outcome: 'skipped', calls, large };
     if (e instanceof BudgetExceeded) return { outcome: 'budget', calls, large };
     console.error('sweep failed:', e instanceof Error ? e.name : 'unknown');
     return { outcome: 'failed', calls, large };
@@ -139,7 +147,9 @@ export async function runCourseSweep(
   let largeLeft = SWEEP_MAX_LARGE; // one budget for the whole invocation, not per user
   if (!budget.fits(MIN_CALLS_PER_USER, MIN_QUERIES_PER_USER)) return summary;
   const { store } = await getRuntime(env);
-  for (const user of await store.listSweepUsers(SWEEP_MAX_USERS)) {
+  const now = Date.now();
+  // busy sessions and sessions in use are left out (not stamped: they stay first in line for the next run)
+  for (const user of await store.listSweepUsers(SWEEP_MAX_USERS, { now, usedAfter: now - IN_USE_MS })) {
     if (!budget.fits(MIN_CALLS_PER_USER, MIN_QUERIES_PER_USER)) break;
     await stampSwept(store, user.id);
     const { outcome, calls, large } = await sweepUser(env, execCtx, user, { budget, maxLarge: largeLeft });

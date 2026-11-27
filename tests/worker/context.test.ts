@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex } from '../../src/core/crypto';
-import { MailNeedsReconnect, NeedsReconnect, NotFound } from '../../src/core/errors';
+import { MailNeedsReconnect, MoodleBusy, NeedsReconnect, NotFound } from '../../src/core/errors';
 import type { ChannelClientOptions } from '../../src/core/moodle/web/channel';
 import {
   buildServiceContext,
@@ -8,6 +8,8 @@ import {
   getRuntime,
   LAST_OK_INTERVAL_MS,
   makeMoodleFactory,
+  SESSION_USE_STAMP_MS,
+  sessionBusyUntil,
   startRenewal,
 } from '../../src/worker/context';
 import type { Env } from '../../src/worker/env';
@@ -479,6 +481,101 @@ describe('ctx.moodle()', () => {
       deferred.length = 0;
       sessionOf(1).onSuccess?.();
       expect(deferred).toHaveLength(0);
+    });
+  });
+
+  describe('session busy breaker and use stamp', () => {
+    const settle = async () => {
+      await Promise.all(deferred);
+      deferred.length = 0;
+    };
+    const markBusy = (busyUntil: number | null) => store.updateCredentialStatus(userId, { busyUntil });
+
+    it('fails fast with MoodleBusy while the web session is marked busy, without making a client', async () => {
+      await sessionOnly();
+      await markBusy(Date.now() + 60_000);
+      const e = await (await build())
+        .moodle()
+        .then(() => null)
+        .catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(MoodleBusy);
+      expect((e as MoodleBusy).retryAfterSec).toBeGreaterThan(55);
+      expect(created).toHaveLength(0);
+      expect(await sessionBusyUntil(store, userId)).toBeGreaterThan(Date.now());
+
+      await markBusy(Date.now() - 1); // the mark ran out: requests go again
+      await (await build()).moodle();
+      expect(created).toHaveLength(1);
+      expect(sessionOf().busyUntil).toBeLessThan(Date.now());
+      expect(await sessionBusyUntil(store, userId)).toBeNull();
+    });
+
+    it('leaves the token channel alone: a token user with the service on is never held back', async () => {
+      await serviceOn();
+      await storeCredential();
+      await addSession();
+      await markBusy(Date.now() + 60_000);
+      await (await build()).moodle();
+      expect(created).toHaveLength(1);
+      expect(await sessionBusyUntil(store, userId)).toBeNull();
+    });
+
+    it('stores the mark a timed-out request sets; the next success clears the mark it read, not a newer one', async () => {
+      const busyUntil = async () => (await store.getCredential(userId))?.busyUntil;
+      await sessionOnly();
+      await (await build()).moodle();
+      const until = Date.now() + 120_000;
+      sessionOf().onBusy?.(until);
+      await settle();
+      expect(await busyUntil()).toBe(until);
+
+      // the mark ran out; the next request reads it and gets an answer
+      const expired = Date.now() - 1;
+      await markBusy(expired);
+      await (await build()).moodle();
+      await settle();
+      expect(sessionOf(1).busyUntil).toBe(expired);
+      await markBusy(Date.now() + 90_000); // meanwhile another request timed out: its newer mark stays
+      sessionOf(1).onSuccess?.();
+      await settle();
+      expect(await busyUntil()).toBeGreaterThan(Date.now());
+
+      await markBusy(expired);
+      await (await build()).moodle();
+      sessionOf(2).onSuccess?.();
+      await settle();
+      expect(await busyUntil()).toBeNull();
+    });
+
+    it("stamps the session's use for requests (at most once a minute), never for the cron", async () => {
+      await sessionOnly();
+      await (await build()).moodle();
+      await settle();
+      const first = (await store.getCredential(userId))?.sessionUsedAt ?? 0;
+      expect(Date.now() - first).toBeLessThan(5000);
+      await (await build()).moodle();
+      expect(deferred).toHaveLength(0); // fresh: no second write within SESSION_USE_STAMP_MS
+
+      await store.updateCredentialStatus(userId, { sessionUsedAt: Date.now() - SESSION_USE_STAMP_MS - 1 });
+      const cron = await buildServiceContext(
+        env,
+        execCtx(),
+        { userId, scopes: ['moodle:read'], source: 'Scheduled sweep' },
+        { touchUser: false, scheduled: true },
+      );
+      await cron.moodle();
+      await settle();
+      expect(Date.now() - ((await store.getCredential(userId))?.sessionUsedAt ?? 0)).toBeGreaterThan(
+        SESSION_USE_STAMP_MS,
+      );
+    });
+
+    it('a token-only credential has no session to stamp', async () => {
+      await serviceOn();
+      await storeCredential();
+      await (await build()).moodle();
+      expect(deferred).toHaveLength(0);
+      expect((await store.getCredential(userId))?.sessionUsedAt).toBeNull();
     });
   });
 });

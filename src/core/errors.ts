@@ -51,6 +51,19 @@ export class MoodleUnavailable extends WmmError {
 }
 
 /**
+ * The Moodle web session is still working through earlier requests: one of them ran out of our time limit, and Moodle
+ * serialises the requests of one session and keeps running what we gave up on, so every request sent meanwhile would
+ * only queue behind it. Requests fail fast until `until` (epoch ms); `retryAfterSec` is the wait left.
+ */
+export class MoodleBusy extends WmmError {
+  readonly retryAfterSec: number;
+  constructor(until: number, now = Date.now()) {
+    super('Moodle is still working through earlier requests for this account.', 'moodle_busy');
+    this.retryAfterSec = Math.max(1, Math.ceil((until - now) / 1000));
+  }
+}
+
+/**
  * Gmail (the Waseda mailbox) is unreachable: network failure, timeout or HTTP 5xx. `maybeSent` is false when the request
  * never reached the Gmail API (e.g. the token refresh failed), so a write cannot have gone through.
  */

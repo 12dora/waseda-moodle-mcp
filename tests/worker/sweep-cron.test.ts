@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvocationBudget } from '../../src/core/budget';
-import type { ServiceContext } from '../../src/core/context';
+import type { CredentialPatch, ServiceContext } from '../../src/core/context';
 import { NeedsReconnect } from '../../src/core/errors';
 import { resolveScope } from '../../src/core/services/scope';
 import { CRON_MAX_AGE_MS, refreshSnapshots } from '../../src/core/services/sweep/refresh';
@@ -308,5 +308,60 @@ describe('runCourseSweep', () => {
     vi.mocked(resolveScope).mockResolvedValue({ mode: 'auto', mine: new Set(), courses: [] });
     expect(await runCourseSweep(env)).toMatchObject({ swept: 1 });
     expect(refreshSnapshots).not.toHaveBeenCalled();
+  });
+
+  describe('web-session users the user is busy with', () => {
+    /** A session-only user (requests take the web session) with the given session stamps. */
+    async function sessionUser(moodleUserId: number, stamps: CredentialPatch = {}) {
+      const user = await addUser(moodleUserId);
+      const rt = await getRuntime(env);
+      await store.updateCredentialStatus(user.id, {
+        tokenEnc: null,
+        tokenHash: null,
+        tokenHint: null,
+        sessionEnc: await rt.key.encrypt(`MoodleSession=u${moodleUserId}`),
+        sesskeyEnc: await rt.key.encrypt('Sk00000001'),
+        sessionOkAt: Date.now(),
+        ...stamps,
+      });
+      return user;
+    }
+    const sweptAt = async (userId: number) =>
+      (
+        await env.DB.prepare('SELECT last_swept_at AS t FROM users WHERE id = ?')
+          .bind(userId)
+          .first<{ t: number | null }>()
+      )?.t ?? null;
+
+    it('leaves out sessions marked busy or used by a request in the last minutes, unstamped; tokens never wait', async () => {
+      const now = Date.now();
+      await sessionUser(1001);
+      const busy = await sessionUser(1002, { busyUntil: now + 60_000 });
+      const inUse = await sessionUser(1003, { sessionUsedAt: now - 60_000 });
+      await sessionUser(1004, { sessionUsedAt: now - 10 * 60_000, busyUntil: now - 1 });
+      const token = await addUser(1005); // the token channel: a session stamp does not hold it back
+      await store.updateCredentialStatus(token.id, { sessionUsedAt: now, busyUntil: now + 60_000 });
+
+      expect(await runCourseSweep(env)).toMatchObject({ swept: 3, skipped: 0 });
+      expect(seen.map((c) => c.user.moodleUserId).sort()).toEqual([1001, 1004, 1005]);
+      expect(await sweptAt(busy.id)).toBeNull(); // first in line next run
+      expect(await sweptAt(inUse.id)).toBeNull();
+    });
+
+    it('skips a session that turned busy after the listing, and never stamps its use', async () => {
+      const busy = await sessionUser(1001);
+      const quiet = await sessionUser(1002);
+      const { store: runtimeStore } = await getRuntime(env);
+      const list = runtimeStore.listSweepUsers.bind(runtimeStore);
+      vi.spyOn(runtimeStore, 'listSweepUsers').mockImplementation(async (limit, quietOpts) => {
+        const users = await list(limit, quietOpts);
+        await store.updateCredentialStatus(busy.id, { busyUntil: Date.now() + 60_000 });
+        return users;
+      });
+
+      expect(await runCourseSweep(env)).toMatchObject({ swept: 1, skipped: 1, failed: 0 });
+      expect((await store.getCredential(quiet.id))?.sessionUsedAt).toBeNull();
+      expect((await store.getCredential(busy.id))?.sessionUsedAt).toBeNull();
+    });
   });
 });

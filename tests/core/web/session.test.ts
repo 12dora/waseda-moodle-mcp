@@ -173,13 +173,43 @@ describe('MoodleWebSession.ajax', () => {
     await expect(garbage.session.ajax('x')).rejects.toBeInstanceOf(MoodleUnavailable);
   });
 
-  it('times out', async () => {
+  it('times out, and says so (onTimeout) only for its own deadline', async () => {
+    const onTimeout = vi.fn();
     const { session } = setup(
       (_u, init) =>
         new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(new Error('aborted')))),
-      { timeoutMs: 5 },
+      { timeoutMs: 5, onTimeout },
     );
     await expect(session.ajax('x')).rejects.toBeInstanceOf(MoodleUnavailable);
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+
+    const notTimedOut = vi.fn();
+    const net = setup(
+      () => {
+        throw new TypeError('fetch failed');
+      },
+      { onTimeout: notTimedOut },
+    );
+    await expect(net.session.ajax('x')).rejects.toBeInstanceOf(MoodleUnavailable);
+    const down = setup(() => new Response('oops', { status: 503 }), { onTimeout: notTimedOut });
+    await expect(down.session.page('/my/')).rejects.toBeInstanceOf(MoodleUnavailable);
+    expect(notTimedOut).not.toHaveBeenCalled();
+  });
+
+  it('a page whose body does not arrive in time times out as well', async () => {
+    const onTimeout = vi.fn();
+    const stalled = (signal: AbortSignal | null | undefined) =>
+      new ReadableStream({
+        start(controller) {
+          signal?.addEventListener('abort', () => controller.error(new Error('aborted')));
+        },
+      });
+    const { session } = setup((_u, init) => new Response(stalled(init.signal), { status: 200 }), {
+      timeoutMs: 5,
+      onTimeout,
+    });
+    await expect(session.page('/my/')).rejects.toBeInstanceOf(MoodleUnavailable);
+    expect(onTimeout).toHaveBeenCalledTimes(1);
   });
 
   it('a BudgetExceeded from charge() fails the batch without a request', async () => {

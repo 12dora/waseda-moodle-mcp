@@ -4,7 +4,7 @@
  */
 
 import type { ServiceContext } from '../context';
-import { MoodleError, NeedsReconnect } from '../errors';
+import { MoodleBusy, MoodleError, NeedsReconnect } from '../errors';
 import { isoJst, nowMs } from '../time';
 import type {
   Course,
@@ -36,7 +36,11 @@ import { resolveCourses } from './timetable/sources';
 
 const DUE_AHEAD_DAYS = 60;
 const DUE_OVERDUE_DAYS = 30;
-/** 150 cmids; callBatch chunks 40, so two status/module rounds stay a handful of subrequests. */
+/**
+ * 150 cmids; callBatch chunks 40, so two status/module rounds stay a handful of subrequests (token channel). The web
+ * channel reads a page per status and Moodle serialises them, so it reads only a few ('light': course overview pages
+ * first, nearest deadlines first); the rest are listed without a status.
+ */
 const DUE_SUBMISSION_CHECKS = 150;
 const UPDATES_DAYS = 14;
 const UPDATES_PER_COURSE = 10;
@@ -135,8 +139,10 @@ function overviewRow(course: Course, bits: RowBits): CourseOverviewItem {
   };
 }
 
-function isDueAuthError(e: unknown): boolean {
-  return e instanceof NeedsReconnect || (e instanceof MoodleError && e.errorcode === 'invalidtoken');
+/** Failures the whole answer reports (a reconnect, a busy web session) instead of an empty due list. */
+function isDueFatal(e: unknown): boolean {
+  if (e instanceof NeedsReconnect || e instanceof MoodleBusy) return true;
+  return e instanceof MoodleError && e.errorcode === 'invalidtoken';
 }
 
 async function dueForOverview(ctx: ServiceContext): Promise<{ items: DueItem[]; dueError: boolean }> {
@@ -146,10 +152,11 @@ async function dueForOverview(ctx: ServiceContext): Promise<{ items: DueItem[]; 
       overdueDays: DUE_OVERDUE_DAYS,
       sweep: 'cached',
       maxSubmissionChecks: DUE_SUBMISSION_CHECKS,
+      webStatus: 'light',
     });
     return { items: due.items, dueError: false };
   } catch (e) {
-    if (isDueAuthError(e)) throw e;
+    if (isDueFatal(e)) throw e;
     console.error('[waseda-moodle] course overview due list failed:', e instanceof Error ? e.name : typeof e);
     return { items: [], dueError: true };
   }

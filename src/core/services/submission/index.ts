@@ -14,7 +14,7 @@ import { assignStatusRequest, parseAssignStatus } from './assign';
 import { type BatchRequest, type BatchResult, callBatch } from './batch';
 import { parseQuestionnaire, questionnaireRequest } from './questionnaire';
 import { parseQuizState, quizAccessRequest, quizAttemptsRequest } from './quiz';
-import { readWebStatuses } from './web-status';
+import { readWebStatuses, type WebStatusMode } from './web-status';
 
 type Kind = 'assign' | 'quiz' | 'questionnaire';
 type Target = DueItem & { cmid: number; kind: Kind };
@@ -27,6 +27,8 @@ const CHECKED_KINDS: ReadonlySet<string> = new Set<Kind>(['assign', 'quiz', 'que
 interface AttachSubmissionsOptions {
   /** Distinct cmids to look up (nearest deadline first). Default 40. */
   maxSubmissionChecks?: number;
+  /** How many pages the web channel may read for them (web-status.ts). Default 'full'. */
+  webStatus?: WebStatusMode;
 }
 
 const isTarget = (i: DueItem): i is Target => i.cmid !== null && CHECKED_KINDS.has(i.kind) && !i.closed;
@@ -136,8 +138,12 @@ async function readTemplateStatuses(api: MoodleApi, targets: readonly Target[]):
 }
 
 /** The one place the channel picks how statuses are read (web: pages within the budget, web-status.ts). */
-const readStatuses = (api: MoodleApi, targets: readonly Target[]): Promise<Statuses> =>
-  api.channel === 'web' ? readWebStatuses(api, targets) : readTemplateStatuses(api, targets);
+const readStatuses = (
+  api: MoodleApi,
+  targets: readonly Target[],
+  mode: WebStatusMode | undefined,
+): Promise<Statuses> =>
+  api.channel === 'web' ? readWebStatuses(api, targets, mode) : readTemplateStatuses(api, targets);
 
 // ------------------------------------------------------------------ memo + apply
 
@@ -152,20 +158,20 @@ function memoOf(ctx: ServiceContext): Map<number, Promise<DueSubmission | null>>
   return created;
 }
 
-async function fetchStatuses(ctx: ServiceContext, targets: readonly Target[]): Promise<Statuses> {
+async function fetchStatuses(ctx: ServiceContext, targets: readonly Target[], mode?: WebStatusMode): Promise<Statuses> {
   try {
-    return await readStatuses(await ctx.moodle(), targets);
+    return await readStatuses(await ctx.moodle(), targets, mode);
   } catch (e) {
     console.error('[waseda-moodle] submission check failed:', e instanceof Error ? e.name : typeof e);
     return new Map();
   }
 }
 
-async function statesFor(ctx: ServiceContext, targets: readonly Target[]): Promise<Statuses> {
+async function statesFor(ctx: ServiceContext, targets: readonly Target[], mode?: WebStatusMode): Promise<Statuses> {
   const memo = memoOf(ctx);
   const fresh = targets.filter((t) => !memo.has(t.cmid));
   if (fresh.length > 0) {
-    const run = fetchStatuses(ctx, fresh);
+    const run = fetchStatuses(ctx, fresh, mode);
     for (const t of fresh)
       memo.set(
         t.cmid,
@@ -194,7 +200,7 @@ export async function attachSubmissions(
   try {
     const targets = pickTargets(items, checkLimit(opts.maxSubmissionChecks));
     if (targets.length === 0) return items;
-    const states = await statesFor(ctx, targets);
+    const states = await statesFor(ctx, targets, opts.webStatus);
     return items.map((item) => {
       if (!isTarget(item) || !states.has(item.cmid)) return item;
       return withState(item, states.get(item.cmid) ?? null);

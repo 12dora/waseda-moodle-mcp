@@ -538,6 +538,7 @@ export const ja: Dictionary = {
   'error.moodle_maintenanceUntil':
     'Waseda Moodle はメンテナンス中です（告知によると {until} 頃まで）。終了後に再試行してください。',
   'error.moodle_maintenance': 'Waseda Moodle はメンテナンス中です。メンテナンス終了後に再試行してください。',
+  'error.moodle_busy': 'Moodle が前のリクエストを処理中です。1 分ほどしてから再試行してください。',
   'error.budget_exceeded':
     '一度に必要な Moodle への呼び出しが多すぎます。対象を絞って（1 つのコース、短い期間など）再試行してください。',
 

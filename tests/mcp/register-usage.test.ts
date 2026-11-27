@@ -3,7 +3,14 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 import type { ServiceContext } from '../../src/core/context';
-import { MailNeedsReconnect, MoodleError, MoodleUnavailable, NeedsReconnect, WmmError } from '../../src/core/errors';
+import {
+  MailNeedsReconnect,
+  MoodleBusy,
+  MoodleError,
+  MoodleUnavailable,
+  NeedsReconnect,
+  WmmError,
+} from '../../src/core/errors';
 import { MAIL_RECONNECT } from '../../src/core/mail/connection';
 import { defineTool } from '../../src/core/mcp/tools/define';
 import { registerTool, toToolError } from '../../src/core/mcp/tools/register';
@@ -198,6 +205,21 @@ describe('toToolError reconnect hints', () => {
     const r = await client.callTool({ name: 'get_discussion', arguments: {} });
     expect(r.isError).toBe(true);
     expect(JSON.stringify(r.content)).toContain('call list_discussions again');
+  });
+
+  it('a busy Moodle session fails the tool at once with the wait-a-minute step', async () => {
+    const rec = recorder();
+    const { ctx, api } = makeFakeContext({ publicUrl: ORIGIN });
+    // the worker's ctx.moodle() refuses while the session is marked busy (worker/context createMoodleClient)
+    const busy = { ...ctx, usage: rec.usage, moodle: () => Promise.reject(new MoodleBusy(Date.now() + 60_000)) };
+    const client = await connect(busy);
+    const r = await client.callTool({ name: 'site', arguments: {} });
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r.content)).toContain(
+      'Moodle is still working through earlier requests for this account. Try again in about a minute.',
+    );
+    expect(api.calls).toEqual([]);
+    expect(rec.calls).toEqual([['site', 'moodle_unavailable']]);
   });
 
   it('keeps a message that already names its page', () => {

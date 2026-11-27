@@ -3,10 +3,14 @@
  * assignments from the course's activity overview (ONE page per course for all its assignments and quizzes:
  * `submissionstatus` and the grade column), quizzes from their view page (the attempts and the access information
  * share it, through callBatch), questionnaires from their index page. No instance ids are resolved first (on this
- * channel they are the cmids). Only the MAX_QUIZ_PAGES nearest quizzes get a view page; a quiz beyond that is answered
- * from its course's overview page when one is read anyway and shows its grade (a finished attempt), else stays
- * unchecked. The reads are bounded by what the call budget has left (RESERVE calls stay for the rest of the tool),
+ * channel they are the cmids). Only the plan's nearest quizzes get a view page; a quiz beyond that is answered from its
+ * course's overview page when one is read anyway and shows its grade (a finished attempt), else stays unchecked. The
+ * reads are bounded by the plan and by what the call budget has left (RESERVE calls stay for the rest of the tool),
  * nearest deadlines first; the rest stays unchecked (null), like any failed read.
+ *
+ * Plans (WebStatusMode): 'full' (the due list) as above. 'light' (the console's course overview, which lists every
+ * course over 90 days) reads at most LIGHT_PAGES pages: questionnaires come from their course's overview page too
+ * (`responded`: answered or not; a saved draft reads as not answered), and only the nearest quizzes get a view page.
  */
 
 import type { MoodleApi } from '../../context';
@@ -17,22 +21,52 @@ import { callBatch, mapLimit } from './batch';
 import { parseWebQuestionnaireIndex } from './questionnaire-web';
 import { parseQuizState, quizAccessRequest, quizAttemptsRequest } from './quiz';
 
+type Kind = 'assign' | 'quiz' | 'questionnaire';
+
 interface WebTarget {
   cmid: number;
   courseId: number;
-  kind: 'assign' | 'quiz' | 'questionnaire';
+  kind: Kind;
 }
 
 type Found = Array<[number, DueSubmission | null]>;
+
+/** How many pages a listing may spend on statuses (see the module comment). */
+export type WebStatusMode = 'full' | 'light';
+
+interface Plan {
+  /** Status pages at most (what the call budget leaves bounds them too). */
+  maxPages: number;
+  /** Quiz view pages (nearest deadlines): each costs a serialised page of ~1 s. */
+  maxQuizPages: number;
+  /** Kinds answered from their course's overview page: one page per course answers all of them. */
+  byCourse: ReadonlySet<Kind>;
+  /** The overview types that page expands (sorted: readOverview builds the same path from them). */
+  types: readonly string[];
+}
+
+/** The light plan's pages: with the overview's fixed reads (courses, calendar) about 8 s on the web session. */
+const LIGHT_PAGES = 6;
+
+const PLANS: Readonly<Record<WebStatusMode, Plan>> = {
+  full: {
+    maxPages: Number.POSITIVE_INFINITY,
+    maxQuizPages: 6,
+    byCourse: new Set(['assign']),
+    types: ['assign', 'quiz'],
+  },
+  light: {
+    maxPages: LIGHT_PAGES,
+    maxQuizPages: 2,
+    byCourse: new Set(['assign', 'questionnaire']),
+    types: ['assign', 'questionnaire', 'quiz'],
+  },
+};
 
 /** The client's default budget (MoodleClient / WebMoodleClient maxCalls). */
 const CLIENT_CALLS = 40;
 const RESERVE = 6;
 const CONCURRENCY = 6;
-/** Quiz view pages per listing (nearest deadlines): each costs a serialised page of ~1 s. */
-const MAX_QUIZ_PAGES = 6;
-/** The overview types read for statuses: one page answers the course's assignments and quizzes. */
-const OVERVIEW_TYPES = ['assign', 'quiz'] as const;
 
 /** `submissionstatus` as the overview prints it (mod_assign submissionstatus_* strings, en and ja). */
 const ASSIGN_STATUS: ReadonlyArray<[RegExp, DueSubmission['status'], boolean]> = [
@@ -46,8 +80,13 @@ const ASSIGN_STATUS: ReadonlyArray<[RegExp, DueSubmission['status'], boolean]> =
 /** A grade cell holds a number once graded; '-' or '' means not graded. */
 const hasGrade = (value: string | undefined): boolean => /\d/.test(value ?? '');
 
+interface OverviewRow {
+  values: Record<string, string>;
+  text: Record<string, string>;
+}
+
 /** An overview row; null when its status text is not one this server knows (another language, a new string). */
-function assignState(row: { values: Record<string, string>; text: Record<string, string> }): DueSubmission | null {
+function assignState(row: OverviewRow): DueSubmission | null {
   const shown = (row.values.submissionstatus ?? row.text.submissionstatus ?? '').trim();
   const known = ASSIGN_STATUS.find(([re]) => re.test(shown));
   if (!known) return null;
@@ -65,17 +104,36 @@ function quizOverviewState(row: { values: Record<string, string> }): DueSubmissi
   return { status: 'submitted', canContinue: false, submittedAt: null, graded: true, note: null };
 }
 
-interface OverviewEntry {
-  cmid: number;
-  kind: 'assign' | 'quiz';
+/** A questionnaire row: `responded` is 1 once the user answered (a saved, unsent draft reads as not answered). */
+function questionnaireOverviewState(row: { values: Record<string, string> }): DueSubmission | null {
+  const responded = row.values.responded;
+  if (responded !== '1' && responded !== '0') return null;
+  const answered = responded === '1';
+  const status = answered ? 'submitted' : 'none';
+  return { status, canContinue: !answered, submittedAt: null, graded: false, note: null };
 }
 
-async function courseOverview(api: MoodleApi, courseId: number, entries: readonly OverviewEntry[]): Promise<Found> {
-  const rows = await readOverview(webSessionOf(api), courseId, OVERVIEW_TYPES).catch(() => null);
+const OVERVIEW_STATE: Readonly<Record<Kind, (row: OverviewRow) => DueSubmission | null>> = {
+  assign: assignState,
+  quiz: quizOverviewState,
+  questionnaire: questionnaireOverviewState,
+};
+
+interface OverviewEntry {
+  cmid: number;
+  kind: Kind;
+}
+
+/** One course's overview page for the entries planned on it (the types the plan expands). */
+async function courseOverview(
+  api: MoodleApi,
+  page: { courseId: number; types: readonly string[] },
+  entries: readonly OverviewEntry[],
+): Promise<Found> {
+  const rows = await readOverview(webSessionOf(api), page.courseId, page.types).catch(() => null);
   return entries.map(({ cmid, kind }): [number, DueSubmission | null] => {
     const row = rows?.get(cmid);
-    if (!row) return [cmid, null];
-    return [cmid, kind === 'assign' ? assignState(row) : quizOverviewState(row)];
+    return [cmid, row ? OVERVIEW_STATE[kind](row) : null];
   });
 }
 
@@ -97,46 +155,55 @@ async function questionnaireStatus(api: MoodleApi, cmid: number): Promise<Found>
   return [[cmid, page ? parseWebQuestionnaireIndex(page.html, api.baseUrl).state : null]];
 }
 
-/**
- * The reads that fit the budget, in target order: an assignment costs its course's overview page once; a quiz beyond
- * MAX_QUIZ_PAGES only joins an overview page planned anyway (never one of its own). Entries are collected before any
- * job runs, so a later target joins an earlier page.
- */
-/** The read that answers one target on its own page (an assignment's course overview, a quiz or questionnaire page). */
-function ownJob(api: MoodleApi, t: WebTarget, courses: Map<number, OverviewEntry[]>): () => Promise<Found> {
-  if (t.kind === 'assign') {
-    const entries: OverviewEntry[] = [{ cmid: t.cmid, kind: 'assign' }];
-    courses.set(t.courseId, entries);
-    return () => courseOverview(api, t.courseId, entries);
+/** One listing's planning: its plan and the course overview pages planned so far (their entries, by course). */
+interface Planning {
+  api: MoodleApi;
+  plan: Plan;
+  courses: Map<number, OverviewEntry[]>;
+}
+
+/** The read that answers one target on its own page (its course's overview page, a quiz or questionnaire page). */
+function ownJob(p: Planning, t: WebTarget): () => Promise<Found> {
+  const { api } = p;
+  if (p.plan.byCourse.has(t.kind)) {
+    const entries: OverviewEntry[] = [{ cmid: t.cmid, kind: t.kind }];
+    p.courses.set(t.courseId, entries);
+    return () => courseOverview(api, { courseId: t.courseId, types: p.plan.types }, entries);
   }
   return t.kind === 'quiz' ? () => quizStatus(api, t.cmid) : () => questionnaireStatus(api, t.cmid);
 }
 
-function plan(api: MoodleApi, targets: readonly WebTarget[]): Array<() => Promise<Found>> {
-  let left = Math.max(0, CLIENT_CALLS - api.callsMade - RESERVE);
+/**
+ * The reads that fit the plan and the budget, in target order: a target of a `byCourse` kind costs its course's
+ * overview page once; a quiz beyond the plan's quiz pages only joins an overview page planned anyway (never one of its
+ * own). Entries are collected before any job runs, so a later target joins an earlier page.
+ */
+function plan(api: MoodleApi, targets: readonly WebTarget[], mode: WebStatusMode): Array<() => Promise<Found>> {
+  const p: Planning = { api, plan: PLANS[mode], courses: new Map() };
+  let left = Math.min(p.plan.maxPages, Math.max(0, CLIENT_CALLS - api.callsMade - RESERVE));
   let quizPages = 0;
-  const courses = new Map<number, OverviewEntry[]>();
   const extraQuizzes: WebTarget[] = [];
   const jobs: Array<() => Promise<Found>> = [];
   for (const t of targets) {
-    const listed = t.kind === 'assign' ? courses.get(t.courseId) : undefined;
-    if (listed) listed.push({ cmid: t.cmid, kind: 'assign' });
-    else if (t.kind === 'quiz' && quizPages >= MAX_QUIZ_PAGES) extraQuizzes.push(t);
+    const listed = p.plan.byCourse.has(t.kind) ? p.courses.get(t.courseId) : undefined;
+    if (listed) listed.push({ cmid: t.cmid, kind: t.kind });
+    else if (t.kind === 'quiz' && quizPages >= p.plan.maxQuizPages) extraQuizzes.push(t);
     else if (left > 0) {
       left--;
       if (t.kind === 'quiz') quizPages++;
-      jobs.push(ownJob(api, t, courses));
+      jobs.push(ownJob(p, t));
     }
   }
-  for (const t of extraQuizzes) courses.get(t.courseId)?.push({ cmid: t.cmid, kind: 'quiz' });
+  for (const t of extraQuizzes) p.courses.get(t.courseId)?.push({ cmid: t.cmid, kind: 'quiz' });
   return jobs;
 }
 
-/** Statuses by cmid for the targets read (nearest first); targets left out of the budget are absent. */
+/** Statuses by cmid for the targets read (nearest first); targets left out of the plan or the budget are absent. */
 export async function readWebStatuses(
   api: MoodleApi,
   targets: readonly WebTarget[],
+  mode: WebStatusMode = 'full',
 ): Promise<Map<number, DueSubmission | null>> {
-  const found = await mapLimit(plan(api, targets), CONCURRENCY, (job) => job());
+  const found = await mapLimit(plan(api, targets, mode), CONCURRENCY, (job) => job());
   return new Map(found.flat());
 }

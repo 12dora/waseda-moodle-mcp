@@ -183,6 +183,17 @@ describe('refreshFromSession', () => {
     expect(cred?.sessionOkAt).toBeGreaterThan(5);
   });
 
+  it('a new session drops the busy mark of the old one; the same session keeps it', async () => {
+    const { store, deps } = setup();
+    const { user } = await connectFromSession(deps, { session: COOKIE_A, via: 'paste' });
+    const until = Date.now() + 60_000;
+    await store.updateCredentialStatus(user.id, { busyUntil: until });
+    await refreshFromSession(deps, { session: COOKIE_A });
+    expect(store.credentials.get(user.id)?.busyUntil).toBe(until);
+    await refreshFromSession(deps, { session: COOKIE_B });
+    expect(store.credentials.get(user.id)?.busyUntil).toBeNull();
+  });
+
   it('replaces the session after a new Moodle sign-in, so no reconnect is needed', async () => {
     const { store, deps } = setup();
     const { user } = await connectFromSession(deps, { session: COOKIE_A, via: 'paste' });

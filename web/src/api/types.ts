@@ -162,11 +162,13 @@ export type ConnectRequest =
 /**
  * A console read the server may answer from its stored copy (GET /api/due, /api/courses, /api/courses/overview,
  * /api/timetable, /api/updates, /api/syllabus): the answer as computed at `cachedAt`. `stale`: the server answered its
- * stored copy at once; ask again with refresh for the current answer.
+ * stored copy at once; ask again with refresh for the current answer. `busy`: the refresh was answered with the copy
+ * because Moodle is still working through earlier requests of the session (keep showing it).
  */
 export type Cached<T> = T & {
   cachedAt: IsoJst;
   stale: boolean;
+  busy?: true;
 };
 
 export interface CoursesResponse {

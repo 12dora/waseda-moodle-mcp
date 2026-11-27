@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MoodleError, NeedsReconnect, NotFound } from '../../src/core/errors';
+import { MoodleBusy, MoodleError, NeedsReconnect, NotFound } from '../../src/core/errors';
 import { getCourseOverview, getSyllabusSummary } from '../../src/core/services/course-overview';
 import { getDueItems } from '../../src/core/services/due';
 import { countDue } from '../../src/core/services/due-groups';
@@ -149,6 +149,7 @@ describe('getCourseOverview', () => {
       overdueDays: 30,
       sweep: 'cached',
       maxSubmissionChecks: 150,
+      webStatus: 'light',
     });
     expect(r.dueError).toBe(false);
     expect(r.scopeMode).toBe('mine');
@@ -321,6 +322,9 @@ describe('getCourseOverview', () => {
     await expect(getCourseOverview(t.ctx)).rejects.toBeInstanceOf(NeedsReconnect);
     vi.mocked(getDueItems).mockRejectedValue(new MoodleError('bad token', 'invalidtoken'));
     await expect(getCourseOverview(t.ctx)).rejects.toBeInstanceOf(MoodleError);
+    // a busy web session fails the answer (the console then keeps its stored copy) instead of an empty due list
+    vi.mocked(getDueItems).mockRejectedValue(new MoodleBusy(Date.now() + 60_000));
+    await expect(getCourseOverview(t.ctx)).rejects.toBeInstanceOf(MoodleBusy);
   });
 
   it('reads stored snapshots once for the due sweep and the updates', async () => {

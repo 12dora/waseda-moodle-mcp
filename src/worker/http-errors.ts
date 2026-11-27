@@ -1,7 +1,7 @@
 /** One WmmError -> HTTP mapping for every JSON error the Worker produces (console API and file routes). */
 
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { MoodleError, MoodleUnavailable, RateLimited, WmmError } from '../core/errors';
+import { MoodleBusy, MoodleError, MoodleUnavailable, RateLimited, WmmError } from '../core/errors';
 
 const STATUS_BY_CODE: Record<string, ContentfulStatusCode> = {
   unauthorized: 401,
@@ -14,6 +14,7 @@ const STATUS_BY_CODE: Record<string, ContentfulStatusCode> = {
   account_switch: 409,
   rate_limited: 429,
   moodle_unavailable: 502,
+  moodle_busy: 503,
   mail_unavailable: 502,
 };
 
@@ -23,9 +24,14 @@ function httpStatusFor(err: WmmError): ContentfulStatusCode {
 
 type ErrorBody = { code: string; message: string; retryAfter?: number; maintenance?: true; until?: string };
 
-/** Machine values the console turns into its own next step: the wait of a rate limit, Moodle's maintenance. */
+/**
+ * Machine values the console turns into its own next step: the wait of a rate limit or of a busy Moodle session
+ * (also sent as Retry-After), Moodle's maintenance.
+ */
 function details(err: WmmError): Partial<ErrorBody> {
-  if (err instanceof RateLimited && err.retryAfterSec) return { retryAfter: err.retryAfterSec };
+  if ((err instanceof RateLimited || err instanceof MoodleBusy) && err.retryAfterSec) {
+    return { retryAfter: err.retryAfterSec };
+  }
   if (err instanceof MoodleUnavailable && err.maintenance) {
     return err.until ? { maintenance: true, until: err.until } : { maintenance: true };
   }

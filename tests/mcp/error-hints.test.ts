@@ -4,6 +4,7 @@ import {
   Forbidden,
   InvalidInput,
   MailNeedsReconnect,
+  MoodleBusy,
   MoodleError,
   MoodleUnavailable,
   NeedsReconnect,
@@ -37,6 +38,12 @@ describe('explainError', () => {
     expect(RECONNECT_STDIO).toContain('waseda-moodle-mcp connect');
     const mail = explainError(new MailNeedsReconnect('Expired.'), { mode: 'stdio', publicUrl: '' });
     expect(mail).toBe('Expired. Ask the user to reconnect mail in the console (Settings → Mail), then try again.');
+  });
+
+  it('busy web session: Moodle is still working through earlier requests, try again in about a minute', () => {
+    expect(say(new MoodleBusy(Date.now() + 120_000), 'get_due_items')).toBe(
+      'Moodle is still working through earlier requests for this account. Try again in about a minute.',
+    );
   });
 
   it('no permission: hidden by the teacher or not enrolled, with the page to check', () => {

@@ -71,6 +71,15 @@ describe('errorText next steps', () => {
     expect(errorText(new ApiError(502, 'moodle_unavailable', 'x'), t)).toBe(en['error.moodle_unavailable']);
   });
 
+  it('a busy Moodle session (moodle_busy) reads calmly in every language: wait a minute', () => {
+    const busy = new ApiError(503, 'moodle_busy', 'x', body({ code: 'moodle_busy', retryAfter: 90 }));
+    expect(errorText(busy, t)).toBe(en['error.moodle_busy']);
+    for (const lang of LANGS) {
+      const text = DICTIONARIES[lang]['error.moodle_busy'];
+      expect(text.split(/[.。]/).filter((s) => s.trim()).length, lang).toBe(2);
+    }
+  });
+
   it('tells what to do next for the common codes in every language', () => {
     for (const lang of LANGS) {
       const d = DICTIONARIES[lang];

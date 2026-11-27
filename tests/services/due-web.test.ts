@@ -160,6 +160,75 @@ describe('attachSubmissions on the web channel', () => {
   });
 });
 
+describe('attachSubmissions light plan (the console course overview)', () => {
+  const lightOverview = (courseId: number) =>
+    `/course/overview.php?id=${courseId}&expand[]=assign&expand[]=questionnaire&expand[]=quiz`;
+  const responded = (cmid: number, value: string) => `<tr data-mdl-overview-cmid="${cmid}">
+<td class=" text-start" data-mdl-overview-item="name" data-mdl-overview-value="アンケート ${cmid}">x</td>
+<td class=" text-center" data-mdl-overview-item="responded" data-mdl-overview-value="${value}"> </td></tr>`;
+  const graded = (cmid: number, grade: string) => `<tr data-mdl-overview-cmid="${cmid}">
+<td data-mdl-overview-item="name" data-mdl-overview-value="小テスト ${cmid}">x</td>
+<td data-mdl-overview-item="評点" data-mdl-overview-value="${grade}"> ${grade || '-'} </td></tr>`;
+  const day = (d: number, time: string) => `2026-10-${String(d).padStart(2, '0')}T${time}:00+09:00`;
+
+  /** Course 9910<n>: a quiz (21:00), a questionnaire (22:00) and an assignment (23:59) due on 10-1<n>. */
+  function course(n: number): DueItem[] {
+    const courseId = 99100 + n;
+    return [
+      item({ kind: 'quiz', cmid: 7300 + n, courseId, dueAt: day(10 + n, '21:00') }),
+      item({ kind: 'questionnaire', cmid: 7400 + n, courseId, dueAt: day(10 + n, '22:00') }),
+      item({ cmid: 7200 + n, courseId, dueAt: day(10 + n, '23:59') }),
+    ];
+  }
+
+  it('reads at most 6 pages, nearest first: course overview pages answer assignments and questionnaires', async () => {
+    const pages = {
+      [lightOverview(99101)]: overview([row(7201, '提出なし'), responded(7401, '1')]),
+      [lightOverview(99102)]: overview([row(7202, '評定のために提出済み'), responded(7402, '0')]),
+      [lightOverview(99103)]: overview([row(7203, 'Draft (not submitted)'), responded(7403, '1'), graded(7303, '8')]),
+      [lightOverview(99104)]: overview([row(7204, '提出なし'), responded(7404, ''), graded(7304, '')]),
+    };
+    const { api, ctx } = setup({
+      pages,
+      handlers: {
+        mod_quiz_get_user_quiz_attempts: { attempts: [{ attempt: 1, state: 'inprogress', timefinish: 0 }] },
+        mod_quiz_get_attempt_access_information: { preventnewattemptreasons: [] },
+      },
+    });
+    const items = [1, 2, 3, 4, 5, 6, 7, 8].flatMap(course);
+    const out = byCmid(await attachSubmissions(ctx, items, { maxSubmissionChecks: 150, webStatus: 'light' }));
+
+    // 2 quiz pages + 4 course overview pages; no questionnaire page
+    const quizPages = new Set(api.calls.map((c) => c.hint?.cmid));
+    expect([...quizPages].sort()).toEqual([7301, 7302]);
+    expect([...api.pageCalls].sort()).toEqual([1, 2, 3, 4].map((n) => `GET ${lightOverview(99100 + n)}`).sort());
+    expect(out[7301]).toMatchObject({ status: 'in-progress' });
+    expect(out[7201]).toMatchObject({ status: 'none' });
+    const answered = { status: 'submitted', canContinue: false, submittedAt: null, graded: false, note: null };
+    expect(out[7401]).toEqual(answered);
+    expect(out[7202]).toMatchObject({ status: 'submitted' });
+    expect(out[7402]).toMatchObject({ status: 'none', canContinue: true });
+    expect(out[7203]).toMatchObject({ status: 'draft' });
+    expect(out[7303]).toMatchObject({ status: 'submitted', graded: true }); // joined its course's page
+    expect(out[7404]).toBeNull(); // no machine value
+    expect(out[7304]).toBeNull(); // no grade: unknown
+    for (const cmid of [7305, 7405, 7205, 7208, 7308, 7408]) expect(out[cmid]).toBeNull(); // beyond the 6 pages
+  });
+
+  it('the due list (full plan) reads far more pages for the same items', async () => {
+    const { api, ctx } = setup({
+      handlers: {
+        mod_quiz_get_user_quiz_attempts: { attempts: [] },
+        mod_quiz_get_attempt_access_information: { preventnewattemptreasons: [] },
+      },
+    });
+    await attachSubmissions(ctx, [1, 2, 3, 4, 5, 6, 7, 8].flatMap(course), { maxSubmissionChecks: 150 });
+    const quizPages = new Set(api.calls.map((c) => c.hint?.cmid)).size;
+    // 6 quiz pages + 8 questionnaire pages + 8 course overview pages
+    expect(quizPages + api.pageCalls.length).toBe(22);
+  });
+});
+
 describe('callBatch on the web channel', () => {
   it('runs every request through the client with its hint; a failing one fails alone', async () => {
     const api = makeWebApi({

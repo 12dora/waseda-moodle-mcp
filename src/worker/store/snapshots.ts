@@ -32,6 +32,9 @@ type SnapshotMethods = Pick<
   | 'setScopeCourseIds'
 >;
 
+/** listSweepUsers without `quiet`: every stamp passes. */
+const NOT_QUIET = { now: Number.MAX_SAFE_INTEGER, usedAfter: Number.MAX_SAFE_INTEGER };
+
 /** D1 allows 100 bound variables per statement. */
 const SYLLABUS_IN_CHUNK = 50;
 
@@ -91,20 +94,23 @@ export function snapshotMethods(db: D1Database): SnapshotMethods {
 
     /**
      * Users whose credential works now (isUsable: a web session, or an active token while the site's mobile service
-     * is on): never-swept first, then the least recently swept; the stamp is set even when a sweep failed.
+     * is on): never-swept first, then the least recently swept; the stamp is set even when a sweep failed. `quiet`
+     * (0017) leaves out users whose requests take the web session while it is marked busy at `now` or was used by a
+     * request after `usedAfter` (a usable token is never held back).
      */
-    async listSweepUsers(limit) {
+    async listSweepUsers(limit, quiet = NOT_QUIET) {
       const { results } = await db
         .prepare(
           `SELECT u.* FROM users u
            JOIN credentials c ON c.user_id = u.id
-           WHERE c.session_enc IS NOT NULL
-              OR (c.status = 'active' AND c.token_enc IS NOT NULL
+           WHERE (c.status = 'active' AND c.token_enc IS NOT NULL
                   AND (SELECT value FROM site_state WHERE key = 'mobile_service') = '1')
+              OR (c.session_enc IS NOT NULL
+                  AND COALESCE(c.busy_until, 0) <= ? AND COALESCE(c.session_used_at, 0) <= ?)
            ORDER BY u.last_swept_at ASC NULLS FIRST, u.id ASC
            LIMIT ?`,
         )
-        .bind(Math.max(1, Math.floor(limit)))
+        .bind(quiet.now, quiet.usedAfter, Math.max(1, Math.floor(limit)))
         .all<UserRaw>();
       return results.map(toUser);
     },

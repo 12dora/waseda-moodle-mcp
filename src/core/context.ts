@@ -130,6 +130,8 @@ export interface CredentialRow {
   sessionTriedAt?: number | null; // a keepalive attempt with it last failed (not ended: unreachable, odd answer)
   renewedAt?: number | null; // a new token was last stored automatically
   autologinAt?: number | null; // last attempt to open a session with the private token
+  busyUntil?: number | null; // a session request ran out of time: it counts as busy until then (MoodleBusy)
+  sessionUsedAt?: number | null; // a console / MCP request last used the session (stamped at most once a minute)
 }
 
 /** Credential fields a patch may change: all but the owner (a reconnect also sets the connection's origin). */
@@ -140,6 +142,7 @@ export interface CredentialExpect {
   tokenHash?: string | null; // null = no token
   sessionEnc?: string | null; // the encrypted cookie as read (null = no session)
   autologinAt?: number | null;
+  busyUntil?: number | null;
 }
 
 /** A credential whose web session the keepalive should visit, with its owner. */
@@ -369,8 +372,11 @@ export interface Store extends MailAccessMethods {
   // public syllabus cache (global, keyed by Moodle course idnumber; json = SyllabusInfo or "null" for "no syllabus")
   getSyllabusCache(idnumbers: string[]): Promise<Map<string, { json: string; fetchedAt: number }>>;
   putSyllabusCache(idnumber: string, json: string, fetchedAt: number): Promise<void>;
-  /** Users with an active credential, for the scheduled sweep (never swept first, then least recently swept). */
-  listSweepUsers(limit: number): Promise<UserRow[]>;
+  /**
+   * Users with an active credential, for the scheduled sweep (never swept first, then least recently swept). `quiet`
+   * leaves out users served by the web session while it is busy at `now` or was used by a request after `usedAfter`.
+   */
+  listSweepUsers(limit: number, quiet?: { now: number; usedAfter: number }): Promise<UserRow[]>;
   /** Stamps the user's last scheduled-sweep attempt (also after a failure or with an empty scope). */
   markSwept(userId: number, at: number): Promise<void>;
   /** Remembers the course ids an interactive call resolved as the scope; writes only when the list changed. */

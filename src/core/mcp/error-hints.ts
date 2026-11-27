@@ -9,6 +9,7 @@ import type { ServiceContext } from '../context';
 import {
   BudgetExceeded,
   MailNeedsReconnect,
+  MoodleBusy,
   MoodleError,
   MoodleUnavailable,
   NeedsReconnect,
@@ -176,6 +177,7 @@ function budgetStep(t: HintTarget): string {
 function classStep(e: WmmError, t: HintTarget): string | null {
   if (e instanceof NeedsReconnect) return reconnectStep(e, t);
   if (e instanceof MoodleUnavailable) return unavailableStep(e);
+  if (e instanceof MoodleBusy) return 'Try again in about a minute.';
   if (e instanceof BudgetExceeded) return budgetStep(t);
   if (e instanceof RateLimited) {
     return `Wait ${e.retryAfterSec ? waitText(e.retryAfterSec) : 'a minute'} and try again.`;

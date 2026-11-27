@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { InvocationBudget } from '../../../src/core/budget';
-import { BudgetExceeded, InvalidInput, MoodleError, MoodleUnavailable, NeedsReconnect } from '../../../src/core/errors';
+import {
+  BudgetExceeded,
+  InvalidInput,
+  MoodleBusy,
+  MoodleError,
+  MoodleUnavailable,
+  NeedsReconnect,
+} from '../../../src/core/errors';
 import { AJAX_FUNCTIONS } from '../../../src/core/moodle/web/ajax-functions';
 import { WebMoodleClient, type WebMoodleClientOptions } from '../../../src/core/moodle/web/client';
 import type { WebSession } from '../../../src/core/moodle/web/types';
@@ -111,6 +118,76 @@ describe('WebMoodleClient.call', () => {
     const small = setup(ajaxOk, { maxCalls: 1 });
     await small.client.call('core_session_touch');
     await expect(small.client.call('core_session_time_remaining')).rejects.toBeInstanceOf(BudgetExceeded);
+  });
+});
+
+describe('WebMoodleClient session-busy breaker', () => {
+  /** A Moodle that never answers within the deadline (the request stays queued behind the session lock). */
+  const hanging: Handler = (_url, init) =>
+    new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(new Error('aborted'))));
+
+  function slow(handler: Handler, extra: Partial<WebMoodleClientOptions> = {}) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      handler(new URL(String(input)), init ?? {}),
+    );
+    const onBusy = vi.fn();
+    const onSuccess = vi.fn();
+    const client = new WebMoodleClient({
+      session: {
+        cookie: COOKIE,
+        sesskey: 'Key0000001',
+        baseUrl: BASE,
+        fetch: fetchMock as unknown as typeof fetch,
+        timeoutMs: 5,
+      },
+      moodleUserId: 7001,
+      onBusy,
+      onSuccess,
+      ...extra,
+    });
+    return { client, fetchMock, onBusy, onSuccess };
+  }
+
+  it('a timed-out request marks the session busy for 2 minutes; later requests fail fast without a request', async () => {
+    const { client, fetchMock, onBusy } = slow(hanging);
+    const before = Date.now();
+    await expect(client.call('core_session_touch')).rejects.toBeInstanceOf(MoodleUnavailable);
+    expect(onBusy).toHaveBeenCalledTimes(1);
+    const until = onBusy.mock.calls[0]?.[0] as number;
+    expect(until - before).toBeGreaterThanOrEqual(120_000);
+    expect(until - Date.now()).toBeLessThanOrEqual(120_000);
+
+    const calls = client.callsMade;
+    const busy = await client.call('mod_assign_get_assignments', {}, { cmid: 7001 }).catch((e: unknown) => e);
+    expect(busy).toBeInstanceOf(MoodleBusy);
+    expect(busy).toMatchObject({ code: 'moodle_busy', retryAfterSec: 120 });
+    await expect(client.fetchFile(`${BASE}/pluginfile.php/1/mod_resource/content/0/a.pdf`)).rejects.toBeInstanceOf(
+      MoodleBusy,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(client.callsMade).toBe(calls); // nothing charged either
+  });
+
+  it('honours a stored mark: busy until then, normal after it', async () => {
+    const busy = slow(ajaxOk, { busyUntil: Date.now() + 30_000 });
+    const e = await busy.client.call('core_course_get_recent_courses').catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(MoodleBusy);
+    expect((e as MoodleBusy).retryAfterSec).toBeGreaterThan(25);
+    expect((e as MoodleBusy).retryAfterSec).toBeLessThanOrEqual(30);
+    expect(busy.fetchMock).not.toHaveBeenCalled();
+    expect(busy.onSuccess).not.toHaveBeenCalled();
+
+    const over = slow(ajaxOk, { busyUntil: Date.now() - 1 });
+    await expect(over.client.call('core_course_get_recent_courses')).resolves.toBeDefined();
+    expect(over.onSuccess).toHaveBeenCalledTimes(1);
+    expect(over.onBusy).not.toHaveBeenCalled();
+  });
+
+  it('a failure that is not a timeout does not mark the session busy', async () => {
+    const { client, onBusy } = slow(() => new Response('oops', { status: 503 }));
+    await expect(client.call('core_session_touch')).rejects.toBeInstanceOf(MoodleUnavailable);
+    await expect(client.call('core_session_touch')).rejects.toBeInstanceOf(MoodleUnavailable);
+    expect(onBusy).not.toHaveBeenCalled();
   });
 });
 

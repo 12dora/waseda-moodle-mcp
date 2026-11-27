@@ -534,6 +534,7 @@ export const en = {
   'error.moodle_maintenanceUntil':
     'Waseda Moodle is under maintenance (until about {until} JST, according to its notice). Try again after that.',
   'error.moodle_maintenance': 'Waseda Moodle is under maintenance. Try again after the maintenance ends.',
+  'error.moodle_busy': 'Moodle is still working through earlier requests. Try again in a minute.',
   'error.budget_exceeded':
     'This request needs too many Moodle calls at once. Narrow it (one course or fewer days) and try again.',
 

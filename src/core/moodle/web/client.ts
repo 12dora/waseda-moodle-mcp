@@ -6,7 +6,7 @@
 
 import type { InvocationBudget } from '../../budget';
 import type { CallHint, DraftUploadResult, MoodleApi, MoodleChannel } from '../../context';
-import { InvalidInput, MoodleError, MoodleUnavailable } from '../../errors';
+import { InvalidInput, MoodleBusy, MoodleError, MoodleUnavailable } from '../../errors';
 import { CallLedger, isWriteCall, memoKey } from '../client';
 import { randomDraftItemId, sessionFileUrl, type UploadFile } from '../wire';
 import { AJAX_FUNCTIONS } from './ajax-functions';
@@ -16,13 +16,24 @@ import type { WebSession } from './types';
 import { uploadViaRepository } from './upload';
 
 export interface WebMoodleClientOptions {
-  session: Omit<MoodleWebSessionOptions, 'charge' | 'moodleUserId'>;
+  session: Omit<MoodleWebSessionOptions, 'charge' | 'moodleUserId' | 'onTimeout'>;
   moodleUserId: number;
   maxCalls?: number; // default 40
   /** The invocation's shared allowance: every request is charged to it as well. */
   budget?: InvocationBudget;
   onSuccess?: () => void;
+  /** The session's busy mark as stored (epoch ms, see MoodleBusy): until then every request fails fast. */
+  busyUntil?: number | null;
+  /** A request ran out of time: the session is busy until `until` (store the mark). Best effort. */
+  onBusy?: (until: number) => void;
 }
+
+/**
+ * How long a session counts as busy after one of its requests ran out of time. Moodle serialises the requests of one
+ * session and keeps running a request we gave up on; whatever is sent meanwhile only queues behind it (measured
+ * 2026-11-27: a backlog like that kept every request of the session timing out for over 10 minutes).
+ */
+const SESSION_BUSY_MS = 120_000;
 
 type FileInit = { method?: 'GET' | 'HEAD'; range?: string };
 
@@ -50,11 +61,15 @@ export class WebMoodleClient implements MoodleApi {
   }
   private readonly ledger: CallLedger;
   private readonly onSuccess?: () => void;
+  private readonly onBusy?: (until: number) => void;
   private succeeded = false;
+  private busyUntil: number;
 
   constructor(opts: WebMoodleClientOptions) {
     this.moodleUserId = opts.moodleUserId;
     this.onSuccess = opts.onSuccess;
+    this.onBusy = opts.onBusy;
+    this.busyUntil = opts.busyUntil ?? 0;
     this.ledger = new CallLedger({
       maxCalls: opts.maxCalls,
       budget: opts.budget,
@@ -63,8 +78,27 @@ export class WebMoodleClient implements MoodleApi {
     this.session = new MoodleWebSession({
       ...opts.session,
       moodleUserId: opts.moodleUserId,
-      charge: () => this.ledger.spend(),
+      charge: () => {
+        this.checkBusy();
+        this.ledger.spend();
+      },
+      onTimeout: () => this.noteTimeout(),
     });
+  }
+
+  /** Before every request: while the session is busy it fails fast (MoodleBusy), without a request or a charge. */
+  private checkBusy(): void {
+    if (this.busyUntil > Date.now()) throw new MoodleBusy(this.busyUntil);
+  }
+
+  /** A request ran out of time: the session is busy for a while, for this client and (onBusy) for later ones. */
+  private noteTimeout(): void {
+    this.busyUntil = Date.now() + SESSION_BUSY_MS;
+    try {
+      this.onBusy?.(this.busyUntil);
+    } catch {
+      /* best effort */
+    }
   }
 
   get baseUrl(): string {

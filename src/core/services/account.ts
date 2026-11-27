@@ -206,6 +206,7 @@ async function storeSession(
     sesskeyEnc: await deps.key.encrypt(found.sesskey),
     sessionOkAt: now,
     sessionTriedAt: null,
+    busyUntil: changed ? null : undefined, // a new session has no backlog at Moodle
     ...confirmed(now),
     ...(changed || !opts.silent ? origin : {}),
   });

@@ -7,12 +7,14 @@ interface MaybeStale {
 
 /**
  * The answer to show once the background refresh settled: `first` when it is already fresh, else the refreshed one.
- * A failed refresh keeps `first` (the stored copy stays; nothing alarming is shown).
+ * A failed refresh keeps `first` (the stored copy stays; nothing alarming is shown), and so does a refresh the server
+ * answered with its stored copy again (`stale`, e.g. `busy`: Moodle is still working through earlier requests).
  */
 export async function revalidate<T extends MaybeStale>(first: T, refresh: () => Promise<T>): Promise<T> {
   if (!first.stale) return first;
   try {
-    return await refresh();
+    const next = await refresh();
+    return next.stale ? first : next;
   } catch {
     return first;
   }

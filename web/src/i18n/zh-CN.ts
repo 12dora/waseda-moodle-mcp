@@ -520,6 +520,7 @@ export const zhCN: Dictionary = {
   'error.moodle_unavailable': '暂时无法访问 Waseda Moodle，可能正在繁忙或维护中。请几分钟后重试。',
   'error.moodle_maintenanceUntil': 'Waseda Moodle 正在维护（据公告约至 {until}）。请在此之后重试。',
   'error.moodle_maintenance': 'Waseda Moodle 正在维护。请在维护结束后重试。',
+  'error.moodle_busy': 'Moodle 仍在处理之前的请求。请约一分钟后重试。',
   'error.budget_exceeded': '此请求一次需要调用 Moodle 的次数过多。请缩小范围（单门课程或更短的时间段）后重试。',
 
   'stats.title': '使用统计',
