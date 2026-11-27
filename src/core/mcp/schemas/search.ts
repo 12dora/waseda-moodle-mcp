@@ -16,5 +16,13 @@ export const forumSearchOut = z.looseObject({
   /** null = messages were not requested. */
   messages: list({ name: z.string(), text: z.string(), fromMe: z.boolean() }).nullable(),
   messagesNote: z.string().nullable(),
-  bodyNote: z.string().optional(),
+  /** Web channel: Moodle's own search over every post was used (courses searched / left out / cut, Advanced Forums). */
+  fullText: z
+    .looseObject({
+      courses: z.number(),
+      skippedCourses: z.number(),
+      cutCourses: z.number(),
+      advancedForums: z.number(),
+    })
+    .optional(),
 });

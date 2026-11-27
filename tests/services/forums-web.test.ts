@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CallHint } from '../../src/core/context';
 import { MoodleError } from '../../src/core/errors';
+import { renderForumSearch } from '../../src/core/mcp/render/forums';
 import { listCourses } from '../../src/core/services/courses';
 import { listDiscussions } from '../../src/core/services/forums-list';
 import { searchForums } from '../../src/core/services/forums-search';
 import { createTestContext } from '../helpers/fake-context-be4';
-import { makeWebApi, type WebApi } from './web-channel';
+import { fixture, makeWebApi, type WebApi } from './web-channel';
 
 /** Web channel: forum listing and search find the forum courses from the course structure and stay in budget. */
 
@@ -83,12 +83,8 @@ const discussion = (id: number, subject: string, message: string | null): Raw =>
   numreplies: 0,
 });
 
-/** One discussion per forum; the first post only with the `messages` hint (as the web adapter answers). */
-const BODIES: Record<number, { subject: string; body: string }> = {
-  8001: { subject: '休講のお知らせ', body: '<p>来週の midterm は延期します。</p>' },
-  8002: { subject: 'Midterm questions', body: '<p>Ask here.</p>' },
-  8101: { subject: 'Welcome', body: '<p>See the midterm schedule.</p>' },
-};
+/** One discussion per forum (the web channel lists no first posts). */
+const SUBJECTS: Record<number, string> = { 8001: '休講のお知らせ', 8002: 'Midterm questions', 8101: 'Welcome' };
 
 function siteApi(over: { spent?: number; handlers?: Raw } = {}): WebApi {
   return makeWebApi({
@@ -98,9 +94,9 @@ function siteApi(over: { spent?: number; handlers?: Raw } = {}): WebApi {
       mod_forum_get_forums_by_courses: (p: Raw) =>
         FORUMS.filter((f) => (p.courseids as number[]).includes(f.course as number)),
       mod_hsuforum_get_forums_by_courses: [],
-      mod_forum_get_forum_discussions: (p: Raw, hint?: CallHint) => {
-        const d = BODIES[p.forumid as number];
-        return { discussions: d ? [discussion(p.forumid as number, d.subject, hint?.messages ? d.body : null)] : [] };
+      mod_forum_get_forum_discussions: (p: Raw) => {
+        const subject = SUBJECTS[p.forumid as number];
+        return { discussions: subject ? [discussion(p.forumid as number, subject, null)] : [] };
       },
       ...over.handlers,
     },
@@ -155,35 +151,102 @@ describe('listDiscussions on the web channel', () => {
   });
 });
 
+// ------------------------------------------------------------------ search: Moodle's search page per course
+
+const QUERY = encodeURIComponent('レポート');
+const searchPath = (course: number, page = 0) =>
+  `/mod/forum/search.php?id=${course}&search=${QUERY}&perpage=20${page ? `&page=${page}` : ''}`;
+
+const SEARCH_PAGES = {
+  [searchPath(99101)]: fixture('forum-search-ja.html'),
+  [searchPath(99101, 1)]: fixture('forum-search-page2-ja.html'),
+  [searchPath(99102)]: fixture('forum-search-empty-ja.html'),
+};
+
+/** The site plus the search pages and 99101's Advanced Forum (one discussion whose subject matches). */
+function searchApi(over: { spent?: number } = {}): WebApi {
+  return makeWebApi({
+    spent: over.spent,
+    pages: SEARCH_PAGES,
+    handlers: {
+      core_courseformat_get_state: (p: Raw) => STATES[p.courseid as number] ?? state([]),
+      mod_forum_get_forums_by_courses: (p: Raw) =>
+        FORUMS.filter((f) => (p.courseids as number[]).includes(f.course as number)),
+      mod_forum_get_forum_discussions: () => {
+        throw new Error('the web search reads no discussion lists of standard forums');
+      },
+      mod_hsuforum_get_forums_by_courses: [forum(8009, 7009, 99101)],
+      mod_hsuforum_get_forum_discussions_paginated: { discussions: [discussion(8009, 'レポート提出の確認', null)] },
+    },
+  });
+}
+
 describe('searchForums on the web channel', () => {
-  it('searches first posts only of untracked forums and says which were searched by subject', async () => {
-    const api = siteApi();
-    const r = await searchForums(contextWith(api), { query: 'midterm' });
-    const hints = Object.fromEntries(
-      callsTo(api, 'mod_forum_get_forum_discussions').map((c) => [c.params.forumid, c.hint?.messages === true]),
+  it("uses Moodle's search page per course: every post, one hit per discussion, no discussion lists", async () => {
+    const api = searchApi();
+    const r = await searchForums(contextWith(api), { query: 'レポート' });
+    // 99103 has no visible forum: not searched; 99101 has more results and fewer than 20 matched: page 2
+    const gets = [searchPath(99101), searchPath(99102), searchPath(99101, 1)].map((p) => `GET ${p}`);
+    expect(api.pageCalls).toEqual(gets);
+    // the structures are read once, also for the Advanced Forum scan
+    expect(callsTo(api, 'core_courseformat_get_state')).toHaveLength(3);
+    expect(callsTo(api, 'mod_forum_get_forums_by_courses')).toHaveLength(0);
+    expect(r.hits.map((h) => h.discussionId).sort()).toEqual([5001, 5002, 5003, 8009]);
+    const thread = r.hits.find((h) => h.discussionId === 5001);
+    expect(thread).toMatchObject({
+      forumType: 'forum',
+      forumCmid: 7002,
+      forumName: '質問コーナー',
+      courseName: '総合日本語３Ｘ',
+      subject: '期末レポートについて',
+      author: '鈴木花子',
+      postId: 6003,
+      firstPostId: 6001,
+      matchingPosts: 2,
+      replies: null,
+      inSubject: true,
+      createdAt: '2026-11-18T09:00:00+09:00',
+      modifiedAt: '2026-11-20T10:38:31+09:00',
+    });
+    expect(thread?.snippet).toContain('レポートの長さは自由です。');
+    const late = r.hits.find((h) => h.discussionId === 5002);
+    expect(late?.inSubject).toBe(false);
+    expect(late?.snippet).toMatch(/^…はじめに。.*参考文献はレポートの最後に書きます。& 以上$/);
+    expect(r.hits.find((h) => h.discussionId === 8009)).toMatchObject({ forumType: 'hsuforum', replies: 0 });
+    expect(r.fullText).toEqual({ courses: 2, skippedCourses: 0, cutCourses: 0, advancedForums: 1 });
+    expect(r).not.toHaveProperty('bodyNote');
+  });
+
+  it('reads no second page once enough discussions matched and says which courses had more', async () => {
+    const api = searchApi();
+    const r = await searchForums(contextWith(api), { query: 'レポート', limit: 2 });
+    expect(api.pageCalls).toEqual([`GET ${searchPath(99101)}`, `GET ${searchPath(99102)}`]);
+    expect(r.hits).toHaveLength(2);
+    expect(r.fullText).toMatchObject({ courses: 2, cutCourses: 1 });
+  });
+
+  it('searches one course with course_id and leaves courses out when the budget runs short', async () => {
+    const one = searchApi();
+    const r = await searchForums(contextWith(one), { query: 'レポート', courseId: 99102 });
+    expect(one.pageCalls).toEqual([`GET ${searchPath(99102)}`]);
+    expect(r.hits).toEqual([]);
+    const empty = 'No forum posts match "レポート" (Moodle\'s search over every post of 1 course).';
+    expect(renderForumSearch(r)).toContain(empty);
+    // 32 spent + 3 structure reads: 1 left, one search page; nothing left for the Advanced Forum
+    const tight = searchApi({ spent: 32 });
+    const t = await searchForums(contextWith(tight), { query: 'レポート' });
+    expect(tight.pageCalls).toEqual([`GET ${searchPath(99101)}`]);
+    expect(t.fullText).toEqual({ courses: 1, skippedCourses: 1, cutCourses: 1, advancedForums: 0 });
+    expect(t.skippedForums).toBe(1);
+  });
+
+  it('renders a search page hit with its newest matching post and no forum_id', async () => {
+    const r = await searchForums(contextWith(searchApi()), { query: 'レポート' });
+    const text = renderForumSearch(r);
+    expect(text).toContain('- 期末レポートについて — newest match 鈴木花子, ');
+    expect(text).toContain(
+      '2 matching posts — 質問コーナー / 総合日本語３Ｘ (discussion_id 5001, post_id 6003, cmid 7002)',
     );
-    // 8002 is tracked: reading its first posts would mark them read
-    expect(hints).toEqual({ 8001: true, 8002: false, 8101: true });
-    expect(r.hits.map((h) => h.discussionId).sort()).toEqual([8001, 8002, 8101]);
-    const subjectHit = r.hits.find((h) => h.discussionId === 8002);
-    expect(subjectHit?.snippet).toBe('Midterm questions');
-    expect(r.hits.find((h) => h.discussionId === 8001)?.snippet).toContain('midterm は延期');
-    expect(r.bodyNote).toContain('1 forum was searched by subject only');
-  });
-
-  it('reads the likely announcement forums (first forum of section 0) first', async () => {
-    const api = siteApi();
-    await searchForums(contextWith(api), { query: 'midterm' });
-    const order = callsTo(api, 'mod_forum_get_forum_discussions').map((c) => c.params.forumid);
-    expect(order.slice(0, 2).sort()).toEqual([8001, 8101]);
-    expect(order[2]).toBe(8002);
-  });
-
-  it('reads no first posts when the budget has no room for them', async () => {
-    // 2 left after the structures: 99102's forum list and its forum read, none for first posts (99101 left out)
-    const api = siteApi({ spent: 31 });
-    const r = await searchForums(contextWith(api), { query: 'welcome' });
-    expect(callsTo(api, 'mod_forum_get_forum_discussions').every((c) => c.hint?.messages !== true)).toBe(true);
-    expect(r.bodyNote).toMatch(/searched by subject only/);
+    expect(text).not.toContain('forum_id 0');
   });
 });

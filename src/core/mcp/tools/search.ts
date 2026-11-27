@@ -8,8 +8,8 @@ const searchForumsTool = defineTool({
   name: 'search_forums',
   title: 'Search forums',
   description:
-    'Finds forum discussions by keyword in the subject or the first post, across the forums of the current courses (or one course). ' +
-    'All words must occur (any case); only the newest discussions of each forum are searched, announcements first. ' +
+    "Finds forum posts by keyword across the forums of the current courses (or one course), through Moodle's own forum search: every post, replies included, and nothing is marked read. " +
+    'All words must occur (any case); each discussion is listed once, with its newest matching post. Advanced Forum (hsuforum) is searched by the subjects of its newest discussions only. ' +
     'Open a result with get_discussion using its forum_type and discussion_id. ' +
     'Set include_messages to also search the private messages (best effort).',
   annotations: READ_HINTS,

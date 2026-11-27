@@ -223,19 +223,56 @@ function messageEntries(r: ForumSearchResult): Entry[] {
   return [{ text: '' }, { text: 'Messages (open with get_conversation, answer with prepare_message):' }, ...body];
 }
 
+type SearchHit = ForumSearchResult['hits'][number];
+
+/**
+ * A search hit: the discussion line; a hit of Moodle's own search (web channel: posts, no discussion counts) names
+ * its newest matching post instead.
+ */
+function hitLine(d: SearchHit): string {
+  if (d.replies !== null) return discussionLine({ ...d, replies: d.replies });
+  const more = (d.matchingPosts ?? 1) > 1 ? `, ${d.matchingPosts} matching posts` : '';
+  const where = `${oneLine(d.forumName, 50)} / ${oneLine(d.courseName, 50)}`;
+  const ids = [
+    `discussion_id ${d.discussionId}`,
+    d.postId ? `post_id ${d.postId}` : null,
+    d.forumCmid ? `cmid ${d.forumCmid}` : null,
+  ];
+  const match = `newest match ${oneLine(d.author, 40)}, ${fmt(d.modifiedAt)}${more}`;
+  return `- ${oneLine(d.subject, 90)} — ${match} — ${where} (${ids.filter(Boolean).join(', ')})`;
+}
+
+/** What Moodle's own search (web channel) left out. */
+function fullTextNotes(r: ForumSearchResult): string[] {
+  const f = r.fullText;
+  if (!f) return [];
+  const notes: [number, string][] = [
+    [f.skippedCourses, `${plural(f.skippedCourses, 'course')} not searched (call budget or refused); pass course_id.`],
+    [f.cutCourses, `${plural(f.cutCourses, 'course')} with more matching posts than were read; add words.`],
+    [f.advancedForums, `${plural(f.advancedForums, 'Advanced Forum')}: newest ${r.perForum} discussion subjects only.`],
+  ];
+  return notes.filter(([n]) => n > 0).map(([, note]) => `(${note})`);
+}
+
+function emptyHead(r: ForumSearchResult, query: string): string {
+  const courses = r.fullText ? plural(r.fullText.courses, 'course') : null;
+  if (courses) return `No forum posts match "${query}" (Moodle's search over every post of ${courses}).`;
+  return `No discussions match "${query}" in the newest ${r.perForum} discussions of each forum.`;
+}
+
 export function renderForumSearch(r: ForumSearchResult): string {
   const query = oneLine(r.query, 60);
   const found = r.hits.length > 0;
   const head = [
     found
       ? `${plural(r.hits.length, 'discussion')} matching "${query}" (best first; open one with get_discussion):`
-      : `No discussions match "${query}" in the newest ${r.perForum} discussions of each forum.`,
+      : emptyHead(r, query),
   ];
   const footer = [
     ...(r.skippedForums > 0 ? [`(${plural(r.skippedForums, 'forum')} not searched; pass course_id to narrow.)`] : []),
+    ...fullTextNotes(r),
     ...(r.messagesNote ? [`(${r.messagesNote})`] : []),
-    ...(r.bodyNote ? [`(${r.bodyNote})`] : []),
   ];
-  const hits = r.hits.map((d) => ({ text: `${discussionLine(d)}\n  > ${oneLine(d.snippet, 180)}`, item: true }));
+  const hits = r.hits.map((d) => ({ text: `${hitLine(d)}\n  > ${oneLine(d.snippet, 180)}`, item: true }));
   return assemble({ head, entries: [...hits, ...messageEntries(r)], footer, hint: 'lower limit or pass course_id' });
 }

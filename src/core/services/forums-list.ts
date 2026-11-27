@@ -83,7 +83,7 @@ export interface ForumScope {
 }
 
 /** One course's forum activities from its structure; counts null when the structure could not be read. */
-interface CourseForums {
+export interface CourseForums {
   courseId: number;
   forums: number | null;
   hsuforums: number | null;
@@ -148,15 +148,34 @@ const unreadable = (e: unknown) => {
   throw e;
 };
 
-/**
- * Web channel: every forum list costs a page per course and type, so read the courses' structure first (one ajax
- * batch) and list only the types each course has, as far as the call budget allows.
- */
-async function webScope(api: MoodleApi, courseIds: number[]): Promise<ForumScope> {
+/** Web channel: the forum activities of each course from its structure (one ajax batch for all courses). */
+export async function courseStructures(api: MoodleApi, courseIds: number[]): Promise<CourseForums[]> {
   const states = await Promise.all(
     courseIds.map((courseid) => api.call<unknown>('core_courseformat_get_state', { courseid }).catch(unreadable)),
   );
-  const courses = courseIds.map((id, i) => courseForums(id, states[i]));
+  return courseIds.map((id, i) => courseForums(id, states[i]));
+}
+
+/** A course's counts with the types not asked for set to none. */
+const onlyTypes = (c: CourseForums, types: ForumType[]): CourseForums => ({
+  ...c,
+  forums: types.includes('forum') ? c.forums : 0,
+  hsuforums: types.includes('hsuforum') ? c.hsuforums : 0,
+});
+
+/** Which forum types to list; `structures`: the courses' structures when the caller has read them (web channel). */
+interface ScopeOptions {
+  types?: ForumType[];
+  structures?: CourseForums[];
+}
+
+/**
+ * Web channel: every forum list costs a page per course and type, so read the courses' structure first (one ajax
+ * batch, unless given) and list only the types each course has, as far as the call budget allows.
+ */
+async function webScope(api: MoodleApi, courseIds: number[], opts: ScopeOptions): Promise<ForumScope> {
+  const types = opts.types ?? ['forum', 'hsuforum'];
+  const courses = (opts.structures ?? (await courseStructures(api, courseIds))).map((c) => onlyTypes(c, types));
   const plan = planScope(courses, webCallsLeft(api));
   const [forums, hsuforums] = await Promise.all([
     fetchForums(api, 'forum', plan.forum),
@@ -166,10 +185,10 @@ async function webScope(api: MoodleApi, courseIds: number[]): Promise<ForumScope
   return { refs: [...forums, ...hsuforums], skipped: plan.skipped, likelyNews: new Set(news) };
 }
 
-/** Standard and Advanced Forums of the courses (see webScope for the web channel). */
-export async function forumsInScope(api: MoodleApi, courseIds: number[]): Promise<ForumScope> {
-  if (api.channel === 'web' && courseIds.length > 0) return webScope(api, courseIds);
-  const refs = await fetchForumsOfTypes(api, ['forum', 'hsuforum'], courseIds);
+/** Standard and/or Advanced Forums of the courses (see webScope for the web channel). */
+export async function forumsInScope(api: MoodleApi, courseIds: number[], opts: ScopeOptions = {}): Promise<ForumScope> {
+  if (api.channel === 'web' && courseIds.length > 0) return webScope(api, courseIds, opts);
+  const refs = await fetchForumsOfTypes(api, opts.types ?? ['forum', 'hsuforum'], courseIds);
   return { refs, skipped: 0, likelyNews: new Set() };
 }
 
