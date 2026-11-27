@@ -4,6 +4,7 @@
  */
 
 import type { MailAccessMethods } from './mail/access';
+import type { WebSession } from './moodle/web/types';
 import type {
   ActionKind,
   ActionStatus,
@@ -24,23 +25,48 @@ export interface DraftUploadResult {
   filesize: number;
 }
 
+/** 'ws': mobile web service (token REST). 'web': the Moodle web session (ajax + pages, emulating the WS answers). */
+export type MoodleChannel = 'ws' | 'web';
+
+/**
+ * Out-of-band facts a caller already knows; the web service ignores them. Web channel: `cmid` reads one activity
+ * instead of a whole course; `messages` asks a discussion list for the first posts' bodies too.
+ */
+export interface CallHint {
+  cmid?: number;
+  messages?: boolean;
+}
+
 export interface MoodleApi {
   readonly baseUrl: string; // https://wsdmoodle.waseda.jp
   readonly moodleUserId: number;
   /** Calls made so far in this request (budget accounting). */
   readonly callsMade: number;
   /**
-   * REST call (POST form-encoded, PHP array encoding for nested params, wstoken in the body).
-   * Read functions are memoised per request by (fn, params). Throws MoodleError / NeedsReconnect /
-   * MoodleUnavailable / BudgetExceeded.
+   * Requests so far that may have changed Moodle (write calls; on 'web' every form POST, upload and ajax batch with a
+   * write), not counting ones Moodle refused for the credential. Grows monotonically; undefined = 0.
    */
-  call<T = unknown>(fn: string, params?: Record<string, unknown>): Promise<T>;
-  /** GET a Moodle file URL (pluginfile or webservice/pluginfile) with the token appended. Streams. */
+  readonly writesSent?: number;
+  /** The channel of this client; read it after a call (the first call settles it). */
+  readonly channel: MoodleChannel;
+  /** The web channel's session (pages, forms, ajax; charged to this client's budget); undefined on 'ws'. */
+  readonly web?: WebSession;
+  /**
+   * One Moodle web-service function, by name and parameters (web channel: emulated, same answer shape for the fields
+   * this codebase reads). Read functions are memoised per request by (fn, params). Throws MoodleError /
+   * NeedsReconnect / MoodleUnavailable / BudgetExceeded.
+   */
+  call<T = unknown>(fn: string, params?: Record<string, unknown>, hint?: CallHint): Promise<T>;
+  /** GET a Moodle file URL (pluginfile or webservice/pluginfile) with the channel's credential. Streams. */
   fetchFile(fileUrl: string, init?: { method?: 'GET' | 'HEAD'; range?: string }): Promise<Response>;
-  /** Stream one file into the user's draft area via webservice/upload.php. itemId 0 = new draft. */
+  /**
+   * Stream one file into the user's draft area (ws: webservice/upload.php; web: the upload repository, which needs the
+   * activity the draft is for: pass `hint.cmid`). itemId 0 = new draft.
+   */
   uploadToDraft(
     file: { name: string; body: ReadableStream<Uint8Array> | Uint8Array; size: number; mime?: string | null },
     itemId: number,
+    hint?: CallHint,
   ): Promise<DraftUploadResult>;
 }
 
@@ -84,24 +110,26 @@ export interface UserRow {
   scopeCourseIds?: number[];
 }
 
+/** One user's Moodle connection: the web session, the app token (mobile web service), or both. */
 export interface CredentialRow {
   userId: number;
-  tokenEnc: string; // AES-GCM, base64url (iv||ciphertext)
+  tokenEnc: string | null; // AES-GCM, base64url (iv||ciphertext); null = no app token
   privateTokenEnc: string | null;
-  tokenHash: string; // sha256 hex of the token; detects "same token" on reconnect
-  tokenHint: string; // last 4 chars
-  status: 'active' | 'invalid';
+  tokenHash: string | null; // sha256 hex of the token; detects "same token" on reconnect
+  tokenHint: string | null; // last 4 chars
+  status: 'active' | 'invalid'; // invalid = no channel is left
   connectedVia: ConnectVia;
   connectedAt: number;
   lastOkAt: number | null;
   lastError: string | null;
-  // Moodle web session that renews the token (services/credential-renewal). Always read back (null = none);
-  // putCredential leaves these columns alone, only the patch methods change them.
+  // Moodle web session (services/credential-renewal). Always read back (null = none); putCredential leaves these
+  // columns alone, only the patch methods change them.
   sessionEnc?: string | null; // MoodleSession cookie ("name=value"), encrypted like the token
-  sessionOkAt?: number | null; // launch.php last answered with a token for it
-  sessionTriedAt?: number | null; // a launch.php attempt with it last failed (not ended: unreachable, odd answer)
+  sesskeyEnc?: string | null; // the session's sesskey, encrypted; null = read from a page when first needed
+  sessionOkAt?: number | null; // Moodle last answered through the session
+  sessionTriedAt?: number | null; // a keepalive attempt with it last failed (not ended: unreachable, odd answer)
   renewedAt?: number | null; // a new token was last stored automatically
-  autologinAt?: number | null; // last attempt to open a session
+  autologinAt?: number | null; // last attempt to open a session with the private token
 }
 
 /** Credential fields a patch may change: all but the owner (a reconnect also sets the connection's origin). */
@@ -109,12 +137,12 @@ export type CredentialPatch = Partial<Omit<CredentialRow, 'userId'>>;
 
 /** The stored state a conditional credential update requires; each given field must still hold this value. */
 export interface CredentialExpect {
-  tokenHash: string;
+  tokenHash?: string | null; // null = no token
   sessionEnc?: string | null; // the encrypted cookie as read (null = no session)
   autologinAt?: number | null;
 }
 
-/** A credential the renewal keepalive should visit, with its owner. */
+/** A credential whose web session the keepalive should visit, with its owner. */
 export interface RenewalCandidate {
   user: UserRow;
   credential: CredentialRow;
@@ -244,21 +272,10 @@ export interface Store extends MailAccessMethods {
   /** Compare-and-set: applies `patch` only while the stored credential matches `expect`; returns whether it did. */
   updateCredentialIf(userId: number, expect: CredentialExpect, patch: CredentialPatch): Promise<boolean>;
   /**
-   * The renewal keepalive's candidates: a web session last visited (confirmed or failed) at or before `sessionBefore`,
-   * or no session but an active credential with a private token, never tried since it was connected or last tried at
-   * or before `autologinBefore`. Most urgent first: a session by `sessionIdleMs` after its last visit (so failing
-   * sessions rotate behind the others), a session to open by when its retry came due (`autologinRetryMs` after it).
-   * Sessions last visited after `mustVisit.after` and at or before `mustVisit.until` (they idle out before the next
-   * run) go ahead of all others, so the ones to open only get the capacity they leave.
+   * The session keepalive's candidates: credentials with a web session last visited (confirmed, or tried without
+   * success) at or before `visitedBefore`, most idle first (so failing sessions rotate behind the others).
    */
-  listRenewalCandidates(opts: {
-    sessionBefore: number;
-    autologinBefore: number;
-    sessionIdleMs: number;
-    autologinRetryMs: number;
-    mustVisit: { after: number; until: number };
-    limit: number;
-  }): Promise<RenewalCandidate[]>;
+  listRenewalCandidates(opts: { visitedBefore: number; limit: number }): Promise<RenewalCandidate[]>;
 
   // Waseda mailbox connection (Worker only; the local entry throws)
   getMailCredential(userId: number): Promise<MailCredentialRow | null>;
@@ -407,7 +424,7 @@ export interface ServiceContext {
   user: UserRow;
   store: Store;
   signer: Signer;
-  /** Lazily decrypts the stored token and builds a budgeted client. Throws NeedsReconnect. */
+  /** Lazily builds a budgeted client from the stored credential (see MoodleApi.channel). Throws NeedsReconnect. */
   moodle(): Promise<MoodleApi>;
   /**
    * The Waseda mailbox client; undefined when the user has no stored mail connection (or mail is not configured, or

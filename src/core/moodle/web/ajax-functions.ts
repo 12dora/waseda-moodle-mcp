@@ -1,0 +1,43 @@
+/**
+ * External functions Waseda Moodle allows through /lib/ajax/service.php with the web session (measured 2026-11-27).
+ * The web client sends these as they are; everything else is emulated by an adapter (functions.ts) or unavailable.
+ */
+
+export const AJAX_FUNCTIONS: ReadonlySet<string> = new Set([
+  'core_calendar_get_action_events_by_course',
+  'core_calendar_get_action_events_by_timesort',
+  'core_calendar_get_calendar_day_view',
+  'core_calendar_get_calendar_monthly_view',
+  'core_calendar_get_calendar_upcoming_view',
+  'core_completion_update_activity_completion_status_manually',
+  'core_course_get_enrolled_courses_by_timeline_classification',
+  'core_course_get_module',
+  'core_course_get_recent_courses',
+  'core_course_get_updates_since',
+  'core_course_search_courses',
+  'core_courseformat_get_state',
+  'core_fetch_notifications',
+  'core_get_fragment',
+  'core_get_string',
+  'core_message_data_for_messagearea_search_messages',
+  'core_message_get_conversation',
+  'core_message_get_conversation_messages',
+  'core_message_get_conversations',
+  'core_message_get_member_info',
+  'core_message_get_unread_conversations_count',
+  'core_message_mark_all_conversation_messages_as_read',
+  'core_message_mark_all_notifications_as_read',
+  'core_message_mark_notification_read',
+  'core_message_send_instant_messages',
+  'core_message_send_messages_to_conversation',
+  'core_session_time_remaining',
+  'core_session_touch',
+  'core_user_get_user_preferences',
+  'core_user_get_users_by_field',
+  'message_popup_get_popup_notifications',
+  'message_popup_get_unread_popup_notification_count',
+  'mod_forum_add_discussion_post',
+  'mod_forum_get_discussion_posts',
+  'mod_forum_mark_posts_read',
+  'mod_forum_set_forum_subscription',
+]);

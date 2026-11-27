@@ -196,6 +196,34 @@ describe('MoodleClient.call', () => {
     expect(write.fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('set_ functions are writes: never retried nor memoised', async () => {
+    const { client, fetchMock } = setup(() => new Response('oops', { status: 502 }));
+    const params = { forumid: 7101, targetstate: 1 };
+    await expect(client.call('mod_forum_set_forum_subscription', params)).rejects.toBeInstanceOf(MoodleUnavailable);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const ok = setup(() => json({ status: true }));
+    await ok.client.call('mod_forum_set_forum_subscription', params);
+    await ok.client.call('mod_forum_set_forum_subscription', params);
+    expect(ok.fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('writesSent: writes that reached Moodle (answer or failure), not reads, allocations or token refusals', async () => {
+    const { client } = setup((_u, init) => {
+      const fn = bodyOf(init).get('wsfunction') ?? '';
+      if (fn.includes('broken')) return new Response('oops', { status: 502 });
+      return json({ itemid: 5 });
+    });
+    await client.call('core_course_get_contents', { courseid: 99101 });
+    await client.call('core_files_get_unused_draft_itemid');
+    expect(client.writesSent).toBe(0);
+    await client.call('mod_assign_save_submission', { assignmentid: 1 });
+    await expect(client.call('core_x_update_broken')).rejects.toBeInstanceOf(MoodleUnavailable);
+    expect(client.writesSent).toBe(2);
+    const refused = setup(() => json({ exception: 'moodle_exception', errorcode: 'invalidtoken', message: 'Invalid' }));
+    await expect(refused.client.call('mod_assign_save_submission')).rejects.toBeInstanceOf(NeedsReconnect);
+    expect(refused.client.writesSent).toBe(0);
+  });
+
   it('a transient failure followed by success returns the data', async () => {
     let n = 0;
     const { client } = setup(() => (n++ === 0 ? new Response('x', { status: 502 }) : json({ ok: true })));

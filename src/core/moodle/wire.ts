@@ -1,10 +1,41 @@
-/** Pure helpers behind MoodleClient: error envelopes, file URLs, multipart upload bodies. */
+/** Pure helpers behind the Moodle clients: error envelopes, session cookies, file URLs, multipart upload bodies. */
 
 import { InvalidInput, MoodleError } from '../errors';
 
 export type Json = Record<string, unknown>;
 export const isObj = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+
+// ------------------------------------------------------------------ parameters
+
+function scalarParam(v: unknown): string | null {
+  if (typeof v === 'boolean') return v ? '1' : '0';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'bigint') return String(v);
+  return null;
+}
+
+function childEntries(v: unknown): Array<[string, unknown]> {
+  if (Array.isArray(v)) return v.map((x, i): [string, unknown] => [String(i), x]);
+  if (typeof v === 'object' && v !== null) return Object.entries(v);
+  return [];
+}
+
+function appendParam(out: URLSearchParams, key: string, v: unknown): void {
+  const scalar = scalarParam(v);
+  if (scalar !== null) {
+    out.append(key, scalar);
+    return;
+  }
+  for (const [k, x] of childEntries(v)) appendParam(out, `${key}[${k}]`, x);
+}
+
+/** PHP array encoding: `a[0]=x`, `a[b][c]=y`; booleans -> 0/1; null/undefined are skipped. */
+export function encodeParams(params: Record<string, unknown>): URLSearchParams {
+  const out = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) appendParam(out, k, v);
+  return out;
+}
 
 // ------------------------------------------------------------------ error envelopes
 
@@ -29,6 +60,24 @@ export function isTokenGone(e: Envelope): boolean {
   if (e.code === 'invalidtoken') return true;
   const says = (t: string) => /token/i.test(t) && /expire|invalid/i.test(t);
   return e.code === 'accessexception' && (says(e.message) || says(e.debuginfo));
+}
+
+// ------------------------------------------------------------------ session cookie
+
+/**
+ * The session cookie of a Set-Cookie line (the name may carry the site's `sessioncookie` suffix). The "deleted"
+ * value PHP sends when it drops a session never matches.
+ */
+const SESSION_COOKIE = /^\s*(MoodleSession\w*)=(?!deleted\s*(?:;|$))([A-Za-z0-9,-]+)\s*(?:;|$)/;
+
+/** The last session cookie (`MoodleSession=<value>`) the response sets (Moodle sends several while it regenerates). */
+export function sessionCookie(res: Response): string | null {
+  let found: string | null = null;
+  for (const line of res.headers.getSetCookie()) {
+    const m = SESSION_COOKIE.exec(line);
+    if (m) found = `${m[1]}=${m[2]}`;
+  }
+  return found;
 }
 
 // ------------------------------------------------------------------ bytes
@@ -85,24 +134,39 @@ export async function peekJson(res: Response): Promise<unknown> {
 // ------------------------------------------------------------------ file URLs
 
 const FILE_PREFIXES = ['/webservice/pluginfile.php/', '/pluginfile.php/'];
+/** The session may also read the user's own draft files (a post's current attachments); never with a token. */
+const SESSION_FILE_PREFIXES = [...FILE_PREFIXES, '/draftfile.php/'];
 
-/** Validates host/path, rewrites `/pluginfile.php/` to the webservice endpoint and sets the token. */
-export function fileDownloadUrl(base: { baseUrl: string; token: string }, fileUrl: string): string {
+/** A file URL on baseUrl under one of `prefixes`, without credentials, fragment and `token`. */
+function cleanFileUrl(baseUrl: string, fileUrl: string, prefixes = FILE_PREFIXES): URL {
   let u: URL;
   try {
-    u = new URL(fileUrl, `${base.baseUrl}/`);
+    u = new URL(fileUrl, `${baseUrl}/`);
   } catch {
     throw new InvalidInput('That is not a valid Moodle file URL.');
   }
-  if (u.origin !== new URL(base.baseUrl).origin || !FILE_PREFIXES.some((p) => u.pathname.startsWith(p))) {
+  if (u.origin !== new URL(baseUrl).origin || !prefixes.some((p) => u.pathname.startsWith(p))) {
     throw new InvalidInput('Only files hosted on Waseda Moodle can be fetched.');
   }
-  if (!u.pathname.startsWith('/webservice/')) u.pathname = `/webservice${u.pathname}`;
   u.username = '';
   u.password = '';
   u.hash = '';
   if (u.searchParams.has('token')) u.searchParams.delete('token');
+  return u;
+}
+
+/** Validates host/path, rewrites `/pluginfile.php/` to the webservice endpoint and sets the token. */
+export function fileDownloadUrl(base: { baseUrl: string; token: string }, fileUrl: string): string {
+  const u = cleanFileUrl(base.baseUrl, fileUrl);
+  if (!u.pathname.startsWith('/webservice/')) u.pathname = `/webservice${u.pathname}`;
   return `${u.origin}${u.pathname}${u.search}${u.search ? '&' : '?'}token=${encodeURIComponent(base.token)}`;
+}
+
+/** The web session's form of a file URL: `/pluginfile.php/…` or `/draftfile.php/…` (the cookie authenticates). */
+export function sessionFileUrl(baseUrl: string, fileUrl: string): string {
+  const u = cleanFileUrl(baseUrl, fileUrl, SESSION_FILE_PREFIXES);
+  u.pathname = u.pathname.replace(/^\/webservice\//, '/');
+  return u.toString();
 }
 
 // ------------------------------------------------------------------ upload.php
@@ -119,7 +183,7 @@ interface FixedLengthStreamCtor {
 }
 
 /** Header-safe file name: path separators, quotes and control characters become `_`. */
-export function sanitizeFilename(name: string): string {
+function sanitizeFilename(name: string): string {
   const bad = (ch: string) => '/\\"'.includes(ch) || ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127;
   const clean = Array.from(name, (ch) => (bad(ch) ? '_' : ch)).join('');
   return clean.trim();
@@ -131,25 +195,43 @@ interface Multipart {
   tail: Uint8Array;
 }
 
-export function multipartParts(fields: { token: string; itemId: number; name: string; mime: string }): Multipart {
+/** The file part of a multipart upload: its form field name and the sanitised file name / MIME type. */
+interface MultipartFile {
+  field: string;
+  name: string;
+  mime: string;
+}
+
+/** Head (the form fields, then the file part's header) and tail of a multipart body around the file bytes. */
+export function multipartParts(fields: ReadonlyArray<readonly [string, string]>, file: MultipartFile): Multipart {
   const rand = crypto.getRandomValues(new Uint8Array(12));
   const boundary = `----wmm${Array.from(rand, (b) => b.toString(16).padStart(2, '0')).join('')}`;
-  const field = (n: string, v: string) =>
+  const field = ([n, v]: readonly [string, string]) =>
     `--${boundary}\r\nContent-Disposition: form-data; name="${n}"\r\n\r\n${v}\r\n`;
   const fileHeader =
-    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fields.name}"\r\n` +
-    `Content-Type: ${fields.mime}\r\n\r\n`;
+    `--${boundary}\r\nContent-Disposition: form-data; name="${file.field}"; filename="${file.name}"\r\n` +
+    `Content-Type: ${file.mime}\r\n\r\n`;
   const te = new TextEncoder();
   return {
     boundary,
-    head: te.encode(
-      field('token', fields.token) +
-        field('itemid', String(Math.trunc(fields.itemId) || 0)) +
-        field('filepath', '/') +
-        fileHeader,
-    ),
+    head: te.encode(fields.map(field).join('') + fileHeader),
     tail: te.encode(`\r\n--${boundary}--\r\n`),
   };
+}
+
+/** Validates an upload's size and name; the header-safe name and MIME type to send. */
+export function uploadMeta(file: UploadFile): { name: string; mime: string } {
+  if (!Number.isSafeInteger(file.size) || file.size < 0) throw new InvalidInput('The file size is invalid.');
+  const name = sanitizeFilename(file.name);
+  if (!name) throw new InvalidInput('The file needs a name.');
+  const mime = (file.mime ?? '').replace(/[\r\n;]+/g, '') || 'application/octet-stream';
+  return { name, mime };
+}
+
+/** A fresh draft item id (what Moodle's core_files_get_unused_draft_itemid hands out: 1..999999999). */
+export function randomDraftItemId(): number {
+  const [n = 0] = crypto.getRandomValues(new Uint32Array(1));
+  return (n % 999_999_999) + 1;
 }
 
 async function collect(body: ReadableStream<Uint8Array>, parts: Multipart): Promise<Uint8Array> {

@@ -4,10 +4,11 @@
  */
 
 import type { InvocationBudget } from '../budget';
-import type { DraftUploadResult, MoodleApi } from '../context';
-import { BudgetExceeded, InvalidInput, MoodleError, MoodleUnavailable, NeedsReconnect } from '../errors';
+import type { CallHint, DraftUploadResult, MoodleApi, MoodleChannel } from '../context';
+import { BudgetExceeded, MoodleError, MoodleUnavailable, NeedsReconnect } from '../errors';
 import { MOODLE_URL } from './launch';
 import {
+  encodeParams,
   fileDownloadUrl,
   isObj,
   isTokenGone,
@@ -16,10 +17,10 @@ import {
   multipartParts,
   peekJson,
   readEnvelope,
-  sanitizeFilename,
   type UploadFile,
   uploadBody,
   uploadError,
+  uploadMeta,
 } from './wire';
 
 export interface MoodleClientOptions {
@@ -43,40 +44,16 @@ export interface MoodleClientOptions {
   onSuccess?: () => void;
 }
 
+export { encodeParams } from './wire';
+
 /** Moodle rejected the token of one request (internal: the client renews or turns it into NeedsReconnect). */
 class TokenRejected extends NeedsReconnect {}
 
-function scalarParam(v: unknown): string | null {
-  if (typeof v === 'boolean') return v ? '1' : '0';
-  if (typeof v === 'string') return v;
-  if (typeof v === 'number' || typeof v === 'bigint') return String(v);
-  return null;
-}
-
-function childEntries(v: unknown): Array<[string, unknown]> {
-  if (Array.isArray(v)) return v.map((x, i): [string, unknown] => [String(i), x]);
-  if (typeof v === 'object' && v !== null) return Object.entries(v);
-  return [];
-}
-
-function appendParam(out: URLSearchParams, key: string, v: unknown): void {
-  const scalar = scalarParam(v);
-  if (scalar !== null) {
-    out.append(key, scalar);
-    return;
-  }
-  for (const [k, x] of childEntries(v)) appendParam(out, `${key}[${k}]`, x);
-}
-
-/** PHP array encoding: `a[0]=x`, `a[b][c]=y`; booleans -> 0/1; null/undefined are skipped. */
-export function encodeParams(params: Record<string, unknown>): URLSearchParams {
-  const out = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) appendParam(out, k, v);
-  return out;
-}
-
+/** Calls that change what Moodle stores. `can_add_discussion` is a read despite its `add`. */
 const WRITE_FN =
-  /save|submit|add|send|update|create|delete|view_|mark|unused|start_|finish|process|remove|reset|toggle/;
+  /save|submit|(?<!can_)add|send|update|create|delete|view_|mark|start_|finish|process|remove|reset|toggle|_set_/;
+/** Calls that allocate an id: never memoised, but they change nothing. */
+const ALLOCATE_FN = /_unused_/;
 /** Mobile-app pages that save what they carry (`tool_mobile_get_content` args), e.g. questionnaire `nextpage`. */
 const WRITE_ACTION = /^(?:submit|nextpage|previouspage|save\w*)$/;
 
@@ -87,13 +64,90 @@ function pageAction(params: Record<string, unknown>): string {
   return isObj(action) && typeof action.value === 'string' ? action.value : '';
 }
 
+/** A call that changes state, by function name or by the page action it carries. */
+export const isWriteCall = (fn: string, params: Record<string, unknown>) =>
+  WRITE_FN.test(fn) || WRITE_ACTION.test(pageAction(params));
+
 /**
- * Calls that change state (or allocate ids), by function name or by the page action they carry, are never memoised
- * and never retried after a failure; they clear the memo. A call rejected for its token never ran, so the token
- * renewal repeats it either way.
+ * Writes and allocations are never memoised and never retried after a failure; they clear the memo. A call rejected
+ * for its token never ran, so the token renewal repeats it either way.
  */
-const isReadCall = (fn: string, params: Record<string, unknown>) =>
-  !WRITE_FN.test(fn) && !WRITE_ACTION.test(pageAction(params));
+const isReadCall = (fn: string, params: Record<string, unknown>) => !isWriteCall(fn, params) && !ALLOCATE_FN.test(fn);
+
+/** Answers that prove a request changed nothing: Moodle refused the credential, or it never left (budget). */
+const neverRan = (e: unknown) => e instanceof NeedsReconnect || e instanceof BudgetExceeded;
+
+/**
+ * Runs one request that may write and calls `sent` once it may have changed Moodle: after any answer or failure but
+ * one that proves it never ran (see MoodleApi.writesSent).
+ */
+export async function trackWrite<T>(run: () => Promise<T>, sent: () => void): Promise<T> {
+  try {
+    const out = await run();
+    sent();
+    return out;
+  } catch (e) {
+    if (!neverRan(e)) sent();
+    throw e;
+  }
+}
+
+/** The memo key of a read call (a hint narrows the answer, so it is part of the key); null for a write. */
+export function memoKey(fn: string, params: Record<string, unknown>, hint?: CallHint): string | null {
+  if (!isReadCall(fn, params)) return null;
+  const key = `${fn}?${encodeParams(params).toString()}`;
+  const cmid = hint?.cmid ? `#cmid=${hint.cmid}` : '';
+  return `${key}${cmid}${hint?.messages ? '#messages' : ''}`;
+}
+
+/**
+ * The call accounting both clients share: the per-client call budget (plus the invocation's), and the read memo.
+ * Reads are memoised by key for the client's lifetime (failures are forgotten); a write clears the memo before and
+ * after it runs (`onClear` lets a client drop its own caches too).
+ */
+export class CallLedger {
+  private count = 0;
+  private writeCount = 0;
+  private readonly memo = new Map<string, Promise<unknown>>();
+
+  constructor(private readonly opts: { maxCalls?: number; budget?: InvocationBudget; onClear?: () => void }) {}
+
+  get calls(): number {
+    return this.count;
+  }
+
+  /** Write calls that may have reached Moodle (trackWrite). */
+  get writes(): number {
+    return this.writeCount;
+  }
+
+  /** Charges one Moodle request; throws BudgetExceeded when none is left. */
+  spend(): void {
+    if (this.count >= (this.opts.maxCalls ?? 40)) throw new BudgetExceeded();
+    this.opts.budget?.spendMoodle();
+    this.count++;
+  }
+
+  /** Runs `exec` (`read` = memoised read) under the memo; `key` from memoKey; `write` = a write call (isWriteCall). */
+  run<T>(key: string | null, exec: (read: boolean) => Promise<T>, write = false): Promise<T> {
+    if (key === null) {
+      this.clear();
+      const run = () => exec(false).finally(() => this.clear());
+      return write ? trackWrite(run, () => this.writeCount++) : run();
+    }
+    const hit = this.memo.get(key);
+    if (hit) return hit as Promise<T>;
+    const p = exec(true);
+    this.memo.set(key, p);
+    p.catch(() => this.memo.delete(key));
+    return p;
+  }
+
+  private clear(): void {
+    this.memo.clear();
+    this.opts.onClear?.();
+  }
+}
 
 const RESERVED = new Set(['wstoken', 'wsfunction', 'moodlewsrestformat']);
 const isReserved = (key: string) => RESERVED.has(key.split('[')[0] ?? key);
@@ -111,17 +165,15 @@ const discard = (res: Response) => {
 export class MoodleClient implements MoodleApi {
   readonly baseUrl: string;
   readonly moodleUserId: number;
-  private calls = 0;
+  readonly channel: MoodleChannel = 'ws';
   private token: string;
   private readonly doFetch: typeof fetch;
-  private readonly maxCalls: number;
+  private readonly ledger: CallLedger;
   private readonly timeoutMs: number;
   private readonly uploadTimeoutMs: number;
-  private readonly budget?: InvocationBudget;
   private readonly renewToken?: MoodleClientOptions['renewToken'];
   private readonly onTokenInvalid?: MoodleClientOptions['onTokenInvalid'];
   private readonly onSuccess?: () => void;
-  private readonly memo = new Map<string, Promise<unknown>>();
   private invalid = false;
   /** The one renewal of this client; resolves true when it ran out of budget. */
   private renewal: Promise<boolean> | null = null;
@@ -132,34 +184,29 @@ export class MoodleClient implements MoodleApi {
     this.moodleUserId = opts.moodleUserId;
     this.baseUrl = (opts.baseUrl ?? MOODLE_URL).replace(/\/+$/, '');
     this.doFetch = opts.fetch ?? ((input, init) => globalThis.fetch(input, init));
-    this.maxCalls = opts.maxCalls ?? 40;
+    this.ledger = new CallLedger({ maxCalls: opts.maxCalls, budget: opts.budget });
     this.timeoutMs = opts.timeoutMs ?? 25_000;
     this.uploadTimeoutMs = opts.uploadTimeoutMs ?? 120_000;
-    this.budget = opts.budget;
     this.renewToken = opts.renewToken;
     this.onTokenInvalid = opts.onTokenInvalid;
     this.onSuccess = opts.onSuccess;
   }
 
   get callsMade(): number {
-    return this.calls;
+    return this.ledger.calls;
+  }
+
+  get writesSent(): number {
+    return this.ledger.writes;
   }
 
   // ------------------------------------------------------------------ REST
 
-  call<T = unknown>(fn: string, params: Record<string, unknown> = {}): Promise<T> {
+  /** The web service ignores hints (they only narrow what the web channel reads). */
+  call<T = unknown>(fn: string, params: Record<string, unknown> = {}, _hint?: CallHint): Promise<T> {
     if (this.invalid) return Promise.reject(new NeedsReconnect());
-    if (!isReadCall(fn, params)) {
-      this.memo.clear();
-      return this.exec<T>(fn, params, false).finally(() => this.memo.clear());
-    }
-    const key = `${fn}?${encodeParams(params).toString()}`;
-    const hit = this.memo.get(key);
-    if (hit) return hit as Promise<T>;
-    const p = this.exec<T>(fn, params, true);
-    this.memo.set(key, p);
-    p.catch(() => this.memo.delete(key));
-    return p;
+    const exec = (read: boolean) => this.exec<T>(fn, params, read);
+    return this.ledger.run(memoKey(fn, params), exec, isWriteCall(fn, params));
   }
 
   private async exec<T>(fn: string, params: Record<string, unknown>, read: boolean): Promise<T> {
@@ -171,18 +218,12 @@ export class MoodleClient implements MoodleApi {
     }
   }
 
-  private spend(): void {
-    if (this.calls >= this.maxCalls) throw new BudgetExceeded();
-    this.budget?.spendMoodle();
-    this.calls++;
-  }
-
   private restOnce(fn: string, params: Record<string, unknown>): Promise<unknown> {
     return this.withToken((token) => this.restWith(token, fn, params));
   }
 
   private async restWith(token: string, fn: string, params: Record<string, unknown>): Promise<unknown> {
-    this.spend();
+    this.ledger.spend();
     const body = new URLSearchParams({ wstoken: token, wsfunction: fn, moodlewsrestformat: 'json' });
     for (const [k, v] of encodeParams(params)) {
       if (!isReserved(k)) body.append(k, v);
@@ -262,7 +303,7 @@ export class MoodleClient implements MoodleApi {
     let exhausted = false;
     const charged: typeof fetch = (input, init) => {
       try {
-        this.spend();
+        this.ledger.spend();
       } catch (e) {
         exhausted = true;
         return Promise.reject(e);
@@ -303,7 +344,7 @@ export class MoodleClient implements MoodleApi {
   }
 
   private async send(url: string, init: RequestInit & { duplex?: 'half' }, timeoutMs: number): Promise<Response> {
-    this.spend();
+    this.ledger.spend();
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
@@ -360,10 +401,7 @@ export class MoodleClient implements MoodleApi {
 
   async uploadToDraft(file: UploadFile, itemId: number): Promise<DraftUploadResult> {
     if (this.invalid) throw new NeedsReconnect();
-    if (!Number.isSafeInteger(file.size) || file.size < 0) throw new InvalidInput('The file size is invalid.');
-    const name = sanitizeFilename(file.name);
-    if (!name) throw new InvalidInput('The file needs a name.');
-    const mime = (file.mime ?? '').replace(/[\r\n;]+/g, '') || 'application/octet-stream';
+    const { name, mime } = uploadMeta(file);
     // a stream is spent by the first attempt: after a renewal the caller sends the file again
     const replayable = file.body instanceof Uint8Array;
     return this.withToken((token) => this.uploadWith(token, file, { itemId, name, mime }), replayable);
@@ -374,7 +412,12 @@ export class MoodleClient implements MoodleApi {
     file: UploadFile,
     meta: { itemId: number; name: string; mime: string },
   ): Promise<DraftUploadResult> {
-    const parts = multipartParts({ token, ...meta });
+    const fields = [
+      ['token', token],
+      ['itemid', String(Math.trunc(meta.itemId) || 0)],
+      ['filepath', '/'],
+    ] as const;
+    const parts = multipartParts(fields, { field: 'file', name: meta.name, mime: meta.mime });
     const { body, duplex } = await uploadBody(file, parts);
 
     const res = await this.send(

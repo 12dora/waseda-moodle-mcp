@@ -8,7 +8,7 @@
 
 import { MoodleUnavailable, WmmError } from '../errors';
 import { type LaunchToken, launchUrl, MOODLE_URL, parseLaunch } from './launch';
-import { isObj, readEnvelope } from './wire';
+import { isObj, readEnvelope, sessionCookie } from './wire';
 
 /** Moodle hands out autologin keys only to its app (`core_useragent::is_moodle_app` looks for "MoodleMobile"). */
 const APP_USER_AGENT = 'Mozilla/5.0 (compatible; WasedaMoodleMCP) MoodleMobile';
@@ -16,8 +16,6 @@ const TIMEOUT_MS = 15_000;
 const LAUNCH_PATH = '/admin/tool/mobile/launch.php';
 /** An app hand-off, not a web page. The site may answer with its own app's scheme (Open LMS: ltgopenlmsapp://). */
 const APP_LAUNCH = /^(?!https?:)[a-z][a-z0-9+.-]*:\/\/token=/i;
-/** The session cookie (the name may carry the site's `sessioncookie` suffix); "deleted" values never match. */
-const SESSION_COOKIE = /^\s*(MoodleSession\w*)=([A-Za-z0-9,-]+)\s*(?:;|$)/;
 
 type SessionLaunch = { ok: true; launch: LaunchToken; cookie: string } | { ok: false };
 type SessionOpen = { ok: true; cookie: string } | { ok: false; reason: string };
@@ -67,16 +65,6 @@ async function exchange<T>(
   } finally {
     clearTimeout(timer);
   }
-}
-
-/** The last session cookie the response sets (Moodle sends several while it regenerates the session). */
-function sessionCookie(res: Response): string | null {
-  let found: string | null = null;
-  for (const line of res.headers.getSetCookie()) {
-    const m = SESSION_COOKIE.exec(line);
-    if (m) found = `${m[1]}=${m[2]}`;
-  }
-  return found;
 }
 
 /** Step 3. `{ ok: false }` = the session has ended (launch.php sends the browser to the login page instead). */
