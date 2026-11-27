@@ -29,6 +29,9 @@ export interface MoodleWebSessionOptions {
   onEnded?: () => void | Promise<void>;
 }
 
+/** Calls whose point is the request itself (keepalive): never answered from the memo. */
+const FRESH = new Set(['core_session_touch', 'core_session_time_remaining']);
+
 const ENDED_MSG = 'The Moodle session has ended. Reconnect to continue.';
 const MAX_HOPS = 3;
 const LOGIN_PATHS = new Set(['/login/index.php', '/auth/saml2/login.php']);
@@ -86,6 +89,8 @@ export class MoodleWebSession implements WebSession {
   private readonly timeoutMs: number;
   private readonly opts: MoodleWebSessionOptions;
   private readonly pages = new Map<string, Promise<WebPage>>();
+  /** Read-only ajax answers by (function, args), like the GET page memo; a write clears both. */
+  private readonly reads = new Map<string, Promise<unknown>>();
   private queue: Pending[] = [];
 
   constructor(opts: MoodleWebSessionOptions) {
@@ -234,7 +239,7 @@ export class MoodleWebSession implements WebSession {
   async page(path: string, req: WebRequest = {}): Promise<WebPage> {
     const target = this.relative(path);
     if (req.method === 'POST') {
-      this.pages.clear();
+      this.forgetPages();
       return this.post(target, req.form ?? new URLSearchParams());
     }
     if (req.follow === false) return this.get(target, false);
@@ -246,9 +251,10 @@ export class MoodleWebSession implements WebSession {
     return p;
   }
 
-  /** Drops the memoised pages (after a write). */
+  /** Drops the memoised pages and ajax reads (after a write). */
   forgetPages(): void {
     this.pages.clear();
+    this.reads.clear();
   }
 
   /** The first page already fetched in this session (memo) whose HTML matches `pattern`; null = none. */
@@ -323,6 +329,21 @@ export class MoodleWebSession implements WebSession {
   // ------------------------------------------------------------------ ajax
 
   ajax<T = unknown>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
+    if (isWriteCall(fn, args)) {
+      this.forgetPages();
+      return this.enqueue<T>(fn, args);
+    }
+    if (FRESH.has(fn)) return this.enqueue<T>(fn, args);
+    const key = `${fn}:${JSON.stringify(args)}`;
+    const hit = this.reads.get(key);
+    if (hit) return hit as Promise<T>;
+    const p = this.enqueue<T>(fn, args);
+    this.reads.set(key, p);
+    p.catch(() => this.reads.delete(key));
+    return p;
+  }
+
+  private enqueue<T>(fn: string, args: Record<string, unknown>): Promise<T> {
     return new Promise<unknown>((resolve, reject) => {
       if (this.queue.length === 0) queueMicrotask(() => this.flush());
       this.queue.push({ fn, args, resolve, reject });

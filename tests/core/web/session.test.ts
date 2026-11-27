@@ -74,11 +74,24 @@ describe('MoodleWebSession.ajax', () => {
     ]);
   });
 
+  it('answers a repeated read from the memo, never a keepalive or a write; a write clears the reads', async () => {
+    const { session, fetchMock } = setup(ajaxEcho((fn, args) => ok({ fn, args })));
+    await session.ajax('core_courseformat_get_state', { courseid: 99101 });
+    await session.ajax('core_courseformat_get_state', { courseid: 99101 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await session.ajax('core_session_touch');
+    await session.ajax('core_session_touch');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await session.ajax('core_message_send_instant_messages', { messages: [] });
+    await session.ajax('core_courseformat_get_state', { courseid: 99101 });
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
   it('sends every core_get_fragment alone and at most 25 calls per POST', async () => {
     const { session, fetchMock } = setup(ajaxEcho(() => ok(1)));
     const calls = [
-      session.ajax('core_get_fragment', { component: 'core_course' }),
-      session.ajax('core_get_fragment', { component: 'core_course' }),
+      session.ajax('core_get_fragment', { component: 'core_course', args: [{ name: 'modname', value: 'assign' }] }),
+      session.ajax('core_get_fragment', { component: 'core_course', args: [{ name: 'modname', value: 'quiz' }] }),
       ...Array.from({ length: 30 }, (_, i) => session.ajax('core_courseformat_get_state', { courseid: i + 1 })),
     ];
     await Promise.all(calls);
