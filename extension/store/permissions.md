@@ -17,12 +17,13 @@ Connects the user's Waseda Moodle sign-in session, with the user's consent, to t
 | `storage` | Saves the service URL, the consent for that URL and the last sync result locally, and keeps the id of the tab waiting for a Moodle sign-in for the browser session only. No cookie is saved. |
 | `alarms` | Runs a sync about every 12 hours so the connected service keeps a current Moodle session. |
 | Host `https://wsdmoodle.waseda.jp/*` | The only Moodle site supported: needed to read the MoodleSession cookie, and to check whether the user is signed in. |
-| Optional host `https://*/*` | The user types the address of their own or chosen service, so its origin is unknown at install time. Nothing is granted at install; on Save, the extension requests access to that single HTTPS origin only, to send the data there. |
+| Host: default service URL (packaged) | The service URL prefilled in Settings. The cookie is sent there only after the user ticks consent and saves. |
+| Optional host `https://*/*` | A user who replaces the default types the address of their own or chosen service, so its origin is unknown at install time. Nothing is granted at install; on Save, the extension requests access to that single HTTPS origin only, to send the data there. |
 
 Chrome shows one box for all host permissions. Paste:
 
 ```text
-https://wsdmoodle.waseda.jp/* is the only supported Moodle site: it is needed to read the MoodleSession cookie, and check whether the user is signed in. The optional https://*/* pattern is never granted at install. The user types the address of the service they use, which cannot be known in advance; on Save, the extension requests that one HTTPS origin only, and sends data nowhere else.
+https://wsdmoodle.waseda.jp/* is the only supported Moodle site: it is needed to read the MoodleSession cookie, and check whether the user is signed in. The second declared host is the default service URL prefilled in Settings, where the cookie is sent after consent. The optional https://*/* pattern is never granted at install: a user who types another service address is asked on Save for that one HTTPS origin only. Data is sent nowhere else.
 ```
 
 Not requested: `tabs`, `history`, `webRequest`, `scripting`, content scripts. The extension opens and updates its own
