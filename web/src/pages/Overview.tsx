@@ -13,6 +13,7 @@ import { MailRow } from '../components/MailRow';
 import { ScopeBanner } from '../components/ScopeBanner';
 import { Spinner } from '../components/Spinner';
 import { useI18n, useT } from '../i18n';
+import { lastCheckedAt } from '../lib/connection';
 import { notesText } from '../lib/dayNotes';
 import { outstandingItems } from '../lib/due';
 import { PENDING_LIMIT, pendingCountText } from '../lib/pending';
@@ -41,6 +42,7 @@ function ConnectionCard({ me }: { me: Me }) {
   const navigate = useNavigate();
   const cred = me.credential;
   const active = cred?.status === 'active';
+  const checkedAt = cred ? lastCheckedAt(cred) : null;
   return (
     <Card title={t('overview.conn.title')}>
       <div className="conn-section">
@@ -59,21 +61,8 @@ function ConnectionCard({ me }: { me: Me }) {
             <>
               <dt>{t('overview.conn.via')}</dt>
               <dd>{t(`via.${cred.connectedVia}`)}</dd>
-              <dt>{t('overview.conn.lastOk')}</dt>
-              <dd>{cred.lastOkAt ? formatDateTime(cred.lastOkAt, lang) : t('common.never')}</dd>
-              <dt>{t('overview.conn.token')}</dt>
-              <dd className="mono">••••{cred.tokenHint}</dd>
-              <dt>{t('overview.conn.autoRenew')}</dt>
-              <dd>
-                {cred.autoRenew ? t('overview.conn.autoRenewOn') : t('overview.conn.autoRenewOff')}
-                {cred.autoRenew && cred.renewedAt && (
-                  <span className="muted">
-                    {' · '}
-                    {t('overview.conn.autoRenewLast', { time: formatDateTime(cred.renewedAt, lang) })}
-                  </span>
-                )}
-                {!cred.autoRenew && active && <div className="muted small">{t('overview.conn.autoRenewHint')}</div>}
-              </dd>
+              <dt>{t('overview.conn.lastCheck')}</dt>
+              <dd>{checkedAt ? formatDateTime(checkedAt, lang) : '—'}</dd>
             </>
           )}
         </dl>

@@ -5,6 +5,6 @@ import type { PrivacyDoc } from './types';
 import { zhCN } from './zh-CN';
 
 /** Effective date of docs/privacy.md (keep in sync when the policy changes). */
-export const PRIVACY_EFFECTIVE_DATE = '2026-11-19';
+export const PRIVACY_EFFECTIVE_DATE = '2026-11-27';
 
 export const PRIVACY_DOCS: Record<Lang, PrivacyDoc> = { en, ja, 'zh-CN': zhCN };

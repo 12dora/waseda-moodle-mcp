@@ -1,6 +1,6 @@
 /**
  * Where to go after connecting. Only same-origin paths are accepted. The value is also kept in localStorage for
- * 15 minutes because the bookmarklet and extension flows come back to /connect?code=… without it.
+ * 15 minutes because the extension flow comes back to /connect?code=… without it.
  */
 
 const KEY = 'wmm.return';

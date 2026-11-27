@@ -1,148 +1,115 @@
-import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useId, useState } from 'react';
 import type { ConnectRequest } from '../api/types';
 import { useT } from '../i18n';
-import { bookmarkletHref } from '../lib/bookmarklet';
+import { pasteErrorKey, pasteRequest } from '../lib/connectInput';
 import { errorText } from '../lib/errors';
 import { useConfig } from '../session';
 import { Button } from './Button';
 import { Card } from './Card';
 
-/**
- * Draggable bookmarklet link. React 19 refuses javascript: URLs in JSX, so the anchor is created directly;
- * clicking it on this page does nothing (it must be dragged to the bookmarks bar).
- */
-function BookmarkletLink({ href, label }: { href: string; label: string }) {
-  const wrapRef = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const a = document.createElement('a');
-    a.className = 'bookmarklet';
-    a.href = href;
-    a.textContent = label;
-    a.addEventListener('click', (e) => e.preventDefault());
-    wrap.replaceChildren(a);
-  }, [href, label]);
-  return <span ref={wrapRef} className="bookmarklet-wrap" />;
-}
+type Connect = (body: ConnectRequest) => Promise<void>;
 
-function passportOf(launchUrl: string): string | undefined {
-  try {
-    return new URL(launchUrl).searchParams.get('passport') ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The ways to hand the Moodle launch link to the service (contract §6, §8, §11). */
-export function ConnectMethods({ onConnect }: { onConnect: (body: ConnectRequest) => Promise<void> }) {
+function ExtensionCard({ url }: { url: string }) {
   const t = useT();
-  const config = useConfig();
-  const pasteId = useId();
-  const [launch, setLaunch] = useState('');
+  return (
+    <Card title={t('connect.ext.title')} actions={<span className="badge badge-ok">{t('connect.ext.badge')}</span>}>
+      <div className="stack">
+        <p className="muted">{t('connect.ext.desc')}</p>
+        <a className="btn btn-primary" href={url} target="_blank" rel="noopener noreferrer">
+          {t('connect.ext.install')}
+        </a>
+      </div>
+    </Card>
+  );
+}
+
+/** One field for the MoodleSession cookie; a Moodle app launch link is accepted too. */
+function PasteCard({ onConnect }: { onConnect: Connect }) {
+  const t = useT();
+  const { moodleUrl, launchUrl } = useConfig();
+  const inputId = useId();
+  const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const moodle = moodleUrl.replace(/\/+$/, '');
 
-  const href = useMemo(
-    () => bookmarkletHref(config.publicUrl, { signin: t('connect.bm.alertSignin'), fail: t('connect.bm.alertFail') }),
-    [config.publicUrl, t],
-  );
-  const passport = useMemo(() => passportOf(config.launchUrl), [config.launchUrl]);
-
-  const submitPaste = async (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const value = launch.trim();
-    if (!value) {
+    const request = pasteRequest(value, launchUrl);
+    if (!request) {
       setError(t('connect.paste.required'));
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await onConnect({ launch: value, via: 'paste', passport });
+      await onConnect(request);
     } catch (err) {
-      setError(errorText(err, t));
+      const key = pasteErrorKey(err, request);
+      setError(key ? t(key) : errorText(err, t));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="stack">
-      <Card title={t('connect.bm.title')}>
+    <Card title={t('connect.paste.title')}>
+      <form className="stack" onSubmit={submit} noValidate>
         <ol className="steps">
           <li>
-            {t('connect.bm.step1')}
+            {t('connect.paste.step1')}
             <div>
-              <BookmarkletLink href={href} label={t('connect.bm.link')} />
+              <a className="btn btn-secondary btn-sm" href={`${moodle}/my/`} target="_blank" rel="noopener noreferrer">
+                {t('connect.paste.open')}
+              </a>
             </div>
           </li>
-          <li>
-            {t('connect.bm.step2')}{' '}
-            <a href={`${config.moodleUrl.replace(/\/+$/, '')}/my/`} target="_blank" rel="noopener noreferrer">
-              Waseda Moodle
-            </a>
-          </li>
-          <li>{t('connect.bm.step3')}</li>
+          <li>{t('connect.paste.step2', { url: moodle })}</li>
+          <li>{t('connect.paste.step3')}</li>
         </ol>
-        <p className="muted small">{t('connect.phoneHint')}</p>
-      </Card>
+        <div className="field">
+          <label htmlFor={inputId} className="field-label">
+            {t('connect.paste.label')}
+          </label>
+          <input
+            id={inputId}
+            type="text"
+            className="input mono"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="MoodleSession=…"
+            spellCheck={false}
+            autoComplete="off"
+            autoCapitalize="off"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? `${inputId}-hint ${inputId}-err` : `${inputId}-hint`}
+          />
+          <p id={`${inputId}-hint`} className="muted small">
+            {t('connect.paste.hint')}
+          </p>
+          {error && (
+            <p id={`${inputId}-err`} className="field-error" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+        <Button type="submit" variant="primary" busy={busy}>
+          {t('connect.paste.submit')}
+        </Button>
+      </form>
+    </Card>
+  );
+}
 
-      {config.extensionUrl && (
-        <Card title={t('connect.ext.title')}>
-          <p className="muted">{t('connect.ext.desc')}</p>
-          <a className="btn btn-secondary" href={config.extensionUrl} target="_blank" rel="noopener noreferrer">
-            {t('connect.ext.install')}
-          </a>
-        </Card>
-      )}
-
-      <Card title={t('connect.paste.title')}>
-        <form className="stack" onSubmit={submitPaste} noValidate>
-          <ol className="steps">
-            <li>
-              {t('connect.paste.step1')}
-              <div>
-                <a
-                  className="btn btn-secondary btn-sm"
-                  href={config.launchUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {t('connect.paste.open')}
-                </a>
-              </div>
-            </li>
-            <li>{t('connect.paste.step2')}</li>
-            <li>{t('connect.paste.step3')}</li>
-          </ol>
-          <div className="field">
-            <label htmlFor={pasteId} className="field-label">
-              {t('connect.paste.label')}
-            </label>
-            <textarea
-              id={pasteId}
-              className="input mono"
-              rows={3}
-              value={launch}
-              onChange={(e) => setLaunch(e.target.value)}
-              placeholder="ltgopenlmsapp://token=…"
-              spellCheck={false}
-              autoComplete="off"
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? `${pasteId}-err` : undefined}
-            />
-            {error && (
-              <p id={`${pasteId}-err`} className="field-error" role="alert">
-                {error}
-              </p>
-            )}
-          </div>
-          <Button type="submit" variant="primary" busy={busy}>
-            {t('connect.paste.submit')}
-          </Button>
-        </form>
-      </Card>
+/** The ways to connect Moodle: the browser extension (when the instance publishes it) or pasting. */
+export function ConnectMethods({ onConnect }: { onConnect: Connect }) {
+  const t = useT();
+  const { extensionUrl } = useConfig();
+  return (
+    <div className="stack">
+      {extensionUrl && <ExtensionCard url={extensionUrl} />}
+      <PasteCard onConnect={onConnect} />
+      <p className="muted small">{t('connect.phoneHint')}</p>
     </div>
   );
 }

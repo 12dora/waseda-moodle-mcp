@@ -63,10 +63,19 @@
 
 ## 工作原理
 
-服务器使用与官方 Moodle 移动应用相同的令牌访问 Moodle 的 Web 服务。该令牌通过 Moodle 移动应用的启动流程获取（需要你已在浏览器中登录 Moodle）；服务器从不索要、也不会看到你的密码。早稲田 Moodle 的令牌有效期约一周，托管版会自动续期（见「安全与隐私」）。
+服务器通过以下两种通道之一访问 Moodle：
+
+- **网页会话**：你的 Moodle 登录会话（`MoodleSession` Cookie）。服务器像浏览器一样读取 Moodle 页面并调用其
+  AJAX 服务。
+- **移动应用服务**：官方 Moodle 应用使用的 Web 服务和令牌。仅当早稻田开启该服务且已保存令牌时使用，否则使用
+  网页会话。
+
+服务器从不索要、也不会看到你的密码。可通过浏览器扩展或粘贴会话 Cookie 连接。Moodle 会结束 4 小时没有活动的
+会话，因此服务器约每小时发送一次轻量请求以保持会话；在 Moodle 退出登录后会话即结束。使用扩展时，重新登录
+Moodle 后会自动重新连接。仅应用服务提供的少数信息，在网页会话下可能无法获取。
 
 ```
-AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- REST -->  Moodle web services
+AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- web session or REST -->  Waseda Moodle
                                               |
                                         D1 / KV (hosted)
 ```
@@ -75,7 +84,9 @@ AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- REST -->
 
 **公共实例**：由 Konata 提供的免费公共实例。
 
-1. 打开[公共实例](https://moodle.waseda-mcp.workers.dev)，通过书签小工具、浏览器扩展或粘贴启动链接连接 Moodle。全程不会要求输入密码。
+1. 打开[公共实例](https://moodle.waseda-mcp.workers.dev)，通过浏览器扩展或粘贴 Moodle 会话连接。粘贴方式：
+   登录 Moodle，打开开发者工具（F12）→“应用”（Firefox、Safari 为“存储”）→“Cookie”→
+   `https://wsdmoodle.waseda.jp`，复制 `MoodleSession` 的值。全程不会要求输入密码。
 2. 可选：在 **设置 → 本学期课程** 中确认本学期的课程。
 3. 在 **设置 → AI 连接** 中复制 MCP URL，添加到你的 AI 客户端（见[客户端](#客户端)）。
 
@@ -143,7 +154,7 @@ Gemini CLI（`~/.gemini/settings.json`，使用 `httpUrl`）：在服务器条�
 ```sh
 pnpm install
 pnpm build:stdio                                  # 生成 dist/stdio.js
-node dist/stdio.js connect -                      # 通过 stdin 粘贴启动链接
+node dist/stdio.js connect -                      # 通过 stdin 粘贴 MoodleSession Cookie，然后按 Ctrl-D
 ```
 
 客户端配置（大多数客户端使用的 JSON 格式）：
@@ -164,11 +175,14 @@ node dist/stdio.js connect -                      # 通过 stdin 粘贴启动链
 | 选项 | 含义 |
 |---|---|
 | `--read-only` / `WMM_READ_ONLY=1` | 只注册读取类工具 |
-| `WMM_TOKEN` | 令牌或启动链接；优先于令牌文件 |
-| `WMM_CONFIG_DIR` | 配置目录（默认 `~/.config/waseda-moodle-mcp`；令牌文件权限 0600） |
+| `WMM_SESSION` | `MoodleSession` Cookie；设置它或 `WMM_TOKEN` 后不再使用已保存的文件 |
+| `WMM_TOKEN` | 应用令牌或启动链接（仅在早稻田应用服务开启时可用） |
+| `WMM_CONFIG_DIR` | 配置目录（默认 `~/.config/waseda-moodle-mcp`；凭据文件权限 0600） |
 | `HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` | 出站代理设置 |
 
-stdio 模式以明文保存令牌（文件权限 0600），不支持在控制台审批写操作，也不支持 `create_upload_link`。
+Cookie 的复制方法见[快速开始](#快速开始)。本地服务器运行期间每小时发送一次轻量请求以保持会话；当 Moodle 结束
+会话（例如你退出登录）后，请重新运行 `connect` 并重启服务器。stdio 模式以明文保存会话 Cookie 和应用令牌（文件权限
+0600），不支持在控制台审批写操作，也不支持 `create_upload_link`。
 
 ## 工具
 
@@ -214,8 +228,9 @@ stdio 模式以明文保存令牌（文件权限 0600），不支持在控制台
 
 ## 安全与隐私
 
-- 从不索要 Moodle 密码。Moodle 令牌加密存储（AES-256-GCM，使用运营者的 `MASTER_KEY`）。
-- 自动续期：托管版加密保存一个 Moodle 网页会话（只发送给 Moodle），令牌到期时自动取得新令牌，无需每周重新连接。
+- 从不索要 Moodle 密码。Moodle 会话 Cookie、会话密钥和应用令牌（如有）加密存储（AES-256-GCM，使用运营者的 `MASTER_KEY`），仅发送给 Moodle。
+- 会话拥有与登录 Moodle 相同的访问权限。托管版约每小时发送一次轻量请求保持会话（应用服务开启时还会自动续期应用令牌）。在 Moodle 退出登录后会话即结束。
+- 浏览器扩展仅读取 `wsdmoodle.waseda.jp` 的 `MoodleSession` Cookie，且只发送到你配置的服务。
 - 文件内容以流式传输，不做存储。下载和上传链接使用 HMAC 签名，分别在 15 分钟和 30 分钟后失效。
 - 早大邮箱（可选）：服务器保存加密的 Google 授权、邮箱地址、Google 账号 ID、所授权限和连接时间。邮箱中的邮件只中转给 AI 客户端，从不保存；你准备的邮件（无论是否发出）与写操作记录一同保留 90 天。5 MB 以内的附件通过签名链接下载，更大的附件请在 Gmail 中打开。阅读邮件不会将其标为已读。
 - API 密钥以哈希形式存储。OAuth 访问令牌有效期 12 小时，刷新令牌 90 天。
@@ -249,5 +264,6 @@ stdio 模式以明文保存令牌（文件权限 0600），不支持在控制台
 
 ## 免责声明
 
-本项目为非官方项目，与早稻田大学无关，也未获得其认可。
-所使用的 Moodle 令牌与官方 Moodle 移动应用使用的令牌相同（每位用户一个）。服务器从不吊销或重置该令牌；令牌到期时托管版会自动取得新令牌，无法取得时才提示你重新连接。
+本项目为非官方项目，与早稻田大学无关，也未获其认可。服务器使用你本人的登录状态操作 Moodle，从不让你退出
+Moodle 登录，也从不吊销或重置 Moodle 应用令牌（与官方 Moodle 移动应用使用的是同一个）。当 Moodle 结束连接且
+扩展尚未自动重新连接时，会提示你重新连接。

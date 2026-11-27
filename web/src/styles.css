@@ -984,26 +984,6 @@ fieldset {
   word-break: break-all;
 }
 
-.bookmarklet {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border: 1px dashed var(--accent);
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-  cursor: grab;
-  user-select: none;
-}
-.bookmarklet:hover {
-  text-decoration: none;
-}
-.bookmarklet:active {
-  cursor: grabbing;
-}
-
 /* Tabs --------------------------------------------------------------------- */
 .tabs {
   display: flex;

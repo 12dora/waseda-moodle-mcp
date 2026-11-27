@@ -53,8 +53,8 @@ Edit `wrangler.local.jsonc`:
 
 | Name | Kind | Default | Meaning |
 |---|---|---|---|
-| `PUBLIC_URL` | var | `https://wasemoodle.example.com` | Public origin, no trailing slash. Used for the MCP resource URL (`/mcp`), OAuth redirects, signed file links and the bookmarklet. Must match the domain you serve from. |
-| `REGISTRATION` | var | `allowlist` | `open`: anyone with a valid Waseda Moodle token can sign up. Any other value: allowlist. |
+| `PUBLIC_URL` | var | `https://wasemoodle.example.com` | Public origin, no trailing slash. Used for the MCP resource URL (`/mcp`), OAuth redirects, and signed file links. Must match the domain you serve from. |
+| `REGISTRATION` | var | `allowlist` | `open`: anyone who can sign in to Waseda Moodle can sign up. Any other value: allowlist. |
 | `ADMIN_MOODLE_USERIDS` | var | `""` | Moodle numeric user ids of the operators, who open the usage statistics and approve mail requests in the console; separated by commas, spaces or semicolons. Empty means nobody — with mail enabled, set at least one, or nobody can be approved. |
 | `ALLOWED_MOODLE_USERIDS` | var | `""` | Moodle numeric user ids allowed to create an account in allowlist mode; separated by commas, spaces or semicolons. Existing users can always reconnect. |
 | `SYLLABUS_LOOKUP` | var | `on` | `off` disables fetching the public Waseda syllabus (the timetable then has no slots). |
@@ -65,7 +65,7 @@ Edit `wrangler.local.jsonc`:
 | `MAIL_SLOTS` | var (optional) | `""` (80) | How many Moodle users may ever connect mail. Slots are never given back, matching Google's lifetime cap of 100 users for an unverified app; keep a margin below 100, since Google also counts consents that never completed here. `0` = no new connections, `off` = no limit (only for a verified app). |
 | `MAIL_IDLE_DAYS` | var (optional) | `""` (90) | Days without a mail tool call after which a mail connection is revoked by the daily cleanup. `off` = never. The same cleanup always disconnects users who are no longer approved (or no longer operators). |
 | `GOOGLE_CLIENT_SECRET` | secret (optional) | unset | Google OAuth client secret of the mail connection. |
-| `MASTER_KEY` | secret | required | 32 random bytes, base64. Encrypts Moodle tokens, Moodle session cookies, Google mail authorizations and short-lived handoff/OAuth blobs, and keys the HMAC for file links. Changing it makes stored tokens unreadable (users must reconnect). |
+| `MASTER_KEY` | secret | required | 32 random bytes, base64. Encrypts Moodle session cookies, session keys and app tokens, Google mail authorizations and short-lived handoff/OAuth blobs, and keys the HMAC for file links. Changing it makes stored credentials unreadable (users must reconnect). |
 
 Set the secret:
 
@@ -84,8 +84,12 @@ wrangler d1 migrations apply waseda-moodle-mcp --remote --config wrangler.local.
 wrangler d1 migrations apply waseda-moodle-mcp --local  --config wrangler.local.jsonc   # for wrangler dev
 ```
 
-Migrations `0001`-`0004` create users, credentials, sessions, API keys, actions, upload
-drafts, audit, handoffs, OAuth requests, rate limits, course snapshots and the syllabus cache.
+The migrations create users, credentials, sessions, API keys, actions, upload drafts, audit, handoffs,
+OAuth requests, rate limits, course snapshots, the syllabus cache, the calendar feed, usage statistics and
+mail. Migration `0014` adds the Moodle web session channel: the token columns of `credentials` become
+optional, `credentials.sesskey_enc` holds the encrypted Moodle session key, and the new `site_state` table
+holds site flags (`mobile_service`: whether Waseda's app service is on; it starts off and the cron keeps it
+current). Existing connections are kept.
 
 ## 5. Build and deploy
 
@@ -106,28 +110,36 @@ equal this origin exactly, otherwise OAuth discovery and file links break. Check
 
 ## 7. Cron
 
-Schedule: `17 0-14,16,19,22-23 * * *` (UTC), i.e. hourly at :17 from 07:17 to 23:17 JST, plus
-01:17 and 04:17 JST.
+Schedule: `17 * * * *` (UTC), i.e. every hour at :17, around the clock.
 
-Each run first keeps credentials alive: for up to 30 users, least recently visited first, it asks Moodle's mobile launch page for
-the current token with the user's Moodle web session (one call; a new token replaces the stored
-one once Moodle has issued it), or opens that session with the private token (three calls,
-retried after 6 hours at the earliest). Moodle ends an idle session after 4 hours, hence the two
-night runs, which do nothing else. The session cookie is stored encrypted with `MASTER_KEY` and
-sent only to `wsdmoodle.waseda.jp`.
+The server reaches Moodle in one of two ways: through the mobile app service (a token) when Waseda has it
+on, otherwise through the user's web session (Moodle's pages and AJAX services). Moodle ends a web session
+after 4 hours without a request, so every run first keeps connections alive:
 
-The daytime runs then perform a course sweep with the Moodle calls left: up to 20 users with an active credential (never-swept users
-first, then least recently swept), at most 2 course refreshes per user and at most 44 Moodle
-calls per invocation. It stores compact course snapshots used by `get_due_items` and
-`get_course_updates`. The 03:17 UTC run additionally purges expired data in D1 (see
-[privacy.md](privacy.md)) and expired OAuth data in KV in small batches.
+1. One request reads Moodle's public site configuration and updates `site_state.mobile_service` when it
+   changed.
+2. For up to 30 users with a stored session, longest idle first (sessions used in the last 45 minutes are
+   skipped): when the app service is on and a private token exists, the token is renewed through Moodle's
+   mobile launch page (if the session has ended, the private token opens a new one, at most once every
+   6 hours); otherwise one light AJAX request (`core_session_touch`) keeps the session open. A session
+   Moodle has ended is removed, and the account asks for a reconnect when no usable token is left.
+
+Session cookies and session keys are stored encrypted with `MASTER_KEY` and sent only to
+`wsdmoodle.waseda.jp`.
+
+The runs from 07:17 to 23:17 JST then perform a course sweep with the Moodle calls left: up to 20 users
+with an active credential (never-swept users first, then least recently swept), at most 2 course refreshes
+per user and at most 44 Moodle calls per invocation. It stores compact course snapshots used by
+`get_due_items` and `get_course_updates`. The night runs (00:17 to 06:17 JST) only keep connections alive.
+The 03:17 UTC run additionally purges expired data in D1 (see [privacy.md](privacy.md)) and expired OAuth
+data in KV in small batches.
 
 ## 8. Registration modes
 
 - **Allowlist** (default): only the listed Moodle user ids can create an account. Use this for a private instance.
 - **Open**: any Waseda Moodle user can sign up. Consider the Free-tier limits below before opening.
 
-Users of any instance must hold a valid token for `wsdmoodle.waseda.jp`; other Moodle sites
+Users of any instance must be able to sign in to `wsdmoodle.waseda.jp`; other Moodle sites
 are rejected.
 
 ## 9. Free-tier limits that matter
@@ -135,16 +147,16 @@ are rejected.
 | Limit (Free) | Value | How the code stays within it |
 |---|---|---|
 | Worker requests | 100,000 / day | Static console assets are served without invoking the Worker; per-user MCP limit 120 calls / 60 s |
-| CPU per invocation | 10 ms | Moodle calls are I/O; responses are rendered as compact markdown |
-| Subrequests per invocation | 50 | Moodle client capped at 40 calls per request (token renewals included); cron at 44, shared by keepalive and sweep |
+| CPU per invocation | 10 ms | Moodle calls are I/O; web pages are parsed in linear time without a DOM library; responses are rendered as compact markdown |
+| Subrequests per invocation | 50 | Moodle client capped at 40 calls per request (every page, form post and AJAX request counts, token renewals included); cron at 44, shared by keepalive and sweep |
 | D1 queries per invocation | 50 | The cron meters its D1 queries (purge, keepalive, sweep) and stops at 45 |
 | D1 | 5M reads, 100k writes / day, 500 MB | Rate-limit counters skip writes when already over limit; snapshots and logs are purged on schedule |
 | KV | 100k reads, 1k writes / day | KV used only for OAuth; access tokens last 12 h to reduce refresh writes |
 | Cron triggers | 5 | One trigger used |
 
 Built-in per-IP limits: `/authorize` 60 / 10 min, `/register` 20 / h, `/api/connect` 60 / 10 min,
-handoff 60 / h, extension refresh 300 / h per IP and 6 / h per token. If the rate-limit store
-fails, requests are allowed (fail open).
+handoff 60 / h, extension refresh 300 / h per IP and 6 / h per token (per account when only a session is
+sent). If the rate-limit store fails, requests are allowed (fail open).
 
 Monitor your Cloudflare usage in the dashboard (Workers & Pages -> Metrics, D1 and KV
 analytics), especially in open registration mode.
@@ -162,7 +174,13 @@ configuration and is not required.
 The MV3 extension in `extension/` needs no build. Load it unpacked
 (`chrome://extensions` -> Developer mode -> Load unpacked -> `extension/`) and set your
 `PUBLIC_URL` as the service URL in its options. To point users at a store listing, set
-`EXTENSION_URL`.
+`EXTENSION_URL`; the console then recommends the extension on its connect page.
+
+The extension reads only the `MoodleSession` cookie of `wsdmoodle.waseda.jp` (the `cookies` permission) and
+sends it to your service: when the user connects, again after each new Moodle sign-in, and about every 12
+hours. Without the extension, users paste the cookie value on the connect page. Users on version 1.0 of the
+extension need the update (older versions can only send launch links) and must agree once more in its
+settings. Deploy the server before publishing a newer extension.
 
 ## 12. Updating
 
@@ -173,6 +191,9 @@ wrangler d1 migrations apply waseda-moodle-mcp --remote --config wrangler.local.
 pnpm --filter waseda-moodle-mcp-web run build
 wrangler deploy --config wrangler.local.jsonc
 ```
+
+When updating past migration 0014 (Moodle web session), also set the cron schedule in `wrangler.local.jsonc`
+to `17 * * * *`, so stored sessions are kept alive every hour.
 
 When updating past migration 0013 (mail access approval), re-run its backfill once after deploying, so mail
 connections made between the migration and the deploy count as approved instead of being disconnected:

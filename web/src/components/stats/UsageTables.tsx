@@ -130,7 +130,7 @@ export function ActionsTable({ actions, fmt }: { actions: UsageStats['actions'];
   );
 }
 
-/** Current connection state plus renewal totals for the range. */
+/** Current connection state plus keepalive and token-renewal totals for the range. */
 export function CredentialsTable({ stats, fmt }: { stats: UsageStats; fmt: Fmt }) {
   const { t } = useI18n();
   const c = stats.credentials;
@@ -138,9 +138,10 @@ export function CredentialsTable({ stats, fmt }: { stats: UsageStats; fmt: Fmt }
   const rows: Array<[string, string, number]> = [
     ['active', t('stats.cred.active'), c.active],
     ['invalid', t('stats.cred.invalid'), c.invalid],
-    ['autoRenew', t('stats.cred.autoRenew'), c.autoRenew],
+    ['sessions', t('stats.cred.sessions'), c.sessions],
     ['renewed', t('stats.cred.renewed', days), c.renewed],
     ['kept', t('stats.cred.kept', days), c.kept],
+    ['ended', t('stats.cred.ended', days), c.ended],
     ['failed', t('stats.cred.failed', days), c.failed],
   ];
   return (

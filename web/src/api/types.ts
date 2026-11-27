@@ -10,6 +10,7 @@ export type {
   CourseSchedule,
   CourseSlot,
   CourseUpdate,
+  CredentialInfo,
   DayNote,
   DueItem,
   DueList,
@@ -149,9 +150,10 @@ export interface OAuthRequestInfo {
   scopes: Scope[];
 }
 
-/** POST /api/connect body (§11): a handoff code, or a pasted launch link. */
+/** POST /api/connect body: a hand-off code, or the pasted MoodleSession cookie or launch link. */
 export type ConnectRequest =
   | { code: string; switchAccount?: boolean }
+  | { session: string; via: 'paste' }
   | { launch: string; via: 'paste'; passport?: string };
 
 export interface CoursesResponse {

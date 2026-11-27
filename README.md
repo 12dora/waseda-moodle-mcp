@@ -67,13 +67,20 @@ stdio process. Unofficial; not affiliated with Waseda University.
 
 ## How it works
 
-The server talks to Moodle's web services using the same token the official Moodle mobile app
-uses. That token is obtained from Moodle's mobile-app launch flow while you are signed in to
-Moodle in your browser; your password is never requested or seen. On Waseda Moodle the token
-lasts about a week; the hosted server keeps it renewed automatically (see Security and privacy).
+The server reaches Moodle through one of two channels:
+
+- **Web session**: your Moodle sign-in session (the `MoodleSession` cookie). The server reads Moodle's pages
+  and calls its AJAX services, as your browser does.
+- **Mobile app service**: the web services of the official Moodle app, with its token. Used only when Waseda
+  has the service on and a token is stored; otherwise the web session is used.
+
+Your password is never requested or seen. You connect with the browser extension or by pasting the session
+cookie. Moodle ends a session after 4 hours without activity, so the server sends a light request about once
+an hour to keep it alive; signing out of Moodle ends it. With the extension, signing in to Moodle again
+reconnects by itself. A few details that only the app service provides may be missing on the web session.
 
 ```
-AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- REST -->  Moodle web services
+AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- web session or REST -->  Waseda Moodle
                                               |
                                         D1 / KV (hosted)
 ```
@@ -82,8 +89,10 @@ AI client  <-- MCP (HTTP or stdio) -->  MCP server (Worker / Node)  <-- REST -->
 
 **Public instance** — operated by Konata, free:
 
-1. Open the [public instance](https://moodle.waseda-mcp.workers.dev) and connect Moodle with the
-   bookmarklet, the browser extension, or by pasting the launch link. Your password is never asked for.
+1. Open the [public instance](https://moodle.waseda-mcp.workers.dev) and connect Moodle with the browser
+   extension, or by pasting the Moodle session: sign in to Moodle, open the developer tools (F12) →
+   Application (Firefox and Safari: Storage) → Cookies → `https://wsdmoodle.waseda.jp`, and copy the value of
+   `MoodleSession`. Your password is never asked for.
 2. Optionally confirm this term's courses under **Settings → This term's courses**.
 3. Copy the MCP URL from **Settings → AI clients** and add it to your AI client (see [Clients](#clients)).
 
@@ -160,7 +169,7 @@ Gemini CLI (`~/.gemini/settings.json`, use `httpUrl`): add
 ```sh
 pnpm install
 pnpm build:stdio                                  # produces dist/stdio.js
-node dist/stdio.js connect -                      # paste the launch link on stdin
+node dist/stdio.js connect -                      # paste the MoodleSession cookie on stdin, then Ctrl-D
 ```
 
 Client configuration (JSON form used by most clients):
@@ -181,12 +190,15 @@ Or with Claude Code: `claude mcp add waseda-moodle -- node /path/to/dist/stdio.j
 | Option | Meaning |
 |---|---|
 | `--read-only` / `WMM_READ_ONLY=1` | Register read tools only |
-| `WMM_TOKEN` | Token or launch link; overrides the token file |
-| `WMM_CONFIG_DIR` | Config directory (default `~/.config/waseda-moodle-mcp`; token file mode 0600) |
+| `WMM_SESSION` | `MoodleSession` cookie; when this or `WMM_TOKEN` is set, the saved file is not used |
+| `WMM_TOKEN` | App token or launch link (only works while Waseda's app service is on) |
+| `WMM_CONFIG_DIR` | Config directory (default `~/.config/waseda-moodle-mcp`; credential file mode 0600) |
 | `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | Outbound proxy settings |
 
-Stdio stores the token in plain text (file mode 0600) and does not support console approval
-of writes or `create_upload_link`.
+Copy the cookie as in [Quick start](#quick-start). While running, the local server keeps the session alive with
+a light request every hour; when Moodle ends it (for example after you sign out), run `connect` again and
+restart the server. Stdio stores the session cookie and any app token in plain text (file mode 0600) and does
+not support console approval of writes or `create_upload_link`.
 
 ## Tools
 
@@ -234,8 +246,9 @@ are shown in JST. The server never takes quizzes.
 
 ## Security and privacy
 
-- No Moodle password is ever requested. The Moodle token is encrypted at rest (AES-256-GCM with the operator's `MASTER_KEY`).
-- Automatic renewal: the hosted server keeps a Moodle web session (stored encrypted, sent only to Moodle) and uses it to pick up a new token when the old one expires, so you do not have to reconnect every week.
+- No Moodle password is ever requested. The Moodle session cookie, its session key and the app token (if any) are encrypted at rest (AES-256-GCM with the operator's `MASTER_KEY`) and sent only to Moodle.
+- A session gives the same access as being signed in to Moodle. The hosted server keeps it alive with a light request about once an hour (and renews the app token while the app service is on). Signing out of Moodle ends it.
+- The browser extension reads only the `MoodleSession` cookie of `wsdmoodle.waseda.jp` and sends it only to the service you configure.
 - File contents are streamed, not stored. Download and upload links are HMAC-signed and expire in 15 and 30 minutes.
 - Waseda mail (optional): the server keeps the Google authorization (encrypted), your address, Google account id, granted permissions and connection times. Mail in your mailbox passes through to your AI client and is never stored; a mail you prepare (sent or not) is kept with its action for 90 days. Attachments up to 5 MB download through signed links; larger ones open in Gmail. Reading mail never marks it read.
 - API keys are stored as hashes. OAuth access tokens last 12 hours, refresh tokens 90 days.
@@ -272,6 +285,6 @@ Layout: `src/core` (runtime-agnostic services, Moodle client, MCP tools), `src/w
 ## Disclaimer
 
 This is an unofficial project and is not affiliated with or endorsed by Waseda University.
-The Moodle token it uses is the same token the official Moodle mobile app uses (one per
-user). This server never revokes or resets it; when it expires the hosted server picks up the new
-one automatically, and asks you to reconnect only if that is not possible.
+It acts on Moodle with your own sign-in. This server never signs you out of Moodle, and never revokes or
+resets the Moodle app token (the same one the official Moodle mobile app uses). When Moodle ends the
+connection, you are asked to reconnect unless the extension has already done it.
