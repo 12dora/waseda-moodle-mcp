@@ -37,6 +37,9 @@ const ASSIGN_STATUS: ReadonlyArray<[RegExp, DueSubmission['status'], boolean]> =
   [/^(?:reopened|再オープン(?:済み)?)$/i, 'reopened', false],
 ];
 
+/** A grade cell holds a number once graded; '-' or '' means not graded. */
+const hasGrade = (value: string | undefined): boolean => /\d/.test(value ?? '');
+
 /** An overview row; null when its status text is not one this server knows (another language, a new string). */
 function assignState(row: { values: Record<string, string>; text: Record<string, string> }): DueSubmission | null {
   const shown = (row.values.submissionstatus ?? row.text.submissionstatus ?? '').trim();
@@ -44,7 +47,7 @@ function assignState(row: { values: Record<string, string>; text: Record<string,
   if (!known) return null;
   const [, status, graded] = known;
   // whether Moodle still lets the user edit is not shown there
-  return { status, canContinue: false, submittedAt: null, graded: graded || Boolean(row.values.grade), note: null };
+  return { status, canContinue: false, submittedAt: null, graded: graded || hasGrade(row.values.grade), note: null };
 }
 
 async function courseAssignments(api: MoodleApi, courseId: number, cmids: readonly number[]): Promise<Found> {

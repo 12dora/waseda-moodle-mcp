@@ -64,7 +64,7 @@ describe('attachSubmissions on the web channel', () => {
       pages: {
         [OVERVIEW_A]: overview([
           row(7201, '評定のために提出済み', '85.00000'),
-          row(7202, '提出なし'),
+          row(7202, '提出なし', '-'),
           row(7203, 'Draft (not submitted)'),
         ]),
         [OVERVIEW_B]: overview([row(7204, 'Mystery status')]),

@@ -1,11 +1,12 @@
 /**
  * The mod/forum view page (`/mod/forum/view.php?id=<cmid>` or `?f=<forum id>`): forum identity and settings the page
  * shows, plus its discussion list (`<tr data-region="discussion-list-item" data-discussionid>` rows, Moodle 4/5
- * mod_forum/discussion_list template). The forum id is on the inline add-discussion form (hidden `forum`), the
+ * mod_forum/discussion_list template; blog-like forums: forum-blog.ts). The forum id is on the inline add-discussion form (hidden `forum`), the
  * "add discussion" / subscribe links or the rows; an empty announcements forum shows none of them.
  */
 
 import { attr, findAll, findFirst, findForm, formFields, links, pageConfig, queryInt, text } from '../html';
+import { parseBlogRows } from './forum-blog';
 import { textSeconds, timesIn } from './forum-time';
 
 export interface DiscussionRow {
@@ -122,7 +123,7 @@ function timesOf(row: string): { created: number | null; modified: number | null
   return { created: null, modified: titled.at(-1) ?? null };
 }
 
-export function parseDiscussionRows(html: string): DiscussionRow[] {
+function parseDiscussionRows(html: string): DiscussionRow[] {
   const out: DiscussionRow[] = [];
   for (const tr of findAll(html, { attr: 'data-discussionid', tag: 'tr' })) {
     const discussion = Number(attr(tr.attrs, 'data-discussionid'));
@@ -188,17 +189,19 @@ function hasNextPage(html: string, pageNo: number): boolean {
 
 export function parseForumView(html: string, pageNo = 0): ForumView {
   const cfg = pageConfig(html);
+  const type = forumType(html);
   return {
     cmid: cfg.contextInstanceId,
     courseId: cfg.courseId,
     forumId: forumIdOf(html),
-    type: forumType(html),
+    type,
     name: nameOf(html),
     intro: introOf(html),
     dueDate: dueDateOf(html),
     canCreate: canCreateOf(html),
     subscriptionChoice: links(html).some((h) => h.includes('/mod/forum/subscribe.php')),
-    rows: parseDiscussionRows(html),
+    // a blog-like forum lists its discussions as their first posts, not as a table
+    rows: type === 'blog' ? parseBlogRows(html) : parseDiscussionRows(html),
     hasNextPage: hasNextPage(html, pageNo),
   };
 }

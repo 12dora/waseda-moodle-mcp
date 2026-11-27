@@ -13,7 +13,7 @@ import type { WebPage, WebSession } from '../types';
 import { formErrors } from './assign-page';
 import { deleteConfirm, formBody, type PostForm, parsePostForm } from './forum-form';
 import { forgetForums } from './forum-store';
-import { parseDiscussionRows } from './forum-view';
+import { parseForumView } from './forum-view';
 
 type Params = Record<string, unknown>;
 
@@ -75,7 +75,7 @@ async function submit(web: WebSession, form: PostForm, what: string): Promise<st
 async function newDiscussionId(web: WebSession, location: string, forumId: number, subject: string): Promise<number> {
   const direct = location.includes('discuss.php') ? queryInt(location, 'd') : null;
   if (direct) return direct;
-  const rows = parseDiscussionRows((await web.page(`/mod/forum/view.php?f=${forumId}`)).html);
+  const rows = parseForumView((await web.page(`/mod/forum/view.php?f=${forumId}`)).html).rows;
   const ids = rows.filter((r) => r.subject.trim() === subject.trim()).map((r) => r.discussion);
   if (ids.length > 0) return Math.max(...ids);
   throw new MoodleError(
