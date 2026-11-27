@@ -527,9 +527,9 @@ describe('Moodle data routes', () => {
     vi.mocked(getDueItems).mockResolvedValue({ items: [] } as never);
     const res = await call('/api/due?days=7&course_id=42', { cookie });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ items: [] });
+    expect(await res.json()).toMatchObject({ items: [], stale: false });
     const [ctx, opts] = vi.mocked(getDueItems).mock.calls[0] ?? [];
-    expect(opts).toMatchObject({ daysAhead: 7, courseId: 42 });
+    expect(opts).toMatchObject({ daysAhead: 7, courseId: 42, sweep: 'cached' });
     expect(ctx).toMatchObject({
       mode: 'worker',
       source: 'Console',

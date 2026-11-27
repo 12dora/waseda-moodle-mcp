@@ -1,6 +1,6 @@
 /** Moodle data, write-action approval and the activity log. */
 
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import { cancelAction, confirmAction, listActionRecords } from '../../core/services/actions';
 import { getDueItems } from '../../core/services/due';
 import { resolveScope } from '../../core/services/scope';
@@ -8,7 +8,7 @@ import { getCourseUpdates } from '../../core/services/sweep';
 import { getTimetable } from '../../core/services/timetable';
 import { isoJst } from '../../core/time';
 import type { ActionStatus } from '../../core/types';
-import type { AppEnv } from '../auth';
+import { type AppEnv, deferOn } from '../auth';
 import { consoleContext, intParam, MAX_COURSE_ID, oneOf, session, storeOf } from './shared';
 
 const ACTION_STATUSES: readonly ActionStatus[] = [
@@ -20,20 +20,41 @@ const ACTION_STATUSES: readonly ActionStatus[] = [
   'superseded',
 ];
 
+/** The options of GET /api/due and the cache key they make (one stored answer per user and query). */
+function dueQuery(q: Record<string, string>) {
+  const opts = {
+    daysAhead: intParam(q.days, 'days', { min: 1, max: 120 }) ?? 14,
+    overdueDays: intParam(q.overdue_days, 'overdue_days', { min: 0, max: 60 }),
+    courseId: intParam(q.course_id, 'course_id', { min: 1, max: MAX_COURSE_ID }),
+  };
+  const key = `days=${opts.daysAhead}&overdue_days=${opts.overdueDays ?? ''}&course_id=${opts.courseId ?? ''}`;
+  return { opts, key };
+}
+
+/**
+ * Stale-while-revalidate for the console: the stored answer of the same query comes back at once (`stale: true`); the
+ * console then asks again with `refresh=1`, which computes the list, stores it and answers it (`stale: false`), as does
+ * a query without a stored answer. The sweep reads the course snapshots the hourly cron keeps (no live course pages):
+ * one Moodle web session serialises its requests, so a live sweep made the answer take 20 s. MCP get_due_items stays
+ * live.
+ */
+async function dueRoute(c: Context<AppEnv>) {
+  const user = c.get('user');
+  const store = storeOf(c.env);
+  const { opts, key } = dueQuery(c.req.query());
+  const cached = c.req.query('refresh') === '1' ? null : await store.getDueCache(user.id, key);
+  if (cached) return c.json({ ...cached.list, cachedAt: isoJst(cached.createdAt), stale: true });
+
+  const list = await getDueItems(await consoleContext(c, user), { ...opts, sweep: 'cached' });
+  const createdAt = Date.now();
+  deferOn(c, store.putDueCache(user.id, key, { list, createdAt }));
+  return c.json({ ...list, cachedAt: isoJst(createdAt), stale: false });
+}
+
 export function dataRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
-  app.get('/api/due', session, async (c) => {
-    const ctx = await consoleContext(c, c.get('user'));
-    const q = c.req.query();
-    return c.json(
-      await getDueItems(ctx, {
-        daysAhead: intParam(q.days, 'days', { min: 1, max: 120 }) ?? 14,
-        overdueDays: intParam(q.overdue_days, 'overdue_days', { min: 0, max: 60 }),
-        courseId: intParam(q.course_id, 'course_id', { min: 1, max: MAX_COURSE_ID }),
-      }),
-    );
-  });
+  app.get('/api/due', session, dueRoute);
 
   // every enrolled course with its kind / mine / suggested flags; Settings → This term's courses edits the scope
   app.get('/api/courses', session, async (c) => {

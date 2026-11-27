@@ -106,6 +106,7 @@ const USER_OWNED_TABLES = [
   'course_snapshots',
   'inferred_schedules',
   'calendar_feeds',
+  'due_cache',
   'mail_credentials',
   'mail_access',
   'audit',

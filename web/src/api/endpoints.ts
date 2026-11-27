@@ -10,9 +10,9 @@ import type {
   CalendarStatus,
   ConnectRequest,
   ConnectResult,
+  ConsoleDueList,
   CourseOverview,
   CoursesResponse,
-  DueList,
   MailAccess,
   MailRequestAction,
   MailRequestList,
@@ -41,7 +41,9 @@ export const deleteAccount = () => api.del<unknown>('/api/me');
 
 export const patchSettings = (patch: SettingsPatch) => api.patch<{ settings: UserSettings }>('/api/settings', patch);
 
-export const getDue = (days = 14) => api.get<DueList>('/api/due', { query: { days } });
+/** `refresh`: compute the list now (a background call after a stale answer, not counted as use). */
+export const getDue = (days = 14, refresh = false) =>
+  api.get<ConsoleDueList>('/api/due', { query: { days, refresh: refresh ? 1 : undefined }, background: refresh });
 export const getCourses = () => api.get<CoursesResponse>('/api/courses');
 export const getTimetable = (date: string, days: number) =>
   api.get<Timetable>('/api/timetable', { query: { date, days } });

@@ -1,6 +1,5 @@
 import { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { getDue } from '../api/endpoints';
 import type { DueItem, DueList } from '../api/types';
 import { Card } from '../components/Card';
 import { DueRow } from '../components/DueRow';
@@ -12,7 +11,7 @@ import { PageLoading } from '../components/Spinner';
 import { useI18n } from '../i18n';
 import { groupDue } from '../lib/due';
 import { formatDateTime } from '../lib/time';
-import { useAsync } from '../lib/useAsync';
+import { useDue } from '../lib/useDue';
 
 function courseOptions(items: DueItem[]): Array<[number, string]> {
   const map = new Map<number, string>();
@@ -58,7 +57,7 @@ function DueFooter({ list }: { list: DueList }) {
 
 export function DuePage() {
   const { t } = useI18n();
-  const due = useAsync(() => getDue(14));
+  const due = useDue(14);
   const [courseId, setCourseId] = useState<number | 'all'>('all');
   const filterId = useId();
 
@@ -92,6 +91,7 @@ export function DuePage() {
                 ))}
               </select>
             </div>
+            {due.refreshing && <span className="muted small">{t('due.updating')}</span>}
           </div>
 
           {groups.length === 0 ? (

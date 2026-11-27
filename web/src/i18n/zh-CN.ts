@@ -163,6 +163,7 @@ export const zhCN: Dictionary = {
   'due.manage': '本学期课程',
   'due.empty': '未来 14 天内没有截止事项。',
   'due.truncated': '列表可能不完整。',
+  'due.updating': '正在更新…',
   'due.opens': '{time} 开放',
   'due.notOpen': '未开放',
   'due.source.calendar': '日历',

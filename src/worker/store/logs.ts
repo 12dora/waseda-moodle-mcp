@@ -8,6 +8,7 @@ const RATE_LIMIT_RETENTION_MS = 86_400_000;
 const COURSE_SNAPSHOT_RETENTION_MS = 30 * 86_400_000;
 const INFERRED_SCHEDULE_RETENTION_MS = 30 * 86_400_000; // read for 7 days; older rows only serve as a fallback
 const SYLLABUS_RETENTION_MS = 400 * 86_400_000; // a syllabus is valid for its academic year
+const DUE_CACHE_RETENTION_MS = 7 * 86_400_000; // the console's copy of a due list (privacy texts: 7 days)
 
 interface AuditRaw {
   id: number;
@@ -87,5 +88,6 @@ async function purgeTables(db: D1Database, now: number): Promise<Record<string, 
       'DELETE FROM inferred_schedules WHERE checked_at < ?',
       now - INFERRED_SCHEDULE_RETENTION_MS,
     ),
+    dueCache: await run('DELETE FROM due_cache WHERE created_at < ?', now - DUE_CACHE_RETENTION_MS),
   };
 }

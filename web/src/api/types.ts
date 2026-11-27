@@ -37,6 +37,7 @@ import type {
   Course,
   CourseUpdate,
   CredentialInfo,
+  DueList,
   IsoJst,
   ScheduleOverride,
   Scope,
@@ -158,6 +159,15 @@ export type ConnectRequest =
   | { code: string; switchAccount?: boolean }
   | { session: string; via: 'paste'; switchAccount?: boolean }
   | { launch: string; via: 'paste'; passport?: string; switchAccount?: boolean };
+
+/**
+ * GET /api/due: the due list as computed at `cachedAt`. `stale`: the server answered its stored copy at once; ask again
+ * with refresh for the current list.
+ */
+export interface ConsoleDueList extends DueList {
+  cachedAt: IsoJst;
+  stale: boolean;
+}
 
 export interface CoursesResponse {
   mode: 'mine' | 'auto';

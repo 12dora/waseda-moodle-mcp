@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router';
-import { getDue, getTimetable, getUpdates, listActions } from '../api/endpoints';
+import { getTimetable, getUpdates, listActions } from '../api/endpoints';
 import type { Me } from '../api/types';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -20,6 +20,7 @@ import { PENDING_LIMIT, pendingCountText } from '../lib/pending';
 import { formatDateTime } from '../lib/time';
 import { todayJst } from '../lib/timetable';
 import { useAsync } from '../lib/useAsync';
+import { useDue } from '../lib/useDue';
 import { useConfig, useSession } from '../session';
 
 /** MCP URL at hand; the per-client setup lives in Settings → AI clients. */
@@ -78,7 +79,7 @@ function ConnectionCard({ me }: { me: Me }) {
 
 function UpcomingCard() {
   const t = useT();
-  const due = useAsync(() => getDue(14));
+  const due = useDue(14);
   const items = due.data ? outstandingItems(due.data.items) : [];
   return (
     <Card title={t('overview.due.title')} actions={<Link to="/due">{t('overview.due.viewAll')}</Link>}>
@@ -98,6 +99,7 @@ function UpcomingCard() {
           <Link to="/settings/courses">{t('due.manage')}</Link>
         </p>
       )}
+      {due.refreshing && <p className="muted small">{t('due.updating')}</p>}
     </Card>
   );
 }

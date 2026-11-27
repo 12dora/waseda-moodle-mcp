@@ -169,6 +169,7 @@ export const en = {
   'due.manage': "This term's courses",
   'due.empty': 'No deadlines in the next 14 days.',
   'due.truncated': 'The list may be incomplete.',
+  'due.updating': 'Updating…',
   'due.opens': 'Opens {time}',
   'due.notOpen': 'Not open',
   'due.source.calendar': 'Calendar',
