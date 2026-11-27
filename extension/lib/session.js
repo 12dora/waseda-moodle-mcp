@@ -1,5 +1,5 @@
 // The Moodle web session as the extension sees it. Pure; no chrome.* access here.
-import { MOODLE_ORIGIN } from './capture.js';
+import { MOODLE_ORIGIN } from './moodle.js';
 
 /** `chrome.cookies.get` query for the only cookie the extension reads. */
 export const SESSION_COOKIE = { url: `${MOODLE_ORIGIN}/`, name: 'MoodleSession' };

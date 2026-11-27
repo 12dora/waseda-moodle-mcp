@@ -1,6 +1,6 @@
 import { debounce, singleFlight } from './lib/async.js';
-import { buildConnectUrl, buildLaunchUrl, extractLaunchHref, LOGIN_URL, randomPassport } from './lib/capture.js';
 import { hasConsentFor } from './lib/consent.js';
+import { buildConnectUrl, LOGIN_URL } from './lib/moodle.js';
 import {
   createSessionWatcher,
   isSignedInAnswer,
@@ -12,12 +12,11 @@ import {
 
 // Storage (chrome.storage.local): serviceUrl, consent {serviceUrl, scope, at}, lastSync {at, result}.
 // chrome.storage.session: pendingSignIn {tabId, until} while Connect waits for the user to sign in to Moodle.
-// The MoodleSession cookie and the launch link are read when needed; they are never stored or logged.
+// The MoodleSession cookie is read when needed, only after consent; it is never stored or logged.
 const ALARM = 'wmm-refresh';
 const REFRESH_MINUTES = 12 * 60;
 const SIGNIN_TIMEOUT_MS = 10 * 60 * 1000;
 const SESSION_SETTLE_MS = 5000;
-const LAUNCH_TIMEOUT_MS = 5000;
 
 const getState = () => chrome.storage.local.get(['serviceUrl', 'consent', 'lastSync']);
 
@@ -84,27 +83,10 @@ async function readSignedInSession() {
   return readSessionCookie();
 }
 
-/** Optional extra for when Moodle's app service is on: `{ launch, passport }`, or `{}` when the page gives no link. */
-async function captureLaunch() {
-  const passport = randomPassport();
-  try {
-    const res = await fetch(buildLaunchUrl(passport), {
-      credentials: 'include',
-      cache: 'no-store',
-      signal: AbortSignal.timeout(LAUNCH_TIMEOUT_MS),
-    });
-    const launch = res.ok ? extractLaunchHref(await res.text()) : null;
-    return launch ? { launch, passport } : {};
-  } catch {
-    return {};
-  }
-}
-
 /** Exchanges the session for a short-lived single-use code: `{ code }`, or `{ error }` (a sync result). */
 async function createHandoff(serviceUrl, session) {
-  const extra = await captureLaunch();
   try {
-    const res = await postJson(`${serviceUrl}/api/connect/handoff`, { session, via: 'extension', ...extra });
+    const res = await postJson(`${serviceUrl}/api/connect/handoff`, { session, via: 'extension' });
     if (res.status === 429) return { error: 'rate_limited' };
     const body = res.ok ? await res.json().catch(() => null) : null;
     return typeof body?.code === 'string' && body.code ? { code: body.code } : { error: 'server_error' };
@@ -192,8 +174,15 @@ async function connect() {
 }
 
 const isNewSession = createSessionWatcher();
+// Before consent a cookie change is neither read nor compared. Events run one at a time, in order: the watcher pairs
+// a removal with the new value that follows it.
+let cookieEvents = Promise.resolve();
 chrome.cookies.onChanged.addListener((change) => {
-  if (isNewSession(change)) sessionSync.schedule();
+  cookieEvents = cookieEvents
+    .then(async () => {
+      if ((await getConsentedServiceUrl()) && isNewSession(change)) sessionSync.schedule();
+    })
+    .catch(() => {});
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {

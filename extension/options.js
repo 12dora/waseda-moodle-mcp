@@ -1,6 +1,6 @@
 import { applyI18n, t } from './i18n.js';
-import { normalizeServiceUrl } from './lib/capture.js';
 import { hasConsentFor, makeConsent, privacyUrl } from './lib/consent.js';
+import { normalizeServiceUrl } from './lib/moodle.js';
 
 applyI18n();
 const input = document.getElementById('serviceUrl');
@@ -45,6 +45,7 @@ consentBox.addEventListener('change', () => {
 });
 
 async function clearAll() {
+  if (stored.serviceUrl) await chrome.permissions.remove({ origins: [`${stored.serviceUrl}/*`] }).catch(() => {});
   await chrome.storage.local.remove(['serviceUrl', 'consent', 'lastSync']);
   stored = {};
   boxOrigin = undefined;

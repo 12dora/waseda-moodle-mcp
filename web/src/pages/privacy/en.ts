@@ -39,7 +39,7 @@ export const en: PrivacyDoc = {
               [
                 'Moodle app token and optional private token (only when Waseda’s app service is on)',
                 'To call Moodle through its app service and renew the token',
-                'Received from a launch link, which you paste or the extension reads. Encrypted like the session; a hash and the last 4 characters are kept to recognise the token. With a private token, the service renews the token automatically and, for that, can open a Moodle sign-in session of its own; when the token was last renewed is kept.',
+                'Received from a launch link you paste, or obtained by the service from Moodle with your session. Encrypted like the session; a hash and the last 4 characters are kept to recognise the token. With a private token, the service renews the token automatically and, for that, can open a Moodle sign-in session of its own; when the token was last renewed is kept.',
               ],
               ['Moodle user id, full name, language', 'To identify your account', 'Read from Moodle when you connect.'],
               [
@@ -225,9 +225,9 @@ export const en: PrivacyDoc = {
         { p: 'The extension only helps you connect your Moodle account to the service you choose.' },
         {
           ul: [
-            'What it reads: the MoodleSession cookie of https://wsdmoodle.waseda.jp, and no other cookie; it asks Moodle whether that session is signed in. When you connect, it also requests the Moodle app launch page there: while Waseda’s app service is on, the launch link on it, which contains the app token, is sent along with the cookie. It does not read your browsing history or other sites.',
-            'Where it sends data: only to the service URL you configure in its options (for which it asks for permission). Nothing is sent to the extension developer or anyone else.',
-            'What it stores: the service URL, when you agreed to send data to it, the time and result of the last sync and, while a connect waits for you to sign in (until the browser closes at most), the id of that tab. The session cookie and the token are never stored in the extension, and nothing is read or sent until you agree in its settings.',
+            'What it reads: the MoodleSession cookie of https://wsdmoodle.waseda.jp, and no other cookie; it asks Moodle whether that session is signed in. It does not read your browsing history or other sites.',
+            'Where it sends data: only to the service URL you configure in its options (for which it asks for permission). The data goes only to that service, and whoever operates it receives it.',
+            'What it stores: the service URL, when you agreed to send data to it, the time and result of the last sync and, while a connect waits for you to sign in (until the browser closes at most), the id of that tab. The session cookie is never stored in the extension, and nothing is read or sent until you agree in its settings.',
             'Staying connected: when you sign in to Moodle again, and about every 12 hours, it sends the current session cookie to your service. The service accepts it only for an account that is already connected.',
             'Permissions: storage, alarms, cookies, host access to wsdmoodle.waseda.jp, and optional access to your service origin.',
           ],

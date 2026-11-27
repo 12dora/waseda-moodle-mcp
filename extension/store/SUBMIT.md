@@ -73,7 +73,7 @@ screen and use the same text.
 | Justification: cookies, storage, alarms | Matching table rows |
 | Host permission justification | The combined host block |
 | Remote code | No, I am not using remote code |
-| Data usage | Tick Authentication information and Website content only |
+| Data usage | Tick Authentication information only |
 | Certifications | Tick all three |
 | Privacy policy URL | `<service URL>/privacy` |
 
@@ -133,7 +133,7 @@ give them a check without an account and point to the source.
 Limit: 500 characters.
 
 ```text
-No test account: Waseda Moodle accepts university sign-in only. To check: in Settings enter https://example.com, tick consent, Save, allow access. In the popup click Connect: the Moodle sign-in page opens and nothing is sent to the service while signed out. After sign-in, the MoodleSession cookie (and app launch link, if offered) goes only to that URL; cookie again on new sign-ins and every 12 h. Source: https://github.com/12dora/waseda-moodle-mcp/tree/main/extension
+No test account: Waseda Moodle accepts university sign-in only. To check: in Settings enter https://example.com, tick consent, Save, allow access. In the popup click Connect: the Moodle sign-in page opens and nothing is sent to the service while signed out. After sign-in, the MoodleSession cookie goes only to that URL; cookie again on new sign-ins and every 12 h. Source: https://github.com/12dora/waseda-moodle-mcp/tree/main/extension
 ```
 
 ### Note B — Edge notes for certification
@@ -150,9 +150,9 @@ Check without an account:
 4. Click Connect. The Moodle sign-in page opens in a tab. Nothing is sent to the service URL while signed out (see the service worker's network log). Close the tab to end the wait.
 5. Untick consent and Save to withdraw it.
 
-With a Waseda account: after sign-in the extension reads the MoodleSession cookie, posts it to <service URL>/api/connect/handoff and opens <service URL>/connect to finish linking the account. If Moodle offers its app launch link, that is sent too. After a new Moodle sign-in, every 12 hours and on "Sync now", it posts the cookie to <service URL>/api/extension/refresh. Nothing is sent anywhere else.
+With a Waseda account: after sign-in the extension reads the MoodleSession cookie, posts it to <service URL>/api/connect/handoff and opens <service URL>/connect to finish linking the account. After a new Moodle sign-in, every 12 hours and on "Sync now", it posts the cookie to <service URL>/api/extension/refresh. Nothing is sent anywhere else.
 
-Permissions: cookies reads that one cookie; storage keeps the URL, consent and last result; alarms runs the 12-hour sync; the optional https://*/* permission exists because the user types the service address, and only that origin is requested.
+Permissions: cookies reads that one cookie, only after consent; storage keeps the URL, consent and last result; alarms runs the 12-hour sync; the optional https://*/* permission exists because the user types the service address, and only that origin is requested.
 
 Source (the package is this folder, unminified, no build step, no remote code): https://github.com/12dora/waseda-moodle-mcp/tree/main/extension
 Key files: background.js, lib/session.js, lib/consent.js.

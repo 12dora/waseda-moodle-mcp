@@ -27,7 +27,7 @@ dashboard. The limit is 132 characters. To change it, edit the locale file, rais
 
 | Locale | Text |
 |---|---|
-| en | Keeps your Waseda Moodle session connected to your own Moodle MCP service. Unofficial — not affiliated with Waseda University. |
+| en | Keeps your Waseda Moodle session connected to your Waseda Moodle MCP service. Unofficial — not affiliated with Waseda University. |
 | ja | 早稲田 Moodle のサインインを Moodle MCP サービスに連携し、接続を維持します。非公式 — 早稲田大学とは関係ありません。 |
 | zh-CN | 将早稻田 Moodle 的登录会话连接到 Moodle MCP 服务，并保持连接。非官方 — 与早稻田大学无关。 |
 
@@ -46,9 +46,8 @@ WHAT IT DOES
 
 WHAT IT SENDS, AND WHERE
 • Your Moodle sign-in session: the MoodleSession cookie of wsdmoodle.waseda.jp. No other cookie is read.
-• The Moodle app launch link, which contains an app token, only if Moodle offers one when you connect.
 • Destination: only the HTTPS service URL you enter in Settings.
-• Nothing is sent until you tick the consent box. Your password and browsing history are not read. The extension does not save the cookie or the token.
+• Nothing is sent until you tick the consent box. Your password and browsing history are not read. The extension does not save the cookie.
 
 BEFORE YOU CONNECT
 The session gives the same access as being signed in to Moodle. Enter only a service you trust: one you host yourself, or an instance whose operator you trust. That operator receives the data listed above. The service's privacy policy is linked in Settings.
@@ -75,9 +74,8 @@ Unofficial. Not affiliated with, endorsed by or sponsored by Waseda University, 
 
 送信する情報と送信先
 • Moodle のサインインセッション：wsdmoodle.waseda.jp の MoodleSession Cookie。ほかの Cookie は読み取りません。
-• Moodle アプリの起動リンク（アプリトークンを含みます）：連携時に Moodle が提供している場合のみ。
 • 送信先：設定で入力した HTTPS のサービス URL のみ。
-• 同意のチェックを入れるまで何も送信しません。パスワードと閲覧履歴は読み取りません。拡張機能は Cookie もトークンも保存しません。
+• 同意のチェックを入れるまで何も送信しません。パスワードと閲覧履歴は読み取りません。拡張機能は Cookie を保存しません。
 
 連携する前に
 このセッションがあれば、Moodle にサインインしているのと同じ操作ができます。自分で運用するサービス、または運営者を信頼できるサービスのみを指定してください。上記の情報はその運営者が受け取ります。サービスのプライバシーポリシーは設定画面から開けます。
@@ -104,9 +102,8 @@ Unofficial. Not affiliated with, endorsed by or sponsored by Waseda University, 
 
 发送哪些数据、发送到哪里
 • Moodle 登录会话：wsdmoodle.waseda.jp 的 MoodleSession Cookie。不读取任何其他 Cookie。
-• Moodle 应用启动链接（含应用令牌）：仅当连接时 Moodle 提供该链接。
 • 发送目标：只有你在设置中填写的 HTTPS 服务地址。
-• 在你勾选同意框之前不发送任何内容。不读取你的密码和浏览记录。扩展不保存 Cookie 和令牌。
+• 在你勾选同意框之前不发送任何内容。不读取你的密码和浏览记录。扩展不保存 Cookie。
 
 连接前请注意
 持有该会话等同于以你的身份登录 Moodle。请只填写你信任的服务：自己部署的服务，或运营者值得信任的实例。上述数据会由该运营者接收。服务的隐私政策可在设置页面打开。
