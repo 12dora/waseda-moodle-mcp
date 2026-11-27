@@ -1,7 +1,7 @@
 /** Files passed straight to prepare_submission (text, base64 or, in local mode, a path). */
 
 import type { ServiceContext } from '../../context';
-import { InvalidInput, NotFound } from '../../errors';
+import { InvalidInput, NotFound, withOwnStep } from '../../errors';
 import { formatBytes } from '../../format';
 import type { InlineFile } from '../../types';
 import { guessMime, sanitizeFileName } from './filenames';
@@ -75,14 +75,17 @@ async function assertReadablePath(requested: string, real: string, name: string)
   }
 }
 
+const missingFile = (path: string) =>
+  withOwnStep(new NotFound(`Local file not found: ${path}. Check the path and prepare again.`));
+
 async function readLocalFile(path: string, limit: number, name: string): Promise<Loaded> {
   if (!/^(\/|[A-Za-z]:[\\/])/.test(path)) throw new InvalidInput(`File '${name}': path must be absolute.`);
   const fs = await import('node:fs/promises');
   const real = await fs.realpath(path).catch(() => null);
-  if (!real) throw new NotFound(`Local file not found: ${path}`);
+  if (!real) throw missingFile(path);
   await assertReadablePath(path, real, name);
   const st = await fs.stat(real).catch(() => null);
-  if (!st?.isFile()) throw new NotFound(`Local file not found: ${path}`);
+  if (!st?.isFile()) throw missingFile(path);
   if (st.size > limit) throw new InvalidInput(`File '${name}' is larger than ${formatBytes(limit)}.`);
   return { bytes: new Uint8Array(await fs.readFile(real)), source: real };
 }

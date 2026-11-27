@@ -189,7 +189,7 @@ async function downloadToTemp(api: MoodleApi, file: LocalCopy): Promise<string |
     return url.pathToFileURL(target).href;
   }
   const res = await api.fetchFile(`${api.baseUrl}${file.path}`);
-  if (!res.ok || !res.body) throw new MoodleUnavailable('Moodle did not return the file. Try again later.');
+  if (!res.ok || !res.body) throw new MoodleUnavailable('Moodle did not return the file.');
   const fh = await fs.open(target, 'w', 0o600);
   let complete = false;
   try {
@@ -210,14 +210,18 @@ const browserUrl = (baseUrl: string, path: string) =>
 
 // ------------------------------------------------------------------ download link
 
+const FILE_GONE = 'That file is no longer in Moodle (it may have been removed or replaced).';
+const NO_FILE_ACCESS =
+  'You do not have access to that file in Moodle: the teacher may have hidden it. Check the activity on Moodle.';
+
 const FATAL_PROBE_ERRORS = [NeedsReconnect, NotFound, Forbidden, BudgetExceeded];
 
 /** HEAD for size / mime / name. Failures other than "gone", "forbidden" or "reconnect" just mean no metadata. */
 async function probeHeaders(api: MoodleApi, path: string): Promise<Headers> {
   try {
     const head = await api.fetchFile(`${api.baseUrl}${path}`, { method: 'HEAD' });
-    if (head.status === 404) throw new NotFound('That file was not found in Moodle.');
-    if (head.status === 403) throw new Forbidden('You do not have access to that file in Moodle.');
+    if (head.status === 404) throw new NotFound(FILE_GONE);
+    if (head.status === 403) throw new Forbidden(NO_FILE_ACCESS);
     void head.body?.cancel().catch(() => undefined);
     return head.headers;
   } catch (e) {

@@ -4,7 +4,7 @@
  */
 
 import type { MoodleApi, ServiceContext, UploadDraftRow } from '../../context';
-import { InvalidInput, MoodleError, MoodleUnavailable, NotFound } from '../../errors';
+import { InvalidInput, MoodleError, MoodleUnavailable, NotFound, withOwnStep } from '../../errors';
 import { formatBytes } from '../../format';
 import { nowMs } from '../../time';
 import type { FileRef, InlineFile } from '../../types';
@@ -27,7 +27,9 @@ export const perFileLimit = (maxBytes: number | null | undefined): number =>
 
 async function loadUploadRow(ctx: ServiceContext, uploadId: string, cmid: number, what: string) {
   const row = await ctx.store.getUploadDraft(uploadId);
-  if (!row || row.userId !== ctx.user.id) throw new NotFound('Upload not found. Create a new upload link.');
+  if (!row || row.userId !== ctx.user.id) {
+    throw withOwnStep(new NotFound('Upload not found. Create a new one with create_upload_link.'));
+  }
   if (row.expiresAt <= nowMs()) throw new InvalidInput(USED_UPLOAD);
   if (row.cmid !== cmid) throw new InvalidInput(`That upload belongs to a different ${what}.`);
   return row;
@@ -48,13 +50,17 @@ export function checkFileList(files: FileInfo[], limit: number, accepted: string
   const names = new Set<string>();
   for (const f of files) {
     const key = f.name.toLowerCase();
-    if (names.has(key)) throw new InvalidInput(`Duplicate file name '${f.name}'. Use unique names.`);
+    if (names.has(key)) throw new InvalidInput(`Two files are named '${f.name}'. Rename one and prepare again.`);
     names.add(key);
     if (f.size > limit) {
-      throw new InvalidInput(`File '${f.name}' is ${formatBytes(f.size)}; the limit is ${formatBytes(limit)}.`);
+      throw new InvalidInput(
+        `File '${f.name}' is ${formatBytes(f.size)}; the limit is ${formatBytes(limit)}. Compress or split it and prepare again.`,
+      );
     }
     if (!fileTypeAccepted(f.name, accepted)) {
-      throw new InvalidInput(`File '${f.name}' is not an accepted type (${accepted.join(', ')}).`);
+      throw new InvalidInput(
+        `File '${f.name}' is not an accepted type (${accepted.join(', ')}). Convert it to one of these and prepare again.`,
+      );
     }
   }
   return names;

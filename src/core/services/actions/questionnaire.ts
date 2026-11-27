@@ -190,11 +190,15 @@ async function answerableForm(ctx: ServiceContext, api: MoodleApi, cmid: number,
   }
   const { submitIds } = form;
   if (!form.complete || !submitIds) {
-    throw new InvalidInput('Not every page of this questionnaire could be read; answer it in Moodle.');
+    throw new InvalidInput(
+      `Not every page of this questionnaire could be read. Ask the user to answer it on Moodle: ${url}`,
+    );
   }
   if (form.unsupported?.length) {
     const list = form.unsupported.join(', ');
-    throw new InvalidInput(`This questionnaire has questions this server cannot answer (${list}); use Moodle.`);
+    throw new InvalidInput(
+      `This questionnaire has questions this server cannot answer (${list}). Ask the user to answer it on Moodle: ${url}`,
+    );
   }
   if (!final && form.canDraft === false) {
     throw new InvalidInput('This questionnaire cannot be saved as a draft; submit it (final: true) or use Moodle.');

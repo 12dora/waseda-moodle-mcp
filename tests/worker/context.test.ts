@@ -214,7 +214,7 @@ describe('ctx.moodle()', () => {
 
     it('cannot use a token alone while the mobile web service is off', async () => {
       await storeCredential();
-      await expect((await build()).moodle()).rejects.toThrow(/browser extension or Moodle session cookie/);
+      await expect((await build()).moodle()).rejects.toThrow(/connection has ended/);
       expect(created).toHaveLength(0);
       expect(await store.getCredential(userId)).toMatchObject({ status: 'active' }); // nothing is thrown away
     });

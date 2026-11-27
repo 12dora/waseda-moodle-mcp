@@ -29,11 +29,22 @@ export function pasteRequest(input: string, launchUrl: string): PasteRequest | n
   return { session: value, via: 'paste' };
 }
 
-/** Error codes that mean Moodle (or the server) refused the pasted text itself. */
-const REFUSED = new Set(['invalid_input', 'needs_reconnect']);
+/** What went wrong with the pasted text, by the server's error code (account_switch is handled by the page). */
+const PASTE_ERRORS: Readonly<Record<'session' | 'launch', Readonly<Record<string, MessageKey>>>> = {
+  session: {
+    invalid_input: 'connect.paste.notCookie',
+    needs_reconnect: 'connect.paste.signedOut',
+    forbidden: 'connect.paste.notAllowed',
+  },
+  launch: {
+    invalid_input: 'connect.paste.badLaunch',
+    needs_reconnect: 'connect.paste.badLaunch',
+    forbidden: 'connect.paste.notAllowed',
+  },
+};
 
-/** Message for refused paste input; null for any other failure (it keeps its usual text). */
+/** Message for refused paste input; null for any other failure (it keeps its usual text, e.g. the rate-limit wait). */
 export function pasteErrorKey(e: unknown, request: PasteRequest): MessageKey | null {
-  if (!(e instanceof ApiError) || !REFUSED.has(e.code)) return null;
-  return 'session' in request ? 'connect.paste.badSession' : 'connect.paste.badLaunch';
+  if (!(e instanceof ApiError)) return null;
+  return PASTE_ERRORS['session' in request ? 'session' : 'launch'][e.code] ?? null;
 }

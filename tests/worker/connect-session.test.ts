@@ -157,6 +157,19 @@ describe('POST /api/connect with a session', () => {
     expect(await store.getUserByMoodleId(1001)).toBeNull();
   });
 
+  it('asks before a pasted cookie of another Moodle account replaces the signed-in one', async () => {
+    const cookie = sessionCookieOf(await post('/api/connect', { session: TARO }));
+    const refused = await post('/api/connect', { session: HANAKO, via: 'paste' }, { cookie });
+    expect(refused.status).toBe(409);
+    const asked = { error: { code: 'account_switch' }, account: { fullname: 'Hanako Sato' } };
+    expect(await json(refused)).toMatchObject(asked);
+    expect(refused.headers.get('Set-Cookie')).toBeNull();
+    const same = await post('/api/connect', { session: TARO_AGAIN, via: 'paste' }, { cookie });
+    expect(same.status).toBe(200);
+    const switched = await post('/api/connect', { session: HANAKO, via: 'paste', switchAccount: true }, { cookie });
+    expect((await json(switched)).user.moodleUserId).toBe(1002);
+  });
+
   it('applies the registration policy', async () => {
     expect((await post('/api/connect', { session: 'sessionvalue00000outside' })).status).toBe(403);
     expect(await store.getUserByMoodleId(9999)).toBeNull();

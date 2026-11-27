@@ -1,79 +1,144 @@
 # Store listing — Waseda Moodle MCP Connector
 
-Paste into the Chrome Web Store and Edge Add-ons dashboards. Keep this copy, the privacy page
-(`<serviceUrl>/privacy`, e.g. `https://wasemoodle.example.com/privacy`) and the code in sync.
+Listing copy for the Chrome Web Store and Microsoft Edge Add-ons. Related files:
+[SUBMIT.md](SUBMIT.md) (steps), [permissions.md](permissions.md) (privacy answers),
+[screenshots.md](screenshots.md) (images). Keep this copy, the privacy page (`<service URL>/privacy`) and the code in
+sync.
 
-Assets: `icon-128.svg` (store icon, 96×96 art + 16 px padding), `logo-300.svg` (Edge logo),
-`promo-440x280.svg` (small promo tile). Render PNGs with `node scripts/render-store-assets.mjs`.
-Screenshots (1280×800) come from the real UI, taken in a demo environment.
+## Common fields
 
-## Dashboard answers
-
-- **Single purpose:** Send the user's Waseda Moodle sign-in session, with their consent, only to the Moodle MCP service
-  URL they configure, to connect their account and keep it connected.
-- **Remote code:** No, I am not using remote code.
-- **Data usage:** Authentication information; Website content. Certify all three Limited Use statements.
-- **Privacy policy URL:** `https://<PUBLIC_URL>/privacy`
-
-## Permission justifications
-
-| Permission | Justification |
+| Field | Value |
 |---|---|
-| `cookies` | Reads only the `MoodleSession` cookie of `wsdmoodle.waseda.jp`, to connect the account and keep the connection (including after the user signs in to Moodle again). The cookie is sent only to the service URL the user agreed to, and is never stored by the extension. No other cookie or site is read. |
-| `storage` | Stores the service URL, the user's consent for that URL and the last sync result locally, and, for the current browser session, which tab is waiting for the Moodle sign-in. Never stores the cookie. |
-| `alarms` | Sends the current session to the service about every 12 hours while the user stays signed in to Moodle. |
-| Host `https://wsdmoodle.waseda.jp/*` | Required to read the `MoodleSession` cookie, to check whether the user is signed in, and to read the Moodle app launch link when Moodle offers it. No other sites. |
-| Optional host `https://*/*` | The service origin is entered by the user and unknown at install time. On Save the extension requests only that HTTPS origin. Nothing is requested at install. |
+| Store name | `Waseda Moodle MCP Connector` (read from the package) |
+| Publisher name | `12dora` |
+| Category, Chrome | Productivity → Education |
+| Category, Edge | Productivity |
+| Languages | English (default), Japanese, Chinese (Simplified) |
+| Mature content | No |
+| Price | Free |
+| Homepage / website | `https://github.com/12dora/waseda-moodle-mcp` |
+| Support URL | `https://github.com/12dora/waseda-moodle-mcp/issues` |
+| Privacy policy URL | `<service URL>/privacy` (`<service URL>` is the instance's `PUBLIC_URL`) |
 
-## English
+## Short description
 
-**Short description (≤132):**
-Connects your Waseda Moodle sign-in to your own MCP service and keeps it connected.
+Both stores read this from the package (`extDescription` in `_locales/*/messages.json`); it is not typed into the
+dashboard. The limit is 132 characters. To change it, edit the locale file, raise the version and upload again.
 
-**Detailed description:**
-Connects your Waseda Moodle account to a Moodle MCP service you operate and keeps it connected.
+| Locale | Text |
+|---|---|
+| en | Keeps your Waseda Moodle session connected to your own Moodle MCP service. Unofficial — not affiliated with Waseda University. |
+| ja | 早稲田 Moodle のサインインを Moodle MCP サービスに連携し、接続を維持します。非公式 — 早稲田大学とは関係ありません。 |
+| zh-CN | 将早稻田 Moodle 的登录会话连接到 Moodle MCP 服务，并保持连接。非官方 — 与早稻田大学无关。 |
 
-After you enter your service URL and agree in Settings, the extension reads one cookie, MoodleSession on
-wsdmoodle.waseda.jp (your Moodle sign-in session), and sends it only to that HTTPS URL. If Moodle offers the app launch
-link, it is sent along. The extension never stores either of them and never sends them to the developer. Your password
-is not read.
+## Full description
 
-Choose Connect to link your account; if you are not signed in to Moodle, a sign-in tab opens and the connection
-continues automatically. The session is sent again when you sign in to Moodle again and about every 12 hours. Signing
-out of Moodle in this browser ends the connection until your next sign-in, which reconnects automatically.
+Plain text: paste the content of each block as it is.
 
-Unofficial. Not affiliated with Waseda University or Open LMS. Requires an existing Moodle MCP server.
+### English
 
-## 日本語
+```text
+Connects your Waseda Moodle account to a Waseda Moodle MCP service, so that AI assistants you link to that service can look up your assignments, deadlines, timetable and course updates.
 
-**短い説明:**
-早稲田 Moodle のサインインを自分の MCP サービスに連携し、接続を維持します。
+WHAT IT DOES
+• Connect: sign in to Waseda Moodle as usual and click Connect. The service's console opens and links your account.
+• Stay connected: when you sign in to Moodle again, and about every 12 hours, your current session is sent so the connection keeps working. "Sync now" in Settings does the same on demand.
 
-**詳細な説明:**
-早稲田 Moodle のアカウントを、利用者が運用する Moodle MCP サービスに連携し、接続を維持します。
+WHAT IT SENDS, AND WHERE
+• Your Moodle sign-in session: the MoodleSession cookie of wsdmoodle.waseda.jp. No other cookie is read.
+• The Moodle app launch link, which contains an app token, only if Moodle offers one when you connect.
+• Destination: only the HTTPS service URL you enter in Settings.
+• Nothing is sent until you tick the consent box. Your password and browsing history are not read. The extension does not save the cookie or the token.
 
-設定でサービス URL を入力して同意すると、wsdmoodle.waseda.jp の Cookie のうち MoodleSession（Moodle
-のサインインセッション）のみを読み取り、その HTTPS URL にだけ送信します。Moodle
-がアプリ起動リンクを提供している場合は、あわせて送信します。拡張機能はいずれも保存せず、開発者へ送ることもありません。パスワードは読み取りません。
+BEFORE YOU CONNECT
+The session gives the same access as being signed in to Moodle. Enter only a service you trust: one you host yourself, or an instance whose operator you trust. That operator receives the data listed above. The service's privacy policy is linked in Settings.
 
-「連携」を選ぶとアカウントを連携します。Moodle
-に未サインインの場合はサインイン用タブが開き、サインイン後に自動で続行します。セッションは、Moodle に再度サインインしたときと約 12
-時間ごとに送信されます。このブラウザで Moodle からサインアウトすると接続は終了し、次回のサインインで自動的に再接続します。
+STOPPING
+Untick the consent box and save, or remove the extension. Signing out of Moodle in this browser ends the session the service holds; while the extension is set up, your next sign-in reconnects automatically.
 
-非公式の拡張機能です。早稲田大学および Open LMS とは関係ありません。Moodle MCP サーバーが別途必要です。
+REQUIREMENTS
+A Waseda Moodle account and a Waseda Moodle MCP service. An instance may limit who can sign up.
 
-## 简体中文
+Open source: https://github.com/12dora/waseda-moodle-mcp
 
-**简短说明:**
-将早稻田 Moodle 的登录会话连接到你自己的 MCP 服务，并保持连接。
+Unofficial. Not affiliated with, endorsed by or sponsored by Waseda University, Moodle Pty Ltd or Open LMS.
+```
 
-**详细说明:**
-将你的早稻田 Moodle 账户连接到你自己运行的 Moodle MCP 服务，并保持连接。
+### 日本語
 
-在设置中填写服务 URL 并同意后，扩展只读取 wsdmoodle.waseda.jp 的一个 Cookie：MoodleSession（你的 Moodle
-登录会话），并仅发送到该 HTTPS 地址。如果 Moodle 提供应用启动链接，会一并发送。扩展不会保存它们，也不会发送给开发者，也不读取你的密码。
+```text
+早稲田 Moodle のアカウントを Waseda Moodle MCP サービスに連携します。サービスに接続した AI アシスタントから、課題、締切、時間割、コースの更新情報を確認できるようになります。
 
-点击“连接”即可关联账户；若尚未登录 Moodle，会打开登录标签页，登录后自动继续。重新登录 Moodle 时以及约每 12
-小时，会再次发送会话。在此浏览器中退出 Moodle 会结束连接，下次登录时自动重新连接。
+主な機能
+• 連携：通常どおり早稲田 Moodle にサインインして「連携」をクリックします。サービスのコンソールが開き、アカウントが連携されます。
+• 接続の維持：Moodle に再度サインインしたときと約 12 時間ごとに、現在のセッションを送信して接続を保ちます。設定の「今すぐ同期」で手動でも送信できます。
 
-非官方工具，与早稻田大学及 Open LMS 无关。需要已有的 Moodle MCP 服务器。
+送信する情報と送信先
+• Moodle のサインインセッション：wsdmoodle.waseda.jp の MoodleSession Cookie。ほかの Cookie は読み取りません。
+• Moodle アプリの起動リンク（アプリトークンを含みます）：連携時に Moodle が提供している場合のみ。
+• 送信先：設定で入力した HTTPS のサービス URL のみ。
+• 同意のチェックを入れるまで何も送信しません。パスワードと閲覧履歴は読み取りません。拡張機能は Cookie もトークンも保存しません。
+
+連携する前に
+このセッションがあれば、Moodle にサインインしているのと同じ操作ができます。自分で運用するサービス、または運営者を信頼できるサービスのみを指定してください。上記の情報はその運営者が受け取ります。サービスのプライバシーポリシーは設定画面から開けます。
+
+利用の停止
+同意のチェックを外して保存するか、拡張機能を削除してください。このブラウザで Moodle からサインアウトすると、サービスが保持するセッションは終了します。拡張機能を設定したままにしていると、次回のサインインで自動的に再接続します。
+
+必要なもの
+早稲田 Moodle のアカウントと Waseda Moodle MCP サービス。サービスによっては、利用登録できる人が限られます。
+
+ソースコード：https://github.com/12dora/waseda-moodle-mcp
+
+非公式の拡張機能です。早稲田大学、Moodle Pty Ltd、Open LMS とは関係がなく、承認や支援も受けていません。
+```
+
+### 简体中文
+
+```text
+将你的早稻田 Moodle 账户连接到 Waseda Moodle MCP 服务，让接入该服务的 AI 助手能够查询你的作业、截止时间、课程表和课程更新。
+
+功能
+• 连接：照常登录早稻田 Moodle，然后点击“连接”。扩展会打开该服务的控制台并关联你的账户。
+• 保持连接：当你重新登录 Moodle 时，以及大约每 12 小时，扩展会发送当前会话，使连接持续有效。也可以在设置中点击“立即同步”手动发送。
+
+发送哪些数据、发送到哪里
+• Moodle 登录会话：wsdmoodle.waseda.jp 的 MoodleSession Cookie。不读取任何其他 Cookie。
+• Moodle 应用启动链接（含应用令牌）：仅当连接时 Moodle 提供该链接。
+• 发送目标：只有你在设置中填写的 HTTPS 服务地址。
+• 在你勾选同意框之前不发送任何内容。不读取你的密码和浏览记录。扩展不保存 Cookie 和令牌。
+
+连接前请注意
+持有该会话等同于以你的身份登录 Moodle。请只填写你信任的服务：自己部署的服务，或运营者值得信任的实例。上述数据会由该运营者接收。服务的隐私政策可在设置页面打开。
+
+停止使用
+取消勾选同意框并保存，或直接移除扩展。在此浏览器中退出 Moodle 会结束服务所持有的会话；只要扩展仍保持设置，下次登录时会自动重新连接。
+
+使用条件
+需要早稻田 Moodle 账户和一个 Waseda Moodle MCP 服务。部分实例会限制可注册的用户。
+
+开源代码：https://github.com/12dora/waseda-moodle-mcp
+
+非官方扩展。与早稻田大学、Moodle Pty Ltd 及 Open LMS 无任何关联，也未获其认可或赞助。
+```
+
+## Search terms (Edge only)
+
+At most 7 terms per language, 30 characters per term and 21 words in total.
+
+| Locale | Terms |
+|---|---|
+| en | `Waseda Moodle` · `wsdmoodle` · `MCP` · `Model Context Protocol` · `assignment deadlines` · `AI assistant` |
+| ja | `早稲田 Moodle` · `wsdmoodle` · `MCP` · `課題 締切` · `時間割` · `AI アシスタント` |
+| zh-CN | `早稻田 Moodle` · `wsdmoodle` · `MCP` · `作业 截止时间` · `课程表` · `AI 助手` |
+
+## Graphic assets
+
+| File (in `extension/store/`) | Size | Chrome field | Edge field |
+|---|---|---|---|
+| `icon-128.png` | 128×128 | Store icon | — |
+| `logo-300.png` | 300×300 | — | Extension logo |
+| `promo-440x280.png` | 440×280 | Small promo tile | Small promotional tile |
+| `screenshots/<locale>/*.png` | 1280×800 | Screenshots | Screenshots |
+
+The PNGs are rendered from the SVG files of the same name with `node scripts/render-store-assets.mjs`.

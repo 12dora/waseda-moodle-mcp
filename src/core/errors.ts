@@ -2,6 +2,8 @@
 
 export class WmmError extends Error {
   readonly code: string;
+  /** The message already says what to do next: the central hints (mcp/error-hints) add nothing. See `withOwnStep`. */
+  ownStep = false;
   constructor(message: string, code = 'error') {
     super(message);
     this.name = new.target.name;
@@ -9,21 +11,42 @@ export class WmmError extends Error {
   }
 }
 
-/** Moodle returned an exception envelope (`errorcode`) or an unexpected payload. */
+/** Marks an error whose message names its own, more specific next step than the central hint would. */
+export function withOwnStep<E extends WmmError>(e: E): E {
+  e.ownStep = true;
+  return e;
+}
+
+/**
+ * Moodle returned an exception envelope (`errorcode`) or an unexpected payload. `url` is the Moodle page the error
+ * came from (no sesskey), when known: the hints point the user there.
+ */
 export class MoodleError extends WmmError {
   readonly errorcode: string;
   readonly exception: string;
-  constructor(message: string, errorcode = 'moodle_error', exception = '') {
+  readonly url: string | null;
+  constructor(message: string, errorcode = 'moodle_error', exception = '', opts: { url?: string | null } = {}) {
     super(message, errorcode || 'moodle_error');
     this.errorcode = errorcode;
     this.exception = exception;
+    this.url = opts.url ?? null;
   }
 }
 
-/** Network failure, timeout, HTTP 5xx or maintenance page. */
+/**
+ * Network failure, timeout, HTTP 5xx, or Moodle's maintenance page (`maintenance`; `until` = the end time its notice
+ * gives, as written there, null when it gives none).
+ */
 export class MoodleUnavailable extends WmmError {
-  constructor(message = 'Waseda Moodle is not reachable right now. Try again later.') {
+  readonly maintenance: boolean;
+  readonly until: string | null;
+  constructor(
+    message = 'Waseda Moodle is not reachable right now.',
+    opts: { maintenance?: boolean; until?: string | null } = {},
+  ) {
     super(message, 'moodle_unavailable');
+    this.maintenance = opts.maintenance ?? false;
+    this.until = opts.until ?? null;
   }
 }
 
@@ -47,10 +70,7 @@ export class MailUnavailable extends WmmError {
  * or accessexception with "token expired"). The local server replaces the message with its own (mcp/wording).
  */
 export class NeedsReconnect extends WmmError {
-  constructor(
-    message = 'The Moodle connection has ended. Reconnect in the console (browser extension or Moodle session cookie).',
-    code = 'needs_reconnect',
-  ) {
+  constructor(message = 'The Moodle connection has ended.', code = 'needs_reconnect') {
     super(message, code);
   }
 }
@@ -64,7 +84,7 @@ export class MailNeedsReconnect extends NeedsReconnect {
 
 /** Per-request Moodle call budget exhausted (Workers Free allows 50 subrequests per invocation). */
 export class BudgetExceeded extends WmmError {
-  constructor(message = 'Too many Moodle requests in one call. Narrow the request (e.g. pass course_id).') {
+  constructor(message = 'This request needs more Moodle requests than one call allows.') {
     super(message, 'budget_exceeded');
   }
 }
@@ -87,8 +107,11 @@ export class InvalidInput extends WmmError {
   }
 }
 
+/** `retryAfterSec`: how long to wait at most, when the limiter knows it. */
 export class RateLimited extends WmmError {
-  constructor(message = 'Too many requests. Slow down and retry shortly.') {
+  readonly retryAfterSec: number | null;
+  constructor(message = 'Too many requests.', retryAfterSec: number | null = null) {
     super(message, 'rate_limited');
+    this.retryAfterSec = retryAfterSec;
   }
 }

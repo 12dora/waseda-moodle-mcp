@@ -42,7 +42,14 @@ export function createSessionWatcher() {
   };
 }
 
-const REFRESH_FAILURES = { 404: 'unknown_user', 409: 'signin_required', 429: 'rate_limited' };
+// 409 = Moodle says the browser's session is signed out; 502/503 = Moodle unreachable or under maintenance
+const REFRESH_FAILURES = {
+  404: 'unknown_user',
+  409: 'signin_required',
+  429: 'rate_limited',
+  502: 'moodle_unavailable',
+  503: 'moodle_unavailable',
+};
 
 /** Sync result for an answer of `/api/extension/refresh`. */
 export function refreshResult(status, body) {

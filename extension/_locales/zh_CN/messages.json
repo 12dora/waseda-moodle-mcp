@@ -75,19 +75,22 @@
     "message": "已打开连接页面"
   },
   "resultSigninRequired": {
-    "message": "需要登录 Moodle"
+    "message": "需要登录 Moodle。登录 Moodle 后，连接会自动更新。"
   },
   "resultUnknownUser": {
     "message": "账户未连接，请点击“连接”。"
   },
   "resultRateLimited": {
-    "message": "请求过多，请稍后重试。"
+    "message": "尝试次数过多。请最多等待 1 小时；下次登录 Moodle 时扩展会自动重试。"
   },
   "resultServerError": {
-    "message": "服务错误"
+    "message": "服务错误。请稍后重试；如果持续出现，请打开控制台。"
+  },
+  "resultMoodleUnavailable": {
+    "message": "无法访问 Waseda Moodle（可能正在维护）。请稍后重试。"
   },
   "resultNetworkError": {
-    "message": "无法访问服务"
+    "message": "无法访问服务。请检查网络以及设置中的服务 URL。"
   },
   "resultPermissionMissing": {
     "message": "未授予服务访问权限，请在设置中重新保存 URL。"

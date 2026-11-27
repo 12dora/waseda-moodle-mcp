@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 import type { ServiceContext } from '../../src/core/context';
-import { MailNeedsReconnect, MoodleUnavailable, NeedsReconnect, WmmError } from '../../src/core/errors';
+import { MailNeedsReconnect, MoodleError, MoodleUnavailable, NeedsReconnect, WmmError } from '../../src/core/errors';
 import { MAIL_RECONNECT } from '../../src/core/mail/connection';
 import { defineTool } from '../../src/core/mcp/tools/define';
 import { registerTool, toToolError } from '../../src/core/mcp/tools/register';
@@ -163,7 +163,41 @@ describe('toToolError reconnect hints', () => {
 
     const moodle = toToolError(ctx, new NeedsReconnect('Expired.'));
     expect(moodle).not.toBeInstanceOf(MailNeedsReconnect);
-    expect(moodle.message).toBe(`Expired. Ask the user to reconnect at ${ORIGIN}/connect, then try again.`);
+    expect(moodle).toMatchObject({ code: 'needs_reconnect' });
+    expect(moodle.message).toMatch(/^Expired\. Ask the user to sign in to Waseda Moodle in their browser/);
+    expect(moodle.message).toContain(`reconnect at ${ORIGIN}/connect (paste the MoodleSession cookie)`);
+  });
+
+  it('adds the next step of the failing tool and keeps the error code', () => {
+    const { ctx } = makeFakeContext({ publicUrl: ORIGIN });
+    const e = toToolError(ctx, new MoodleError('Moodle could not find this item.', 'invalidrecord'), 'get_activity');
+    expect(e).toMatchObject({ code: 'invalidrecord' });
+    expect(e.message).toBe(
+      'Moodle could not find this item. It may have been deleted, or the id is wrong: call get_course again and use an id it lists.',
+    );
+    const plain = new WmmError('nope', 'invalid_input');
+    expect(toToolError(ctx, plain, 'get_activity')).toBe(plain);
+  });
+
+  it('answers through the tool result with the hint (registerTool passes its name)', async () => {
+    const lost = defineTool({
+      ...okTool,
+      name: 'get_discussion',
+      run: async () => {
+        throw new MoodleError('Moodle could not find this item.', 'invalidrecord');
+      },
+    });
+    const { ctx } = makeFakeContext({ publicUrl: ORIGIN });
+    const server = new McpServer({ name: 'test', version: '0.0.0' });
+    registerTool(server, ctx, lost);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    open.push(client);
+    const r = await client.callTool({ name: 'get_discussion', arguments: {} });
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r.content)).toContain('call list_discussions again');
   });
 
   it('keeps a message that already names its page', () => {

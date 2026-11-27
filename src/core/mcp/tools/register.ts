@@ -1,9 +1,9 @@
 import type { CallToolResult, McpServer, StandardSchemaWithJSON } from '@modelcontextprotocol/server';
 import type * as z from 'zod';
 import type { ServiceContext } from '../../context';
-import { MailNeedsReconnect, NeedsReconnect, WmmError } from '../../errors';
+import { MailNeedsReconnect, WmmError } from '../../errors';
 import { type FailureClass, failureClass } from '../../usage';
-import { RECONNECT_STDIO } from '../wording';
+import { explainError } from '../error-hints';
 import type { ToolDef } from './define';
 
 const asSchema = (s: z.ZodType) => s as unknown as StandardSchemaWithJSON;
@@ -21,26 +21,19 @@ function auditDetail(args: unknown): Record<string, unknown> {
   return out;
 }
 
-/** Where the user reconnects: mail on its settings page, Moodle on /connect. */
-function withReconnectHint(e: NeedsReconnect, publicUrl: string): NeedsReconnect {
-  const mail = e instanceof MailNeedsReconnect;
-  const target = mail ? { what: 'mail ', path: '/settings/mail' } : { what: '', path: '/connect' };
-  if (e.message.includes(target.path)) return e;
-  const url = `${publicUrl}${target.path}`;
-  const hint = `${e.message.trimEnd()} Ask the user to reconnect ${target.what}at ${url}, then try again.`;
-  return mail ? new MailNeedsReconnect(hint) : new NeedsReconnect(hint);
-}
-
-/** WmmError messages are user-safe and pass through; anything else is replaced by a generic message. */
-export function toToolError(ctx: ServiceContext, e: unknown): Error {
-  if (e instanceof NeedsReconnect) {
-    if (ctx.mode === 'stdio' || !ctx.publicUrl) return new NeedsReconnect(RECONNECT_STDIO);
-    return withReconnectHint(e, ctx.publicUrl);
+/**
+ * The error a tool (or resource) call answers with: WmmError messages are user-safe and get their next step
+ * (error-hints); anything else is replaced by a generic message.
+ */
+export function toToolError(ctx: ServiceContext, e: unknown, tool?: string): Error {
+  if (e instanceof WmmError) {
+    const message = explainError(e, { mode: ctx.mode, publicUrl: ctx.publicUrl, tool });
+    if (message === e.message) return e;
+    return e instanceof MailNeedsReconnect ? new MailNeedsReconnect(message) : new WmmError(message, e.code);
   }
-  if (e instanceof WmmError) return e;
   console.error('[waseda-moodle] unexpected tool error:', e instanceof Error ? e.name : typeof e);
   return new WmmError(
-    'Unexpected error while talking to Waseda Moodle. Try again; if it persists, tell the user.',
+    'Unexpected error while talking to Waseda Moodle. Try again; if it keeps happening, tell the user.',
     'internal_error',
   );
 }
@@ -109,7 +102,7 @@ export function registerTool(server: McpServer, ctx: ServiceContext, def: ToolDe
       } catch (e) {
         audit(ctx, `tool:${def.name}`, args, e);
         countCall(ctx, def.name, started, failureClass(e));
-        throw toToolError(ctx, e);
+        throw toToolError(ctx, e, def.name);
       }
     },
   );

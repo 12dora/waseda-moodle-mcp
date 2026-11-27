@@ -262,8 +262,9 @@ describe('MoodleWebSession.page', () => {
     const e = await ja.session.page('/course/user.php?mode=grade&id=99101&user=7001').catch((x: unknown) => x);
     expect(e).toBeInstanceOf(MoodleError);
     expect((e as MoodleError).errorcode).toBe('nopermissions');
-    expect((e as MoodleError).message).toContain('パーミッションがありません');
-    expect((e as MoodleError).message.length).toBeLessThanOrEqual(200);
+    // English for the codes we know (Moodle's text is in the session language), with the page to check
+    expect((e as MoodleError).message).toBe('Moodle refused access to this page.');
+    expect((e as MoodleError).url).toBe(`${BASE}/course/user.php?mode=grade&id=99101&user=7001`);
     const en = setup(() => html(fixture('core-error-record-en.html')));
     await expect(en.session.page('/mod/assign/view.php?id=1')).rejects.toMatchObject({ errorcode: 'invalidrecord' });
     const bare = setup(() => html('<html><body>Not found</body></html>', 404));

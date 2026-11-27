@@ -150,11 +150,14 @@ export interface OAuthRequestInfo {
   scopes: Scope[];
 }
 
-/** POST /api/connect body: a hand-off code, or the pasted MoodleSession cookie or launch link. */
+/**
+ * POST /api/connect body: a hand-off code, or the pasted MoodleSession cookie or launch link. `switchAccount`
+ * confirms replacing the signed-in account (the server answers account_switch first).
+ */
 export type ConnectRequest =
   | { code: string; switchAccount?: boolean }
-  | { session: string; via: 'paste' }
-  | { launch: string; via: 'paste'; passport?: string };
+  | { session: string; via: 'paste'; switchAccount?: boolean }
+  | { launch: string; via: 'paste'; passport?: string; switchAccount?: boolean };
 
 export interface CoursesResponse {
   mode: 'mine' | 'auto';

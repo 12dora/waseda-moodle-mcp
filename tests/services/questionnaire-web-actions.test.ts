@@ -180,7 +180,7 @@ describe('questionnaire_submit on the web channel', () => {
     );
     const one = setup({ views: [OPEN_VIEW, OPEN_VIEW], form: odd, post: () => redirectTo(VIEW) });
     await expect(prepareQuestionnaire(one.ctx, { cmid: 7101, answers: JA_ANSWERS.slice(1) })).rejects.toThrow(
-      'This questionnaire has questions this server cannot answer (Q1 (question_id 5001)); use Moodle.',
+      'This questionnaire has questions this server cannot answer (Q1 (question_id 5001)). Ask the user to answer it on Moodle: https://wsdmoodle.waseda.jp/mod/questionnaire/view.php?id=7101',
     );
     const noDraft = fixture('questionnaire-form-ja.html').replace(/<input type="submit" name="resume"[^>]*>/, '');
     const two = setup({ views: [OPEN_VIEW, OPEN_VIEW], form: noDraft, post: () => redirectTo(VIEW) });

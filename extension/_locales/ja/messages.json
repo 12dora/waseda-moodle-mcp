@@ -75,19 +75,22 @@
     "message": "連携ページを開きました"
   },
   "resultSigninRequired": {
-    "message": "Moodle へのサインインが必要です"
+    "message": "Moodle へのサインインが必要です。Moodle にサインインすると、連携は自動的に更新されます。"
   },
   "resultUnknownUser": {
     "message": "アカウントが未連携です。「連携」をクリックしてください。"
   },
   "resultRateLimited": {
-    "message": "リクエストが多すぎます。後で再試行してください。"
+    "message": "試行回数が多すぎます。最大 1 時間ほど待ってください。次に Moodle にサインインしたときに自動的に再試行します。"
   },
   "resultServerError": {
-    "message": "サービスエラー"
+    "message": "サービスエラーです。しばらくしてから再試行してください。続く場合はコンソールを開いてください。"
+  },
+  "resultMoodleUnavailable": {
+    "message": "Waseda Moodle に接続できません（メンテナンス中の可能性があります）。しばらくしてから再試行してください。"
   },
   "resultNetworkError": {
-    "message": "サービスに接続できません"
+    "message": "サービスに接続できません。ネットワークと、設定のサービス URL を確認してください。"
   },
   "resultPermissionMissing": {
     "message": "サービスへのアクセスが許可されていません。設定で URL を再保存してください。"

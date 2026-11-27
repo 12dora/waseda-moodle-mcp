@@ -284,7 +284,7 @@ describe('prepareSubmission', () => {
     await expect(run({ maxFileBytes: 4 }, { files: [{ name: 'a.pdf', text: 'xxxxx' }] })).rejects.toThrow(
       'the limit is 4 B',
     );
-    await expect(run({}, { files: [pdf, { name: 'A.pdf', text: 'y' }] })).rejects.toThrow('Duplicate file name');
+    await expect(run({}, { files: [pdf, { name: 'A.pdf', text: 'y' }] })).rejects.toThrow('Two files are named');
     await expect(run({}, { files: [{ name: 'a.pdf' }] })).rejects.toThrow('exactly one of');
     await expect(run({}, { files: [{ name: 'a.pdf', text: 'x', contentBase64: 'eA==' }] })).rejects.toThrow(
       'exactly one of',

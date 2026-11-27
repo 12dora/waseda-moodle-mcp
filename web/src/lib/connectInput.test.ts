@@ -45,15 +45,18 @@ describe('pasteErrorKey', () => {
   const session = { session: SESSION, via: 'paste' } as const;
   const launch = { launch: LINK, via: 'paste' } as const;
 
-  it('names what was refused', () => {
-    expect(pasteErrorKey(new ApiError(400, 'invalid_input', 'x'), session)).toBe('connect.paste.badSession');
-    expect(pasteErrorKey(new ApiError(409, 'needs_reconnect', 'x'), session)).toBe('connect.paste.badSession');
+  it('names what was refused and what to do', () => {
+    expect(pasteErrorKey(new ApiError(400, 'invalid_input', 'x'), session)).toBe('connect.paste.notCookie');
+    expect(pasteErrorKey(new ApiError(409, 'needs_reconnect', 'x'), session)).toBe('connect.paste.signedOut');
+    expect(pasteErrorKey(new ApiError(403, 'forbidden', 'x'), session)).toBe('connect.paste.notAllowed');
     expect(pasteErrorKey(new ApiError(400, 'invalid_input', 'x'), launch)).toBe('connect.paste.badLaunch');
+    expect(pasteErrorKey(new ApiError(403, 'forbidden', 'x'), launch)).toBe('connect.paste.notAllowed');
   });
 
   it('leaves other failures to the shared error text', () => {
     expect(pasteErrorKey(new ApiError(429, 'rate_limited', 'x'), session)).toBeNull();
     expect(pasteErrorKey(new ApiError(0, 'network', 'x'), launch)).toBeNull();
+    expect(pasteErrorKey(new ApiError(409, 'account_switch', 'x'), session)).toBeNull();
     expect(pasteErrorKey(new Error('x'), session)).toBeNull();
   });
 });

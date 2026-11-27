@@ -19,7 +19,7 @@ function stripCode(): void {
   history.replaceState(history.state, '', url.pathname + url.search + url.hash);
 }
 
-/** Name of the account a handoff code belongs to, when the server asks to confirm an account switch. */
+/** The account a sign-in (hand-off code, pasted cookie) belongs to, when the server asks to confirm a switch. */
 function switchTarget(e: unknown): string | null {
   if (!(e instanceof ApiError) || e.status !== 409 || e.code !== 'account_switch') return null;
   const name = (e.body as { account?: { fullname?: unknown } } | null)?.account?.fullname;
@@ -27,7 +27,7 @@ function switchTarget(e: unknown): string | null {
 }
 
 interface PendingSwitch {
-  code: string;
+  body: ConnectRequest;
   name: string;
 }
 
@@ -52,6 +52,20 @@ export function ConnectPage() {
     [navigate, returnParam, t, toast],
   );
 
+  /** A sign-in of another account than the signed-in one asks first (AccountSwitchCard); other errors propagate. */
+  const connectOrAsk = useCallback(
+    async (body: ConnectRequest) => {
+      try {
+        await doConnect(body);
+      } catch (e) {
+        const name = switchTarget(e);
+        if (name === null) throw e;
+        setPendingSwitch({ body, name });
+      }
+    },
+    [doConnect],
+  );
+
   useEffect(() => {
     if (handled.current) return;
     handled.current = true;
@@ -63,13 +77,10 @@ export function ConnectPage() {
     }
     stripCode();
     setCodeBusy(true);
-    doConnect({ code }).catch((e: unknown) => {
-      setCodeBusy(false);
-      const name = switchTarget(e);
-      if (name === null) setCodeError(e);
-      else setPendingSwitch({ code, name });
-    });
-  }, [doConnect, returnParam]);
+    connectOrAsk({ code })
+      .catch((e: unknown) => setCodeError(e))
+      .finally(() => setCodeBusy(false));
+  }, [connectOrAsk, returnParam]);
 
   if (codeBusy) {
     return (
@@ -88,7 +99,7 @@ export function ConnectPage() {
         <div className="narrow">
           <AccountSwitchCard
             name={pendingSwitch.name}
-            onSwitch={() => doConnect({ code: pendingSwitch.code, switchAccount: true })}
+            onSwitch={() => doConnect({ ...pendingSwitch.body, switchAccount: true })}
             onCancel={() => {
               takeReturn(null);
               navigate('/', { replace: true });
@@ -111,7 +122,7 @@ export function ConnectPage() {
           </p>
         )}
         {codeError != null && <ErrorBox error={codeError} />}
-        <ConnectMethods onConnect={doConnect} />
+        <ConnectMethods onConnect={connectOrAsk} />
         <p className="fine-print">{t('connect.privacy')}</p>
       </div>
     </PublicShell>

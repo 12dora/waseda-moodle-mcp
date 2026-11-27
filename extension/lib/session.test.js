@@ -76,6 +76,8 @@ describe('refreshResult', () => {
     expect(refreshResult(409, null)).toBe('signin_required');
     expect(refreshResult(429, null)).toBe('rate_limited');
     expect(refreshResult(400, null)).toBe('server_error');
-    expect(refreshResult(502, null)).toBe('server_error');
+    expect(refreshResult(500, null)).toBe('server_error');
+    expect(refreshResult(502, null)).toBe('moodle_unavailable');
+    expect(refreshResult(503, null)).toBe('moodle_unavailable');
   });
 });

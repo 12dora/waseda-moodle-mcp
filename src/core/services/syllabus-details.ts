@@ -148,7 +148,7 @@ const FAILURE_STATUS = { none: 'no-page', failed: 'unavailable', off: 'disabled'
 export async function getSyllabusDetails(ctx: ServiceContext, courseId: number): Promise<SyllabusDetails> {
   const id = requirePositiveInt(courseId, 'course_id');
   const course = (await resolveScope(ctx)).courses.find((c) => c.id === id);
-  if (!course) throw new NotFound(`Course ${id} is not one of your enrolled courses (see list_courses).`);
+  if (!course) throw new NotFound(`Course ${id} is not one of your enrolled courses.`);
   const lang: SyllabusLang = /^en/i.test(ctx.user.lang) ? 'en' : 'ja';
   const base = { courseId: id, courseName: course.name, requestedLang: lang, searchUrl: SEARCH_URL };
   const idnumber = seenIdnumber(ctx, id);

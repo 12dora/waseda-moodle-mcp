@@ -314,6 +314,7 @@ describe('scheduled', () => {
   });
 
   it('runs only the session keepalive on the night runs, 15:17 to 21:17 UTC (00–06 JST)', async () => {
+    moodle.state.mobileService = false; // the keepalive touches (with the service on it would go through launch.php)
     await seedCredential();
     await addSession(userId, 'MoodleSession=n1');
     for (const hour of [15, 18, 21]) await runScheduled(env, Date.UTC(2026, 9, 15, hour, 17), execCtx());

@@ -61,7 +61,7 @@ async function guarded<T>(ctx: ServiceContext, action: string, args: unknown, ru
     return out;
   } catch (e) {
     audit(ctx, action, args, e);
-    throw toToolError(ctx, e);
+    throw toToolError(ctx, e, action);
   }
 }
 

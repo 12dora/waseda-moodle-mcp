@@ -1,7 +1,7 @@
 /** One WmmError -> HTTP mapping for every JSON error the Worker produces (console API and file routes). */
 
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { MoodleError, WmmError } from '../core/errors';
+import { MoodleError, MoodleUnavailable, RateLimited, WmmError } from '../core/errors';
 
 const STATUS_BY_CODE: Record<string, ContentfulStatusCode> = {
   unauthorized: 401,
@@ -21,10 +21,22 @@ function httpStatusFor(err: WmmError): ContentfulStatusCode {
   return STATUS_BY_CODE[err.code] ?? (err instanceof MoodleError ? 502 : 500);
 }
 
-/** `{ error: { code, message } }` for known errors; unknown ones are reported generically (nothing leaks). */
-export function errorPayload(err: unknown): { status: ContentfulStatusCode; body: { error: Record<string, string> } } {
+type ErrorBody = { code: string; message: string; retryAfter?: number; maintenance?: true; until?: string };
+
+/** Machine values the console turns into its own next step: the wait of a rate limit, Moodle's maintenance. */
+function details(err: WmmError): Partial<ErrorBody> {
+  if (err instanceof RateLimited && err.retryAfterSec) return { retryAfter: err.retryAfterSec };
+  if (err instanceof MoodleUnavailable && err.maintenance) {
+    return err.until ? { maintenance: true, until: err.until } : { maintenance: true };
+  }
+  return {};
+}
+
+/** `{ error: { code, message, … } }` for known errors; unknown ones are reported generically (nothing leaks). */
+export function errorPayload(err: unknown): { status: ContentfulStatusCode; body: { error: ErrorBody } } {
   if (err instanceof WmmError) {
-    return { status: httpStatusFor(err), body: { error: { code: err.code, message: err.message } } };
+    const error = { code: err.code, message: err.message, ...details(err) };
+    return { status: httpStatusFor(err), body: { error } };
   }
   return { status: 500, body: { error: { code: 'internal', message: 'Something went wrong. Try again later.' } } };
 }

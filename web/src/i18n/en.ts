@@ -70,9 +70,13 @@ export const en = {
   'connect.paste.hint': 'Treat this value like a password. A launch link (ltgopenlmsapp://…) also works.',
   'connect.paste.required': 'Paste the MoodleSession value.',
   'connect.paste.submit': 'Connect',
-  'connect.paste.badSession':
-    'Moodle did not accept this value. Sign in to Moodle again and copy the current MoodleSession value.',
   'connect.paste.badLaunch': 'Moodle did not accept this launch link. Paste the MoodleSession value instead.',
+  'connect.paste.notAllowed':
+    'This Moodle account cannot use this service yet. Ask the operator of this service for access.',
+  'connect.paste.signedOut':
+    'Moodle says this browser is not signed in. Sign in to Waseda Moodle, then copy the MoodleSession value again (it changes when you sign in).',
+  'connect.paste.notCookie':
+    'This is not a MoodleSession value. Copy only the value of the MoodleSession cookie and paste it again.',
   'connect.phoneHint': 'Connect from a computer browser. Your AI clients then also work on a phone.',
 
   // label of connections made before the bookmarklet method was removed (stored rows and statistics)
@@ -508,13 +512,20 @@ export const en = {
   'consent.invalid': 'This request is invalid or has expired. Start again from the app.',
   'consent.unsafeRedirect': 'The app returned an unsupported redirect address.',
   'error.forbidden': 'You do not have permission for this operation.',
-  'error.not_found': 'Not found. It may have been deleted or expired.',
+  'error.not_found': 'Not found. It may have been deleted or expired. Reload the page and try again.',
   'error.invalid_input': 'The request is invalid. Check the input and retry.',
-  'error.needs_reconnect': 'The Moodle connection has expired. Reconnect to continue.',
+  'error.needs_reconnect':
+    'The Moodle connection has ended. Sign in to Waseda Moodle in this browser: with the browser extension the connection renews itself. Otherwise reconnect on the Connect page.',
   'error.mail_needs_reconnect': 'The Waseda mail connection has expired. Reconnect it in Settings → Mail.',
-  'error.rate_limited': 'Too many requests. Wait a moment and retry.',
-  'error.moodle_unavailable': 'Waseda Moodle is not reachable. Try again later.',
-  'error.budget_exceeded': 'The request needs too many Moodle calls. Narrow it down and retry.',
+  'error.rate_limited': 'Too many requests. Wait a few minutes and try again.',
+  'error.rate_limitedWait': 'Too many requests. Wait {minutes} min and try again.',
+  'error.moodle_unavailable':
+    'Waseda Moodle is not reachable right now. It may be busy or under maintenance; try again in a few minutes.',
+  'error.moodle_maintenanceUntil':
+    'Waseda Moodle is under maintenance (until about {until} JST, according to its notice). Try again after that.',
+  'error.moodle_maintenance': 'Waseda Moodle is under maintenance. Try again after the maintenance ends.',
+  'error.budget_exceeded':
+    'This request needs too many Moodle calls at once. Narrow it (one course or fewer days) and try again.',
 
   'stats.title': 'Usage',
   'stats.desc': 'Aggregate counts only. No per-user data.',

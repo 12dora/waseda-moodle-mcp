@@ -10,7 +10,7 @@ import { MOODLE_URL } from '../launch';
 import { sessionCookie } from '../wire';
 import { batches, batchFailure, type Pending, settle } from './ajax-batch';
 import { pageConfig } from './html';
-import { pageError } from './page-errors';
+import { maintenanceError, pageError, underMaintenance } from './page-errors';
 import type { WebPage, WebRequest, WebSession } from './types';
 
 export interface MoodleWebSessionOptions {
@@ -49,6 +49,15 @@ const discard = (res: Response) => {
   res.body?.cancel().catch(() => {});
 };
 
+/** A 5xx answer: Moodle's maintenance page (always 503) says so; anything else is just unreachable. */
+async function unavailable(res: Response): Promise<MoodleUnavailable> {
+  if (res.status !== 503) {
+    discard(res);
+    return new MoodleUnavailable();
+  }
+  return maintenanceError(await res.text().catch(() => '')) ?? new MoodleUnavailable();
+}
+
 const best = (f: () => unknown) => {
   try {
     Promise.resolve(f()).catch(() => {});
@@ -56,6 +65,13 @@ const best = (f: () => unknown) => {
     /* best effort */
   }
 };
+
+/** A page address safe to show the user: no sesskey (forms and confirmations carry it in the query). */
+function userUrl(url: string): string {
+  const u = new URL(url);
+  u.searchParams.delete('sesskey');
+  return u.toString();
+}
 
 export class MoodleWebSession implements WebSession {
   readonly baseUrl: string;
@@ -109,10 +125,7 @@ export class MoodleWebSession implements WebSession {
     try {
       const headers = { ...(init.headers as Record<string, string> | undefined), Cookie: this.cookie };
       const res = await this.doFetch(url, { ...init, headers, redirect: 'manual', signal: ac.signal });
-      if (res.status >= 500) {
-        discard(res);
-        throw new MoodleUnavailable();
-      }
+      if (res.status >= 500) throw await unavailable(res);
       return await read(res);
     } catch (e) {
       throw e instanceof WmmError ? e : new MoodleUnavailable();
@@ -193,14 +206,18 @@ export class MoodleWebSession implements WebSession {
     if (login) throw this.end();
   }
 
-  /** Throws for the login page and Moodle error pages; otherwise picks up the page's sesskey. */
-  private checkBody(html: string, status: number): void {
+  /**
+   * Throws for the login page and Moodle error pages (carrying the page address, without a sesskey, for the user to
+   * check); otherwise picks up the page's sesskey.
+   */
+  private checkBody(html: string, status: number, url: string): void {
     this.checkSignedIn(html);
-    const error = pageError(html);
+    const where = { url: userUrl(url) };
+    const error = pageError(html, where.url);
     if (error) throw error;
-    if (status === 404) throw new MoodleError('Moodle could not find that page.', 'invalidrecord');
-    if (status === 403) throw new MoodleError('Moodle refused access to that page.', 'nopermissions');
-    if (status >= 400) throw new MoodleError('Moodle refused the request.', 'moodle_error');
+    if (status === 404) throw new MoodleError('Moodle could not find that page.', 'invalidrecord', '', where);
+    if (status === 403) throw new MoodleError('Moodle refused access to that page.', 'nopermissions', '', where);
+    if (status >= 400) throw new MoodleError('Moodle refused the request.', 'moodle_error', '', where);
     this.noteSesskey(pageConfig(html).sesskey);
   }
 
@@ -248,7 +265,7 @@ export class MoodleWebSession implements WebSession {
     for (let hop = 0; ; hop++) {
       const a = await this.answer(url, { method: 'GET' });
       if (a.location === null) {
-        this.checkBody(a.body, a.status);
+        this.checkBody(a.body, a.status, url);
         this.noteCookie(a.cookie);
         return { url, status: a.status, html: a.body, location: null };
       }
@@ -272,7 +289,7 @@ export class MoodleWebSession implements WebSession {
     return this.sending(async () => {
       const a = await this.answer(url, init);
       if (a.location !== null) this.checkLocation(a.location);
-      else this.checkBody(a.body, a.status);
+      else this.checkBody(a.body, a.status, url);
       this.noteCookie(a.cookie);
       return { url, status: a.status, html: a.body, location: a.location };
     });
@@ -351,6 +368,7 @@ export class MoodleWebSession implements WebSession {
     }
     this.checkSignedIn('', failure.code);
     if (failure.code === 'unavailable') throw new MoodleUnavailable();
+    if (failure.code === 'sitemaintenance') throw underMaintenance();
     throw new MoodleError(failure.message || 'Moodle returned an error.', failure.code);
   }
 

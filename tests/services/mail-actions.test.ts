@@ -373,7 +373,8 @@ describe('confirm mail send/reply', () => {
     const p = await prepareMailReply(ctx, { messageId: MSG_ID, body: 'Thanks.' });
     const r = await confirmAction(ctx, p.actionId, 'mcp');
     expect(r.status).toBe('failed');
-    expect(r.message).toBe('Mail not found.');
+    expect(r.message).toMatch(/^Mail not found\. It may have been deleted/);
+    expect(r.message).not.toContain('action_id');
     expect(r.message).not.toContain(UNCERTAIN_MARK);
     expect(state.actions.get(p.actionId)?.status).toBe('failed');
   });

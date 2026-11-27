@@ -75,19 +75,22 @@
     "message": "Connection page opened"
   },
   "resultSigninRequired": {
-    "message": "Moodle sign-in required"
+    "message": "Moodle sign-in required. Sign in to Moodle; the connection then renews itself."
   },
   "resultUnknownUser": {
     "message": "Account not connected. Click Connect."
   },
   "resultRateLimited": {
-    "message": "Too many requests. Try again later."
+    "message": "Too many attempts. Wait up to an hour; the extension tries again the next time you sign in to Moodle."
   },
   "resultServerError": {
-    "message": "Service error"
+    "message": "Service error. Try again later; if it keeps happening, open the console."
+  },
+  "resultMoodleUnavailable": {
+    "message": "Waseda Moodle is not reachable (it may be under maintenance). Try again later."
   },
   "resultNetworkError": {
-    "message": "Service unreachable"
+    "message": "Service unreachable. Check your network and the service URL in Settings."
   },
   "resultPermissionMissing": {
     "message": "Access to the service was not granted. Save the URL again in Settings."

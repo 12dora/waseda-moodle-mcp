@@ -71,9 +71,13 @@ export const ja: Dictionary = {
   'connect.paste.hint': 'この値はパスワードと同様に扱ってください。起動リンク（ltgopenlmsapp://…）も使えます。',
   'connect.paste.required': 'MoodleSession の値を貼り付けてください。',
   'connect.paste.submit': '接続',
-  'connect.paste.badSession':
-    'この値では接続できませんでした。Moodle にサインインし直して、現在の MoodleSession の値をコピーしてください。',
   'connect.paste.badLaunch': 'この起動リンクでは接続できませんでした。MoodleSession の値を貼り付けてください。',
+  'connect.paste.notAllowed':
+    'この Moodle アカウントはまだこのサービスを利用できません。サービスの運営者に利用を申請してください。',
+  'connect.paste.signedOut':
+    'このブラウザは Moodle にサインインしていない状態です。Waseda Moodle にサインインしてから、MoodleSession の値をコピーし直してください（サインインすると値が変わります）。',
+  'connect.paste.notCookie':
+    'MoodleSession の値ではないようです。MoodleSession Cookie の「値」だけをコピーして、もう一度貼り付けてください。',
   'connect.phoneHint': '接続はパソコンのブラウザで行います。接続後は、スマートフォンの AI クライアントでも使えます。',
 
   'via.bookmarklet': 'ブックマークレット',
@@ -509,13 +513,21 @@ export const ja: Dictionary = {
   'consent.invalid': 'このリクエストは無効か期限切れです。アプリからやり直してください。',
   'consent.unsafeRedirect': 'アプリから無効なリダイレクト先が返されました。',
   'error.forbidden': 'この操作を行う権限がありません。',
-  'error.not_found': '見つかりません。削除されたか期限切れの可能性があります。',
+  'error.not_found':
+    '見つかりません。削除されたか期限切れの可能性があります。ページを再読み込みしてから再試行してください。',
   'error.invalid_input': 'リクエストが無効です。入力内容を確認して再試行してください。',
-  'error.needs_reconnect': 'Moodle との接続の有効期限が切れました。再接続してください。',
+  'error.needs_reconnect':
+    'Moodle との接続が切れました。このブラウザで Waseda Moodle にサインインしてください。拡張機能を使っていれば自動的に再接続されます。使っていない場合は「接続」ページで再接続してください。',
   'error.mail_needs_reconnect': 'Waseda メールとの連携の有効期限が切れました。設定 → メール で再連携してください。',
-  'error.rate_limited': 'リクエストが多すぎます。しばらく待ってから再試行してください。',
-  'error.moodle_unavailable': 'Waseda Moodle に接続できません。しばらくしてから再試行してください。',
-  'error.budget_exceeded': 'Moodle への呼び出しが多すぎます。対象を絞って再試行してください。',
+  'error.rate_limited': 'リクエストが多すぎます。数分待ってから再試行してください。',
+  'error.rate_limitedWait': 'リクエストが多すぎます。{minutes} 分ほど待ってから再試行してください。',
+  'error.moodle_unavailable':
+    'Waseda Moodle に接続できません。混雑またはメンテナンス中の可能性があります。数分後に再試行してください。',
+  'error.moodle_maintenanceUntil':
+    'Waseda Moodle はメンテナンス中です（告知によると {until} 頃まで）。終了後に再試行してください。',
+  'error.moodle_maintenance': 'Waseda Moodle はメンテナンス中です。メンテナンス終了後に再試行してください。',
+  'error.budget_exceeded':
+    '一度に必要な Moodle への呼び出しが多すぎます。対象を絞って（1 つのコース、短い期間など）再試行してください。',
 
   'stats.title': '利用状況',
   'stats.desc': '集計値のみ。個人ごとのデータは含みません。',

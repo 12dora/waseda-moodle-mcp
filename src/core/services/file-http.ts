@@ -16,6 +16,7 @@ import {
   NotFound,
   WmmError,
 } from '../errors';
+import { formatBytes } from '../format';
 import { bytesOfBase64Url } from '../mail/gmail';
 import { nowMs } from '../time';
 import { guessMime, sanitizeFileName } from './actions/filenames';
@@ -105,7 +106,8 @@ function contentDisposition(name: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
-const BAD_TICKET = 'This download link is invalid or has expired.';
+const BAD_TICKET = 'This download link is invalid or has expired. Create a new one with get_file.';
+const BAD_UPLOAD = 'This upload link is invalid or has expired. Create a new one with create_upload_link.';
 
 // ------------------------------------------------------------------ download
 
@@ -194,15 +196,22 @@ async function proxyMailDownload(env: FileRouteEnv, t: MailTicket, request: Requ
   return new Response(bytes, { status: 200, headers });
 }
 
+const FILE_GONE =
+  'That file is no longer in Moodle (it may have been removed or replaced). Get a new link from the activity with get_file.';
+const NO_FILE_ACCESS =
+  'You do not have access to that file in Moodle: the teacher may have hidden it. Check the activity on Moodle.';
+const FILE_FAILED =
+  'Moodle did not return the file. Try again in a few minutes; if it keeps happening, sign in to Moodle again or reconnect in the console.';
+
 /** The response to send instead of the upstream one, or null when the upstream answer is the file. */
 function upstreamFailure(upstream: Response, name: string): Response | null {
-  if (upstream.status === 404) return fail(404, 'not_found', 'That file no longer exists in Moodle.');
-  if (upstream.status === 403) return fail(403, 'forbidden', 'You do not have access to that file in Moodle.');
+  if (upstream.status === 404) return fail(404, 'not_found', FILE_GONE);
+  if (upstream.status === 403) return fail(403, 'forbidden', NO_FILE_ACCESS);
   // Moodle answers token problems with a JSON error body, not an HTTP error
   const jsonBody = /^application\/json/i.test(upstream.headers.get('content-type') ?? '');
   if (upstream.ok && !(jsonBody && !/\.json$/i.test(name))) return null;
   if (upstream.status === 416) return fail(416, 'range_not_satisfiable', 'Range not satisfiable.');
-  return fail(502, 'moodle_error', 'Moodle did not return the file. Reconnect in the console if this keeps happening.');
+  return fail(502, 'moodle_error', FILE_FAILED);
 }
 
 function downloadHeaders(upstream: Response, name: string): Headers {
@@ -298,11 +307,15 @@ function limitsOf(t: UploadTicket): UploadLimits {
 /** Quota / duplicate checks against the draft; null when the file fits. */
 function draftRefusal(draft: UploadDraftRow, up: UploadRequest, limits: UploadLimits): Response | null {
   if (draft.files.some((f) => f.name.toLowerCase() === up.name.toLowerCase())) {
-    return fail(409, 'conflict', `A file named "${up.name}" was already uploaded to this link.`);
+    const message = `A file named "${up.name}" was already uploaded to this link. Rename it and upload again.`;
+    return fail(409, 'conflict', message);
   }
-  if (draft.files.length >= limits.maxFiles) return fail(409, 'conflict', `Too many files (limit ${limits.maxFiles}).`);
+  if (draft.files.length >= limits.maxFiles) {
+    const message = `This link takes at most ${limits.maxFiles} files. Create a new one with create_upload_link.`;
+    return fail(409, 'conflict', message);
+  }
   if (draft.totalBytes + up.size > MAX_DRAFT_TOTAL_BYTES) {
-    return fail(413, 'payload_too_large', 'The total upload size limit was reached.');
+    return fail(413, 'payload_too_large', 'This link reached its total size limit. Upload fewer or smaller files.');
   }
   return null;
 }
@@ -335,12 +348,14 @@ async function pipeUpload(
   return jsonResponse(200, { ok: true, file: { name: file.name, size: file.size }, files });
 }
 
+const SMALLER = 'Compress or split it and upload again.';
+
 /** Moodle-side rejections that the uploader can act on get their own status. */
 function uploadErrorResponse(e: unknown): Response {
   if (e instanceof MoodleError) {
     const text = `${e.errorcode} ${e.message}`;
-    if (/exist/i.test(text)) return fail(409, 'conflict', e.message);
-    if (/oversize|toolarge|quota/i.test(text)) return fail(413, 'payload_too_large', e.message);
+    if (/exist/i.test(text)) return fail(409, 'conflict', `${e.message} Rename it and upload again.`);
+    if (/oversize|toolarge|quota/i.test(text)) return fail(413, 'payload_too_large', `${e.message} ${SMALLER}`);
   }
   return errorResponse(e);
 }
@@ -351,17 +366,18 @@ export async function streamUpload(env: FileRouteEnv, ticket: string, request: R
   }
   const t = await env.signer.verify<UploadTicket>(ticket);
   if (t?.k !== 'up' || typeof t.u !== 'number' || typeof t.d !== 'string') {
-    return fail(404, 'not_found', 'This upload link is invalid or has expired.');
+    return fail(404, 'not_found', BAD_UPLOAD);
   }
   const up = readUploadRequest(request);
   if (up instanceof Response) return up;
   const limits = limitsOf(t);
   if (up.size > limits.maxBytes) {
-    return fail(413, 'payload_too_large', `File too large (limit ${limits.maxBytes} bytes per file).`);
+    const message = `The file is too large (limit ${formatBytes(limits.maxBytes)} per file). ${SMALLER}`;
+    return fail(413, 'payload_too_large', message);
   }
   const draft = await env.store.getUploadDraft(t.d);
   if (!draft || draft.userId !== t.u || draft.expiresAt <= nowMs()) {
-    return fail(404, 'not_found', 'This upload link is invalid or has expired.');
+    return fail(404, 'not_found', BAD_UPLOAD);
   }
   const refusal = draftRefusal(draft, up, limits);
   if (refusal) return refusal;

@@ -40,7 +40,8 @@ const MAX_POST_CHARS = 20_000;
 const FORMAT_HTML = 1;
 const NO_REPLY = "You can't reply to that post (for example, in announcement forums only teachers post).";
 /** Advanced Forum posts go through Open LMS web services only; the web channel has no verified form flow for them. */
-const HSU_NO_WEB = 'Posting to this forum type is not available through the Moodle web session.';
+const HSU_NO_WEB =
+  'Posting to Advanced Forums (hsuforum) is not available through the Moodle web session. Ask the user to post it on Moodle directly.';
 const UNCHECKED_DATES = "The forum's due and cut-off dates were not checked; Moodle still enforces them.";
 
 export interface PrepareForumPostInput {
@@ -136,7 +137,7 @@ interface ParentPost {
 async function lookupForumParent(api: MoodleApi, postId: number): Promise<ParentPost> {
   const post = await lookupForumPost(api, postId);
   if (!post || post.discussionId === null) {
-    throw new NotFound(`Post ${postId} was not found or is not visible; open the discussion with get_discussion.`);
+    throw new NotFound(`Post ${postId} was not found or is not visible.`);
   }
   if (!post.canReply) throw new InvalidInput(NO_REPLY);
   return { subject: post.subject, discussionId: post.discussionId, author: post.author };

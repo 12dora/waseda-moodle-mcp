@@ -11,6 +11,7 @@ const RESULT_KEYS = {
   unknown_user: 'resultUnknownUser',
   rate_limited: 'resultRateLimited',
   server_error: 'resultServerError',
+  moodle_unavailable: 'resultMoodleUnavailable',
   network_error: 'resultNetworkError',
   permission_missing: 'resultPermissionMissing',
 };
@@ -21,6 +22,7 @@ const BAD = new Set([
   'network_error',
   'permission_missing',
   'rate_limited',
+  'moodle_unavailable',
 ]);
 
 function showMessage(key) {

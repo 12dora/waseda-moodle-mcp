@@ -32,6 +32,7 @@ export function createApi(): Hono<AppEnv> {
       console.error('api error:', err instanceof Error ? `${err.name}: ${err.message}` : 'unknown');
     }
     const { status, body } = errorPayload(err);
+    if (body.error.retryAfter) c.header('Retry-After', String(body.error.retryAfter));
     return c.json(body, status);
   });
 

@@ -155,13 +155,17 @@ function editDetails(post: ForumPost, edit: EditPayload, files: FileChange): str
   return details;
 }
 
+/** Waseda's forum editing time (maxeditingtime) is 1 minute; after it only teachers edit or delete. */
+const EDITING_WINDOW =
+  'Waseda Moodle allows this only within 1 minute of posting. A teacher can remove or change the post if needed.';
+
 const touchesFiles = (input: PrepareForumPostChangeInput) =>
   (input.files?.length ?? 0) > 0 || !!input.uploadId || input.keepExistingFiles === false;
 
 async function prepareEdit(own: OwnPost, input: PrepareForumPostChangeInput) {
   const { ctx, forum, post } = own;
   if (!post.canEdit) {
-    throw new InvalidInput("You can't edit this post: Moodle allows edits only within its editing time.");
+    throw new InvalidInput(`You can't edit this post anymore. ${EDITING_WINDOW}`);
   }
   const subject = input.subject?.trim() ?? '';
   if (subject.length > 255) throw new InvalidInput('The subject is too long (max 255 characters).');
@@ -262,7 +266,7 @@ function deleteWarnings(isDiscussion: boolean, replies: number): string[] {
 
 async function prepareDelete({ ctx, api, forum, post }: OwnPost, entry: DiscussionEntry) {
   if (!post.canDelete) {
-    throw new InvalidInput("You can't delete this post: Moodle allows it only within its editing time.");
+    throw new InvalidInput(`You can't delete this post anymore. ${EDITING_WINDOW}`);
   }
   const tracked = forum.settings?.tracked ?? null;
   // capabilities.delete is computed as if the post had no replies; deletionScope checks the replies.

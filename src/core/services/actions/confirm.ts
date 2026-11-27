@@ -11,6 +11,8 @@ import {
   WmmError,
 } from '../../errors';
 import { requireMail } from '../../mail/connection';
+import { explainError } from '../../mcp/error-hints';
+import { MOODLE_URL } from '../../moodle/launch';
 import { settleChannel } from '../../moodle/web/channel';
 import { isoJst, nowMs } from '../../time';
 import type { ActionKind, ActionRecord, ActionResult, ActionStatus } from '../../types';
@@ -55,6 +57,20 @@ const MAIL_EXECUTORS: Record<MailKind, (api: MailApi, p: Raw) => Promise<ActionO
 };
 
 const checkUncertain = (kind: ActionKind) => `Check ${isMailKind(kind) ? 'Sent mail' : 'Moodle'} ${UNCERTAIN_MARK}`;
+
+const num = (v: unknown): number | null => (typeof v === 'number' && v > 0 ? v : null);
+
+/** The Moodle page that shows whether a write went through (stored page URLs first, then the forum ids). */
+function checkUrl(kind: ActionKind, p: Raw): string | null {
+  const stored = [p.assignUrl, p.url].find((u): u is string => typeof u === 'string' && /^https:\/\//.test(u));
+  if (stored) return stored;
+  const mod = p.forumType === 'hsuforum' ? 'hsuforum' : 'forum';
+  const discussion = num(p.discussionId);
+  if (discussion) return `${MOODLE_URL}/mod/${mod}/discuss.php?d=${discussion}`;
+  const forum = num(p.forumId);
+  if (forum) return `${MOODLE_URL}/mod/${mod}/view.php?f=${forum}`;
+  return kind === 'message' ? `${MOODLE_URL}/message/index.php` : null;
+}
 
 /** Pending rows past their expiry read as expired even before anyone touches them. */
 function effectiveStatus(row: ActionRow): ActionStatus {
@@ -112,7 +128,7 @@ async function failAction(ctx: ServiceContext, row: ActionRow, via: Via, error: 
 /** An 'executing' row is normally another request mid-flight; one long past its expiry lost its worker. */
 async function settleExecuting(ctx: ServiceContext, row: ActionRow, via: Via): Promise<ActionResult> {
   if (nowMs() <= row.expiresAt + STALE_EXECUTING_MS) throw new InvalidInput(ALREADY_RUNNING);
-  const error = `The action was interrupted. ${checkUncertain(row.kind)} before preparing it again.`;
+  const error = `The action was interrupted. ${checkUncertain(row.kind)} before preparing it again.${where(row)}`;
   return failAction(ctx, row, via, error);
 }
 
@@ -219,9 +235,18 @@ function isUncertain(e: unknown, written: boolean): boolean {
   return e instanceof MailUnavailable && e.maybeSent;
 }
 
-function failMessage(kind: ActionKind, e: unknown, written = false): string {
-  const base = e instanceof WmmError ? e.message : 'Unexpected error while executing the action.';
-  return isUncertain(e, written) ? `${base} ${checkUncertain(kind)} before retrying.` : base;
+/** " <url>" of the page to check, or ''. Kept after UNCERTAIN_MARK so the mark stays in the stored text. */
+function where(row: ActionRow): string {
+  const url = isMailKind(row.kind) ? null : checkUrl(row.kind, row.payload);
+  return url ? ` ${url}` : '';
+}
+
+/** What failed plus the next step: an uncertain write is checked first; others get the central hint. */
+function failMessage(ctx: ServiceContext, row: ActionRow, e: unknown, written = false): string {
+  if (!(e instanceof WmmError)) return 'Unexpected error while executing the action.';
+  if (isUncertain(e, written)) return `${e.message} ${checkUncertain(row.kind)} before retrying.${where(row)}`;
+  // the executor's errors are about the target (a deleted thread, a closed assignment), not about the action id
+  return explainError(e, { mode: ctx.mode, publicUrl: ctx.publicUrl });
 }
 
 /** Missing mail connection (requireMail). Gmail 404 from the executor is a definite failure, not this. */
@@ -237,7 +262,7 @@ async function runAction(ctx: ServiceContext, row: ActionRow, via: Via): Promise
   } catch (e) {
     // nothing was written yet: an unreachable Moodle (channel check) leaves the action pending, not uncertain
     if (clientMissing(row.kind, e) || e instanceof MoodleUnavailable) return handBack(ctx, row.id, e);
-    return failAction(ctx, row, via, failMessage(row.kind, e));
+    return failAction(ctx, row, via, failMessage(ctx, row, e));
   }
   const before = executor.writes();
   let outcome: ActionOutcome;
@@ -248,7 +273,7 @@ async function runAction(ctx: ServiceContext, row: ActionRow, via: Via): Promise
     // through (a read after the write failed). A Gmail 404 (deleted thread) fails definitely.
     const written = executor.writes() > before;
     if (e instanceof NeedsReconnect && !written) return handBack(ctx, row.id, e);
-    return failAction(ctx, row, via, failMessage(row.kind, e, written));
+    return failAction(ctx, row, via, failMessage(ctx, row, e, written));
   }
   await recordOutcome(ctx, row.id, { status: 'executed', executedAt: nowMs(), result: encodeResult(outcome) });
   await auditSafe(ctx, 'action:execute', { id: row.id, kind: row.kind, status: 'executed' }, via);

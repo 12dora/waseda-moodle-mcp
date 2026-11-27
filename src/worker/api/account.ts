@@ -154,15 +154,14 @@ async function connect(c: Context<AppEnv>): Promise<Response> {
   const request = await connectRequest(body, rt);
   const result = await connectAccount(connectDeps(rt, registrationPolicy(c.env)), request.input);
 
-  // A hand-off link must not silently replace the account that is signed in (login CSRF): ask first.
-  if (request.code) {
-    const current = await optionalSessionUser(c);
-    if (current && current.id !== result.user.id && body.switchAccount !== true) {
-      const message = 'This sign-in link belongs to a different account. Confirm to switch.';
-      return c.json({ error: { code: 'account_switch', message }, account: { fullname: result.user.fullname } }, 409);
-    }
-    await consumeHandoff(rt, request.code);
+  // A sign-in must not silently replace the account that is signed in here (login CSRF for hand-off links, a
+  // pasted cookie of another Moodle account): ask first.
+  const current = await optionalSessionUser(c);
+  if (current && current.id !== result.user.id && body.switchAccount !== true) {
+    const message = 'This Moodle sign-in belongs to another account than the one signed in here. Confirm to switch.';
+    return c.json({ error: { code: 'account_switch', message }, account: { fullname: result.user.fullname } }, 409);
   }
+  if (request.code) await consumeHandoff(rt, request.code);
 
   const { setCookie } = await startSession(rt.store, result.user.id, c.req.header('User-Agent') ?? null);
   const old = readSessionCookie(c.req.raw);

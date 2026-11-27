@@ -53,3 +53,32 @@ describe('serverMessageText', () => {
     }
   });
 });
+
+describe('errorText next steps', () => {
+  const body = (error: Record<string, unknown>) => ({ error });
+
+  it('gives the rate-limit wait in minutes when the server sends it', () => {
+    const waited = new ApiError(429, 'rate_limited', 'x', body({ code: 'rate_limited', retryAfter: 600 }));
+    expect(errorText(waited, t)).toBe(translate(en, 'error.rate_limitedWait', { minutes: 10 }));
+    expect(errorText(new ApiError(429, 'rate_limited', 'x'), t)).toBe(en['error.rate_limited']);
+  });
+
+  it("names Moodle's maintenance and its end when known", () => {
+    const until = new ApiError(502, 'moodle_unavailable', 'x', body({ maintenance: true, until: '11/30 06:00' }));
+    expect(errorText(until, t)).toContain('11/30 06:00');
+    const plain = new ApiError(502, 'moodle_unavailable', 'x', body({ maintenance: true }));
+    expect(errorText(plain, t)).toBe(en['error.moodle_maintenance']);
+    expect(errorText(new ApiError(502, 'moodle_unavailable', 'x'), t)).toBe(en['error.moodle_unavailable']);
+  });
+
+  it('tells what to do next for the common codes in every language', () => {
+    for (const lang of LANGS) {
+      const d = DICTIONARIES[lang];
+      for (const key of ['error.needs_reconnect', 'error.moodle_unavailable', 'error.budget_exceeded'] as const) {
+        expect(d[key].split(/[.。]/).filter((s) => s.trim()).length, `${lang}:${key}`).toBeGreaterThan(1);
+      }
+    }
+    expect(en['error.needs_reconnect']).toContain('extension');
+    expect(en['error.needs_reconnect']).toContain('Connect page');
+  });
+});

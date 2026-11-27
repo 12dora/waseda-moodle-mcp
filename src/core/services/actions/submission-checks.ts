@@ -18,11 +18,13 @@ export function checkSubmissionWindow(a: AssignDetail, now: number): string[] {
   const cutoff = a.cutoffAt ? toMs(a.cutoffAt) : null;
   const extended = ext !== null && now < ext;
   if (cutoff !== null && now > cutoff && !extended) {
-    throw new InvalidInput(`Submissions closed at ${fmtDue(a.cutoffAt)} (JST).`);
+    throw new InvalidInput(
+      `Submissions closed at ${fmtDue(a.cutoffAt)} (JST); Moodle no longer accepts them. Only the teacher can grant an extension.`,
+    );
   }
   if (!s.canEdit) {
     throw new InvalidInput(
-      'Moodle does not allow editing this submission right now (it may be closed or already submitted).',
+      `Moodle does not allow editing this submission right now (it may be closed or already submitted). Check it on Moodle: ${a.url}`,
     );
   }
   const due = ext ?? (a.dueAt ? toMs(a.dueAt) : null);
