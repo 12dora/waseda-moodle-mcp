@@ -135,7 +135,7 @@ give them a check without an account and point to the source.
 Limit: 500 characters.
 
 ```text
-No test account: Waseda Moodle accepts university sign-in only. To check: Settings opens with the service URL filled in and consent ticked; click Save and allow access. In the popup click Connect: the Moodle sign-in page opens and nothing is sent to the service while signed out. After sign-in, the MoodleSession cookie goes only to that URL; cookie again on new sign-ins and every 12 h. Source: https://github.com/12dora/waseda-moodle-mcp/tree/main/extension
+No test account: Waseda Moodle accepts university sign-in only. To check: Settings opens with the service URL filled in and consent ticked. Click Save: signed out of Moodle, the Moodle sign-in page opens and nothing is sent to the service. After sign-in, the MoodleSession cookie goes only to that URL; again on new sign-ins and every 12 h. Untick consent and Save to withdraw. Source: https://github.com/12dora/waseda-moodle-mcp/tree/main/extension
 ```
 
 ### Note B — Edge notes for certification
@@ -146,11 +146,10 @@ Limit: 2,000 characters.
 Test account: none can be provided. The extension works with Waseda University's Moodle (https://wsdmoodle.waseda.jp), which accepts university accounts only.
 
 Check without an account:
-1. Install. The Settings page opens and the toolbar badge shows "!".
-2. The Service URL is filled in and the consent box is ticked; both can be changed. Saving with the box unticked is refused. Click Save and allow access: only that origin is requested.
-3. Open the popup: Moodle shows "Not signed in".
-4. Click Connect. The Moodle sign-in page opens in a tab. Nothing is sent to the service URL while signed out (see the service worker's network log). Close the tab to end the wait.
-5. Untick consent and Save to withdraw it.
+1. Install. The Settings page opens with the service URL filled in and the consent box ticked; both can be changed. The service URL is a declared host permission, so saving it asks nothing (another URL asks for access on Save).
+2. Untick the box and Save: refused, nothing is sent. Tick it and Save: connecting starts at once.
+3. Signed out of Moodle, Connect (Save, or the popup's Connect) opens the Moodle sign-in page in a tab. Nothing is sent to the service while signed out (see the service worker's network log). Close the tab to end the wait.
+4. Untick consent and Save to withdraw it.
 
 With a Waseda account: after sign-in the extension reads the MoodleSession cookie, posts it to <service URL>/api/connect/handoff and opens <service URL>/connect to finish linking the account. After a new Moodle sign-in, every 12 hours and on "Sync now", it posts the cookie to <service URL>/api/extension/refresh. Nothing is sent anywhere else.
 
