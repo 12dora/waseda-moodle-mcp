@@ -29,7 +29,7 @@ function showMessage(key) {
   if (key) el.textContent = t(key);
 }
 
-/** Service URL the user agreed to send the token to, or null (then Connect goes to Settings). */
+/** Service URL the user agreed to send the session to, or null (then Connect goes to Settings). */
 async function consentedServiceUrl() {
   const { serviceUrl, consent } = await chrome.storage.local.get(['serviceUrl', 'consent']);
   return hasConsentFor(consent, serviceUrl) ? serviceUrl : null;
@@ -68,7 +68,8 @@ async function checkMoodle() {
 function connectMessageKey(res) {
   if (res?.ok) return null;
   if (res?.error === 'consent_required') return 'hintConsent';
-  return res?.error === 'signin_required' ? 'resultSigninRequired' : 'resultServerError';
+  if (res?.error === 'signin_required') return 'hintSignIn';
+  return RESULT_KEYS[res?.error] || 'resultServerError';
 }
 
 $('connect').addEventListener('click', async () => {

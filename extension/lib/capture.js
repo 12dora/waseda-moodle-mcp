@@ -44,7 +44,7 @@ export function normalizeServiceUrl(input) {
   }
 }
 
-/** Handoff codes are opaque; the token itself never goes into a URL. */
+/** Handoff codes are opaque; the session itself never goes into a URL. */
 export function buildConnectUrl(service, code) {
   return `${service}/connect?code=${encodeURIComponent(code)}`;
 }

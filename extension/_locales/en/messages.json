@@ -12,7 +12,7 @@
     "message": "Service URL not set"
   },
   "badgeSigninNeeded": {
-    "message": "Sign in to Moodle required"
+    "message": "Moodle sign-in required"
   },
   "badgeNotConnected": {
     "message": "Not connected to the service"
@@ -66,16 +66,16 @@
     "message": "Settings"
   },
   "resultUpdated": {
-    "message": "Credential updated"
+    "message": "Connected · session updated"
   },
   "resultUnchanged": {
-    "message": "Up to date"
+    "message": "Connected"
   },
   "resultConnectOpened": {
     "message": "Connection page opened"
   },
   "resultSigninRequired": {
-    "message": "Sign in to Moodle, then try again."
+    "message": "Moodle sign-in required"
   },
   "resultUnknownUser": {
     "message": "Account not connected. Click Connect."
@@ -123,21 +123,27 @@
     "message": "Privacy"
   },
   "privacyBody": {
-    "message": "The extension never stores or revokes the token, so the official Moodle app keeps working."
+    "message": "The extension reads only the MoodleSession cookie of wsdmoodle.waseda.jp, when needed, and does not store it. Signing out of Moodle in this browser ends the connection; the next sign-in reconnects automatically."
   },
   "badgeConsentNeeded": {
     "message": "Consent needed in Settings"
   },
   "hintConsent": {
-    "message": "Agree to sending your token in Settings to connect."
+    "message": "To connect, agree in Settings to sending your Moodle sign-in session."
   },
   "consentLabel": {
-    "message": "Send my Moodle app token to this server to connect my account."
+    "message": "Send my Moodle sign-in session to this server to connect my account and keep it connected."
   },
   "linkPrivacyPolicy": {
     "message": "Privacy policy"
   },
   "errorConsentRequired": {
     "message": "Tick the consent box to connect. Nothing is sent until you do."
+  },
+  "hintSignIn": {
+    "message": "Sign in to Moodle in the opened tab. The connection then continues automatically."
+  },
+  "noteSignOut": {
+    "message": "Signing out of Moodle in this browser ends the connection. The next sign-in reconnects automatically."
   }
 }

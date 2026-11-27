@@ -6,7 +6,7 @@
     "message": "Moodle MCP Connector"
   },
   "extDescription": {
-    "message": "早稲田 Moodle のセッションを Moodle MCP サービスに接続し、接続状態を維持します。非公式 — 早稲田大学とは関係ありません。"
+    "message": "早稲田 Moodle のサインインを Moodle MCP サービスに連携し、接続を維持します。非公式 — 早稲田大学とは関係ありません。"
   },
   "badgeNotConfigured": {
     "message": "サービス URL が未設定です"
@@ -15,7 +15,7 @@
     "message": "Moodle へのサインインが必要です"
   },
   "badgeNotConnected": {
-    "message": "サービスに未接続です"
+    "message": "サービスと未連携です"
   },
   "labelService": {
     "message": "サービス"
@@ -42,7 +42,7 @@
     "message": "未実行"
   },
   "statusConnecting": {
-    "message": "接続中…"
+    "message": "連携中…"
   },
   "statusSyncing": {
     "message": "同期中…"
@@ -51,7 +51,7 @@
     "message": "設定でサービス URL を指定してください。"
   },
   "btnConnect": {
-    "message": "接続"
+    "message": "連携"
   },
   "btnOpenConsole": {
     "message": "コンソールを開く"
@@ -66,19 +66,19 @@
     "message": "設定"
   },
   "resultUpdated": {
-    "message": "認証情報を更新しました"
+    "message": "接続済み（セッションを更新）"
   },
   "resultUnchanged": {
-    "message": "最新です"
+    "message": "接続済み"
   },
   "resultConnectOpened": {
-    "message": "接続ページを開きました"
+    "message": "連携ページを開きました"
   },
   "resultSigninRequired": {
-    "message": "Moodle にサインインしてから再試行してください。"
+    "message": "Moodle へのサインインが必要です"
   },
   "resultUnknownUser": {
-    "message": "アカウントが未接続です。「接続」をクリックしてください。"
+    "message": "アカウントが未連携です。「連携」をクリックしてください。"
   },
   "resultRateLimited": {
     "message": "リクエストが多すぎます。後で再試行してください。"
@@ -123,21 +123,27 @@
     "message": "プライバシー"
   },
   "privacyBody": {
-    "message": "拡張機能はトークンを保存・失効させないため、公式 Moodle アプリはそのまま使えます。"
+    "message": "拡張機能が読み取るのは wsdmoodle.waseda.jp の MoodleSession Cookie のみで、必要なときに読み取り、保存しません。このブラウザで Moodle からサインアウトすると接続は終了し、次回のサインインで自動的に再接続します。"
   },
   "badgeConsentNeeded": {
     "message": "設定で同意が必要です"
   },
   "hintConsent": {
-    "message": "接続するには、設定でトークン送信に同意してください。"
+    "message": "連携するには、設定で Moodle サインインセッションの送信に同意してください。"
   },
   "consentLabel": {
-    "message": "アカウント接続のため、Moodle アプリ用トークンをこのサーバーに送信します。"
+    "message": "アカウントの連携と接続の維持のため、Moodle のサインインセッションをこのサーバーに送信します。"
   },
   "linkPrivacyPolicy": {
     "message": "プライバシーポリシー"
   },
   "errorConsentRequired": {
-    "message": "接続するには同意のチェックを入れてください。それまで何も送信されません。"
+    "message": "連携するには同意のチェックを入れてください。それまで何も送信されません。"
+  },
+  "hintSignIn": {
+    "message": "開いたタブで Moodle にサインインしてください。連携は自動的に続行します。"
+  },
+  "noteSignOut": {
+    "message": "このブラウザで Moodle からサインアウトすると接続は終了します。次回のサインインで自動的に再接続します。"
   }
 }

@@ -6,4 +6,5 @@ header { margin-bottom: 10px; }
 .message { margin: 0 0 12px; padding: 8px 10px; border-radius: 6px; background: var(--surface); }
 .actions { display: flex; gap: 8px; }
 .actions button { flex: 1; }
+.note { margin: 10px 0 0; font-size: 12px; }
 footer { margin-top: 12px; font-size: 12px; }
