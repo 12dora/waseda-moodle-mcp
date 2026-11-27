@@ -173,9 +173,10 @@ describe('GET /api/admin/stats data', () => {
     expect(body.credentials).toEqual({
       active: 0,
       invalid: 0,
-      autoRenew: 0,
+      sessions: 0,
       renewed: 0,
       kept: 0,
+      ended: 0,
       failed: 0,
       failures: [],
       connects: [],

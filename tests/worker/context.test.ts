@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex } from '../../src/core/crypto';
 import { MailNeedsReconnect, NeedsReconnect, NotFound } from '../../src/core/errors';
+import type { ChannelClientOptions } from '../../src/core/moodle/web/channel';
 import {
   buildServiceContext,
   consoleProps,
@@ -10,36 +11,40 @@ import {
   startRenewal,
 } from '../../src/worker/context';
 import type { Env } from '../../src/worker/env';
+import { resetSiteFlagMemory } from '../../src/worker/site-flag';
 import { resetUsageMemory } from '../../src/worker/store/usage';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
 import { createTestD1 } from '../helpers/d1-sqlite';
 import { fakeMoodleWeb } from '../helpers/fake-moodle-web';
 import { MemoryKV } from '../helpers/memory-kv';
 
-interface FakeClientOptions {
-  token: string;
-  moodleUserId: number;
-  renewToken?: (fetch: typeof globalThis.fetch) => Promise<string | null>;
-  onTokenInvalid: (rejected: string) => Promise<void>;
-  onSuccess: () => void;
-  maxCalls?: number;
-}
+const created = vi.hoisted(() => [] as unknown[]);
 
-const created = vi.hoisted(() => [] as FakeClientOptions[]);
-
-vi.mock('../../src/core/moodle/client', () => ({
-  MoodleClient: class {
-    constructor(readonly opts: FakeClientOptions) {
-      created.push(opts);
-    }
+vi.mock('../../src/core/moodle/web/channel', () => ({
+  createChannelClient: (opts: unknown) => {
+    created.push(opts);
+    return { opts };
   },
 }));
 
-function firstClient(): FakeClientOptions {
-  const client = created[0];
-  if (!client) throw new Error('no Moodle client was created');
-  return client;
+/** The options the nth client of this test was created with. */
+function options(n = 0): ChannelClientOptions {
+  const opts = created[n];
+  if (!opts) throw new Error('no Moodle client was created');
+  return opts as ChannelClientOptions;
 }
+
+const tokenOf = (n = 0) => {
+  const { token } = options(n);
+  if (!token) throw new Error('the client has no token channel');
+  return token;
+};
+
+const sessionOf = (n = 0) => {
+  const { session } = options(n);
+  if (!session) throw new Error('the client has no web channel');
+  return session;
+};
 
 const MASTER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).map((_, i) => i + 11)));
 
@@ -48,6 +53,8 @@ let store: D1Store;
 let userId: number;
 let deferred: Promise<unknown>[];
 const execCtx = () => ({ waitUntil: (p: Promise<unknown>) => void deferred.push(p) }) as unknown as ExecutionContext;
+
+const serviceOn = () => store.putSiteState('mobile_service', '1', Date.now());
 
 async function storeCredential(over: { status?: 'active' | 'invalid'; lastOkAt?: number | null } = {}) {
   const rt = await getRuntime(env);
@@ -66,6 +73,7 @@ async function storeCredential(over: { status?: 'active' | 'invalid'; lastOkAt?:
 }
 
 beforeEach(async () => {
+  resetSiteFlagMemory();
   created.length = 0;
   deferred = [];
   const { db } = createTestD1();
@@ -168,109 +176,198 @@ describe('buildServiceContext', () => {
 
 describe('ctx.moodle()', () => {
   const build = () => buildServiceContext(env, execCtx(), { userId, scopes: ['moodle:read'], source: 'Claude' });
+  const LIVE = 'MoodleSession=ctx01';
+  const counters = async () =>
+    (
+      await env.DB.prepare(
+        "SELECT metric, dim, value FROM usage_counts WHERE metric != 'signups' ORDER BY metric, dim",
+      ).all()
+    ).results;
 
-  it('needs a stored, active credential', async () => {
-    await expect((await build()).moodle()).rejects.toBeInstanceOf(NeedsReconnect);
-    await storeCredential({ status: 'invalid' });
-    await expect((await build()).moodle()).rejects.toBeInstanceOf(NeedsReconnect);
-    expect(created).toHaveLength(0);
-  });
+  /** Adds the web session to the stored credential. */
+  async function addSession(sesskey?: string) {
+    const rt = await getRuntime(env);
+    await store.updateCredentialStatus(userId, {
+      sessionEnc: await rt.key.encrypt(LIVE),
+      sesskeyEnc: sesskey ? await rt.key.encrypt(sesskey) : null,
+      sessionOkAt: 1,
+    });
+  }
 
-  it('decrypts the token, passes the Moodle user id and shares one client per request', async () => {
-    await storeCredential();
-    const ctx = await build();
-    const a = await ctx.moodle();
-    const b = await ctx.moodle();
-    expect(a).toBe(b);
-    expect(created).toHaveLength(1);
-    expect(created[0]).toMatchObject({ token: 't'.repeat(32), moodleUserId: 1001 });
-  });
+  /** A credential without any app token. */
+  async function sessionOnly(status: 'active' | 'invalid' = 'active') {
+    await storeCredential({ status });
+    await store.updateCredentialStatus(userId, { tokenEnc: null, tokenHash: null, tokenHint: null });
+    await addSession('Sk00000001');
+  }
 
-  it('caps the client budget when asked to', async () => {
-    await storeCredential();
-    const props = { userId, scopes: ['moodle:read' as const], source: 'Scheduled sweep' };
-    await (await buildServiceContext(env, execCtx(), props, { maxCalls: 12 })).moodle();
-    expect(created[0]).toMatchObject({ maxCalls: 12 });
-    created.length = 0;
-    await (await buildServiceContext(env, execCtx(), props)).moodle();
-    expect(created[0]?.maxCalls).toBeUndefined(); // the client's own default applies
-  });
+  const plain = async (enc: string | null | undefined) => (enc ? (await getRuntime(env)).key.decrypt(enc) : null);
 
-  it('marks the credential invalid when Moodle rejects the token', async () => {
-    await storeCredential();
-    await (await build()).moodle();
-    await firstClient().onTokenInvalid('t'.repeat(32));
-    expect(await store.getCredential(userId)).toMatchObject({ status: 'invalid' });
-    expect((await store.getCredential(userId))?.lastError).toBeTruthy();
-  });
-
-  it('does not invalidate a credential that holds another token by now (stale rejection)', async () => {
-    await storeCredential();
-    await (await build()).moodle();
-    await firstClient().onTokenInvalid('e'.repeat(32)); // not the stored token
-    expect(await store.getCredential(userId)).toMatchObject({ status: 'active', lastError: null });
-  });
-
-  describe('with a Moodle web session', () => {
-    const NEW = 'c'.repeat(32);
-    const counters = async () =>
-      (
-        await env.DB.prepare(
-          "SELECT metric, dim, value FROM usage_counts WHERE metric != 'signups' ORDER BY metric, dim",
-        ).all()
-      ).results;
-    const LIVE = 'MoodleSession=ctx01';
-    afterEach(() => vi.unstubAllGlobals());
-
-    async function withSession(status: 'active' | 'invalid') {
-      await storeCredential({ status });
-      const rt = await getRuntime(env);
-      await store.updateCredentialStatus(userId, { sessionEnc: await rt.key.encrypt(LIVE), sessionOkAt: 1 });
-      const web = fakeMoodleWeb({ token: NEW, live: new Set([LIVE]) });
-      vi.stubGlobal('fetch', vi.fn(web.fetch));
-      return web;
-    }
-
-    it('lets the client renew a rejected token from the session (launch.php only, never an autologin)', async () => {
-      const web = await withSession('active');
-      await (await build()).moodle();
-      const charged = vi.fn(web.fetch); // the client's own budgeted fetch
-      expect(await firstClient().renewToken?.(charged)).toBe(NEW);
-      expect(charged).toHaveBeenCalledTimes(1);
-      expect(globalThis.fetch).not.toHaveBeenCalled();
-      expect(web.requests.map((r) => r.path)).toEqual(['/admin/tool/mobile/launch.php']);
-      const cred = await store.getCredential(userId);
-      expect(cred).toMatchObject({ status: 'active', tokenHint: NEW.slice(-4) });
-      expect(cred?.renewedAt).not.toBeNull();
-      // credential health only: an on-demand renewal is no activity of its own
-      await Promise.all(deferred);
-      expect(await counters()).toEqual([{ metric: 'renew_renewed', dim: '', value: 1 }]);
+  describe('channel choice', () => {
+    it('needs a stored credential with a usable channel', async () => {
+      await expect((await build()).moodle()).rejects.toThrow(/browser extension or Moodle session cookie/);
+      await serviceOn();
+      await storeCredential({ status: 'invalid' });
+      await expect((await build()).moodle()).rejects.toBeInstanceOf(NeedsReconnect);
+      expect(created).toHaveLength(0);
     });
 
-    it('still builds a client for an invalid credential with a session: its first rejection renews it', async () => {
-      const web = await withSession('invalid');
+    it('cannot use a token alone while the mobile web service is off', async () => {
+      await storeCredential();
+      await expect((await build()).moodle()).rejects.toThrow(/browser extension or Moodle session cookie/);
+      expect(created).toHaveLength(0);
+      expect(await store.getCredential(userId)).toMatchObject({ status: 'active' }); // nothing is thrown away
+    });
+
+    it('gives a token-only credential the token channel and shares one client per request', async () => {
+      await serviceOn();
+      await storeCredential();
+      const ctx = await build();
+      expect(await ctx.moodle()).toBe(await ctx.moodle());
+      expect(created).toHaveLength(1);
+      expect(options()).toMatchObject({ moodleUserId: 1001, mobileService: true, session: null });
+      expect(tokenOf()).toMatchObject({ token: 't'.repeat(32), moodleUserId: 1001 });
+      expect(tokenOf().renewToken).toBeUndefined();
+    });
+
+    it('gives a session-only credential the web channel with the decrypted cookie and sesskey', async () => {
+      await sessionOnly();
       await (await build()).moodle();
-      expect(firstClient().token).toBe('t'.repeat(32));
-      expect(await firstClient().renewToken?.(web.fetch)).toBe(NEW);
+      expect(options()).toMatchObject({ mobileService: false, token: null });
+      expect(sessionOf()).toMatchObject({ moodleUserId: 1001, session: { cookie: LIVE, sesskey: 'Sk00000001' } });
+    });
+
+    it('offers both channels and says whether the mobile web service is on', async () => {
+      await storeCredential();
+      await addSession();
+      await (await build()).moodle();
+      expect(options().mobileService).toBe(false);
+      expect(tokenOf().token).toBe('t'.repeat(32));
+      expect(sessionOf().session).toMatchObject({ cookie: LIVE, sesskey: null });
+
+      resetSiteFlagMemory();
+      await serviceOn();
+      await (await build()).moodle();
+      expect(options(1).mobileService).toBe(true);
+    });
+
+    it('reads the site flag once per isolate for a few minutes', async () => {
+      await sessionOnly();
+      const rt = await getRuntime(env);
+      const read = vi.spyOn(rt.store, 'getSiteState');
+      await (await build()).moodle();
+      await (await build()).moodle();
+      expect(read).toHaveBeenCalledTimes(1);
+      read.mockRestore();
+    });
+
+    it('still builds a client for an invalid credential with a session', async () => {
+      await sessionOnly('invalid');
+      await (await build()).moodle();
+      expect(created).toHaveLength(1);
+    });
+
+    it('caps both channels’ budgets when asked to', async () => {
+      await storeCredential();
+      await addSession();
+      const props = { userId, scopes: ['moodle:read' as const], source: 'Scheduled sweep' };
+      await (await buildServiceContext(env, execCtx(), props, { maxCalls: 12 })).moodle();
+      expect([tokenOf().maxCalls, sessionOf().maxCalls]).toEqual([12, 12]);
+      await (await buildServiceContext(env, execCtx(), props)).moodle();
+      expect(sessionOf(1).maxCalls).toBeUndefined(); // the client's own default applies
+    });
+
+    it('remembers for everyone that the mobile web service turned out to be off', async () => {
+      await serviceOn();
+      await storeCredential();
+      await addSession();
+      await (await build()).moodle();
+      await options().onMobileServiceOff?.();
+      expect(await store.getSiteState('mobile_service')).toBe('0');
+      await (await build()).moodle();
+      expect(options(1).mobileService).toBe(false);
+    });
+  });
+
+  describe('token channel', () => {
+    beforeEach(serviceOn);
+
+    it('marks the credential invalid when Moodle rejects its only channel', async () => {
+      await storeCredential();
+      await (await build()).moodle();
+      await tokenOf().onTokenInvalid?.('t'.repeat(32));
+      expect(await store.getCredential(userId)).toMatchObject({ status: 'invalid' });
+      expect((await store.getCredential(userId))?.lastError).toBeTruthy();
+    });
+
+    it('drops only the rejected token while a session is left', async () => {
+      await storeCredential();
+      await addSession();
+      await (await build()).moodle();
+      await tokenOf().onTokenInvalid?.('t'.repeat(32));
+      expect(await store.getCredential(userId)).toMatchObject({ status: 'active', tokenEnc: null, lastError: null });
+      expect((await store.getCredential(userId))?.sessionEnc).not.toBeNull();
+    });
+
+    it('does not invalidate a credential that holds another token by now (stale rejection)', async () => {
+      await storeCredential();
+      await (await build()).moodle();
+      await tokenOf().onTokenInvalid?.('e'.repeat(32)); // not the stored token
       expect(await store.getCredential(userId)).toMatchObject({ status: 'active', lastError: null });
     });
 
-    it('gives nothing when the session has ended, and forgets it', async () => {
-      const web = await withSession('invalid');
-      web.state.live.clear();
-      await (await build()).moodle();
-      expect(await firstClient().renewToken?.(web.fetch)).toBeNull();
-      expect((await store.getCredential(userId))?.sessionEnc).toBeNull();
-      created.length = 0;
-      await expect((await build()).moodle()).rejects.toBeInstanceOf(NeedsReconnect);
-      expect(created).toHaveLength(0);
+    describe('with a Moodle web session', () => {
+      const NEW = 'c'.repeat(32);
+      afterEach(() => vi.unstubAllGlobals());
+
+      async function withSession(status: 'active' | 'invalid') {
+        await storeCredential({ status });
+        await addSession();
+        const web = fakeMoodleWeb({ token: NEW, live: new Set([LIVE]) });
+        vi.stubGlobal('fetch', vi.fn(web.fetch));
+        return web;
+      }
+
+      it('renews a rejected token from the session (launch.php only, never an autologin)', async () => {
+        const web = await withSession('active');
+        await (await build()).moodle();
+        const charged = vi.fn(web.fetch); // the client's own budgeted fetch
+        expect(await tokenOf().renewToken?.(charged)).toBe(NEW);
+        expect(charged).toHaveBeenCalledTimes(1);
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+        expect(web.requests.map((r) => r.path)).toEqual(['/admin/tool/mobile/launch.php']);
+        const cred = await store.getCredential(userId);
+        expect(cred).toMatchObject({ status: 'active', tokenHint: NEW.slice(-4) });
+        expect(cred?.renewedAt).not.toBeNull();
+        // credential health only: an on-demand renewal is no activity of its own
+        await Promise.all(deferred);
+        expect(await counters()).toEqual([{ metric: 'renew_renewed', dim: '', value: 1 }]);
+      });
+
+      it('renews an invalid credential’s token too', async () => {
+        const web = await withSession('invalid');
+        await (await build()).moodle();
+        expect(await tokenOf().renewToken?.(web.fetch)).toBe(NEW);
+        expect(await store.getCredential(userId)).toMatchObject({ status: 'active', lastError: null });
+      });
+
+      it('gives nothing when the session has ended, and forgets it', async () => {
+        const web = await withSession('invalid');
+        web.state.live.clear();
+        await (await build()).moodle();
+        expect(await tokenOf().renewToken?.(web.fetch)).toBeNull();
+        expect((await store.getCredential(userId))?.sessionEnc).toBeNull();
+        created.length = 0;
+        await expect((await build()).moodle()).rejects.toBeInstanceOf(NeedsReconnect);
+        expect(created).toHaveLength(0);
+      });
     });
 
     it('opens the session right after a connect that stored a private token, and only then', async () => {
       await storeCredential();
       const rt = await getRuntime(env);
       const user = (await store.getUser(userId))!;
-      const web = fakeMoodleWeb({ token: NEW });
+      const web = fakeMoodleWeb({ token: 'c'.repeat(32) });
       vi.stubGlobal('fetch', vi.fn(web.fetch));
       await startRenewal(rt, user, await store.getCredential(userId));
       expect(web.requests).toHaveLength(0); // no private token
@@ -288,39 +385,111 @@ describe('ctx.moodle()', () => {
       expect(web.requests).toHaveLength(3); // a session exists already
       expect((await store.getUser(userId))?.lastSeenAt).toBe(user.lastSeenAt);
       expect(await counters()).toEqual([{ metric: 'renew_renewed', dim: '', value: 1 }]); // one renewal, no activity
+      vi.unstubAllGlobals();
     });
 
-    it('gives no renewal hook without a session', async () => {
-      await storeCredential();
+    it('refreshes lastOkAt lazily, at most every 10 minutes', async () => {
+      await storeCredential({ lastOkAt: Date.now() - 2 * LAST_OK_INTERVAL_MS });
       await (await build()).moodle();
-      expect(firstClient().renewToken).toBeUndefined();
+      deferred.length = 0;
+      tokenOf().onSuccess?.();
+      expect(deferred).toHaveLength(1);
+      await Promise.all(deferred);
+      const cred = await store.getCredential(userId);
+      expect(Date.now() - (cred?.lastOkAt ?? 0)).toBeLessThan(5000);
+
+      await (await build()).moodle(); // lastOkAt is fresh now
+      deferred.length = 0;
+      tokenOf(1).onSuccess?.();
+      expect(deferred).toHaveLength(0);
     });
   });
 
-  it('refreshes lastOkAt lazily, at most every 10 minutes', async () => {
-    await storeCredential({ lastOkAt: Date.now() - 2 * LAST_OK_INTERVAL_MS });
-    await (await build()).moodle();
-    deferred.length = 0;
-    firstClient().onSuccess();
-    expect(deferred).toHaveLength(1);
-    await Promise.all(deferred);
-    const cred = await store.getCredential(userId);
-    expect(Date.now() - (cred?.lastOkAt ?? 0)).toBeLessThan(5000);
+  it('never opens a session while the mobile web service is off', async () => {
+    await storeCredential();
+    const rt = await getRuntime(env);
+    const user = (await store.getUser(userId))!;
+    const prev = (await store.getCredential(userId))!;
+    await store.putCredential({ ...prev, privateTokenEnc: await rt.key.encrypt('Priv4te1') });
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    await startRenewal(rt, user, await store.getCredential(userId));
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
 
-    created.length = 0;
-    await (await build()).moodle(); // lastOkAt is fresh now
-    deferred.length = 0;
-    firstClient().onSuccess();
-    expect(deferred).toHaveLength(0);
+  describe('web channel', () => {
+    it('stores a rotated cookie and a new sesskey', async () => {
+      await sessionOnly();
+      await (await build()).moodle();
+      const { session } = sessionOf();
+      await session.onUpdate?.({ cookie: 'MoodleSession=rotated02' });
+      await session.onUpdate?.({ sesskey: 'Sk00000002' });
+      const cred = await store.getCredential(userId);
+      expect(await plain(cred?.sessionEnc)).toBe('MoodleSession=rotated02');
+      expect(await plain(cred?.sesskeyEnc)).toBe('Sk00000002');
+    });
+
+    it('forgets an ended session, asks for a reconnect and counts it', async () => {
+      await sessionOnly();
+      await (await build()).moodle();
+      await sessionOf().session.onEnded?.();
+      expect(await store.getCredential(userId)).toMatchObject({
+        sessionEnc: null,
+        sesskeyEnc: null,
+        status: 'invalid',
+        lastError: 'The Moodle session ended. Reconnect to continue.',
+      });
+      expect(await counters()).toEqual([{ metric: 'renew_ended', dim: '', value: 1 }]);
+      created.length = 0;
+      await expect((await build()).moodle()).rejects.toBeInstanceOf(NeedsReconnect);
+    });
+
+    it('stays active after the session ends while a usable token remains', async () => {
+      await serviceOn();
+      await storeCredential();
+      await addSession();
+      await (await build()).moodle();
+      await sessionOf().session.onEnded?.();
+      expect(await store.getCredential(userId)).toMatchObject({ sessionEnc: null, status: 'active' });
+    });
+
+    it('does not count the token once the service turned out to be off', async () => {
+      await serviceOn();
+      await storeCredential();
+      await addSession();
+      await (await build()).moodle();
+      await options().onMobileServiceOff?.();
+      await sessionOf().session.onEnded?.();
+      expect(await store.getCredential(userId)).toMatchObject({ sessionEnc: null, status: 'invalid' });
+    });
+
+    it('stamps a successful call lazily and brings an invalid credential back', async () => {
+      await sessionOnly('invalid');
+      await (await build()).moodle();
+      deferred.length = 0;
+      sessionOf().onSuccess?.();
+      await Promise.all(deferred);
+      const cred = await store.getCredential(userId);
+      expect(cred).toMatchObject({ status: 'active', lastError: null });
+      expect(Date.now() - (cred?.sessionOkAt ?? 0)).toBeLessThan(5000);
+      expect(cred?.lastOkAt).toBe(cred?.sessionOkAt);
+
+      await (await build()).moodle(); // fresh now
+      deferred.length = 0;
+      sessionOf(1).onSuccess?.();
+      expect(deferred).toHaveLength(0);
+    });
   });
 });
 
 describe('makeMoodleFactory', () => {
   it('builds clients by user id for the file routes', async () => {
+    await serviceOn();
     await storeCredential();
     const make = makeMoodleFactory(env, execCtx());
     await make(userId);
-    expect(created[0]).toMatchObject({ moodleUserId: 1001 });
+    expect(options()).toMatchObject({ moodleUserId: 1001 });
     await expect(make(4242)).rejects.toBeInstanceOf(NotFound);
   });
 });

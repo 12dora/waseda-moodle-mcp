@@ -8,7 +8,7 @@ export interface Env {
   DB: D1Database;
   OAUTH_KV: KVNamespace;
   ASSETS: Fetcher;
-  /** Secret: 32 random bytes, base64. Encrypts Moodle tokens and signs file tickets. */
+  /** Secret: 32 random bytes, base64. Encrypts Moodle sessions and tokens and signs file tickets. */
   MASTER_KEY: string;
   PUBLIC_URL: string;
   /** 'open' | 'allowlist' (anything else is treated as 'allowlist'). */

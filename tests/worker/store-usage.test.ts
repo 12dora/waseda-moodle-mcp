@@ -448,6 +448,7 @@ describe('getUsageStats (finer sections)', () => {
       { metric: 'renew_renewed', dim: '' },
       { metric: 'renew_kept', dim: '' },
       { metric: 'renew_kept', dim: '' },
+      { metric: 'renew_ended', dim: '' },
       { metric: 'renew_failed', dim: 'unavailable' },
       { metric: 'connect', dim: 'bookmarklet' },
     ]);
@@ -459,9 +460,10 @@ describe('getUsageStats (finer sections)', () => {
     expect(r.credentials).toEqual({
       active: 2,
       invalid: 2,
-      autoRenew: 2,
+      sessions: 1,
       renewed: 1,
       kept: 2,
+      ended: 1,
       failed: 1,
       failures: [{ reason: 'unavailable', count: 1 }],
       connects: [
@@ -469,7 +471,7 @@ describe('getUsageStats (finer sections)', () => {
         { via: 'bookmarklet', count: 1 },
       ],
     });
-    expect(r.daily.at(-1)).toMatchObject({ renewed: 1, renewKept: 2, renewFailed: 1, connects: 1 });
+    expect(r.daily.at(-1)).toMatchObject({ renewed: 1, renewKept: 2, renewEnded: 1, renewFailed: 1, connects: 1 });
   });
 
   it('reports the write funnel per kind and calendar fetches per day', async () => {

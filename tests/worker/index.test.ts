@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InvocationBudget } from '../../src/core/budget';
 import { sha256Hex } from '../../src/core/crypto';
 import { NeedsReconnect } from '../../src/core/errors';
@@ -9,9 +10,10 @@ import type { Env } from '../../src/worker/env';
 import worker, { buildProviderOptions, isPurgeRun, providerFor, runScheduled } from '../../src/worker/index';
 import { mcpApiHandler } from '../../src/worker/mcp';
 import { meterD1 } from '../../src/worker/metered-d1';
+import { resetSiteFlagMemory } from '../../src/worker/site-flag';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
 import { createTestD1 } from '../helpers/d1-sqlite';
-import { fakeMoodleWeb } from '../helpers/fake-moodle-web';
+import { fakeMoodleSession, SESSKEY } from '../helpers/fake-moodle-session';
 import { MemoryKV } from '../helpers/memory-kv';
 
 /** Mirrors the private KV key in src/worker/index.ts (workerd rejects non-handler exports from the entry). */
@@ -59,6 +61,7 @@ const execCtx = () => ({ waitUntil: (p: Promise<unknown>) => void deferred.push(
 
 beforeEach(async () => {
   resetRateLimitMemory();
+  resetSiteFlagMemory();
   deferred = [];
   rec.purge.mockReset();
   vi.mocked(refreshSnapshots)
@@ -83,6 +86,7 @@ beforeEach(async () => {
   userId = (await store.upsertUser({ moodleUserId: 1001, fullname: 'Taro Yamada', lang: 'ja' })).id;
 });
 
+/** A token-only credential: usable (and swept) only while the mobile service is on (tests set it in the fake). */
 async function seedCredential(id = userId, tokenHash = 'h1'): Promise<void> {
   await store.putCredential({
     userId: id,
@@ -237,6 +241,27 @@ describe('scheduled', () => {
   const PURGE_TIME = Date.UTC(2026, 9, 15, 3, 17); // 03:17 UTC = 12:17 JST
   const HOURLY_TIME = Date.UTC(2026, 9, 15, 4, 17);
   const controller = (scheduledTime: number) => ({ scheduledTime }) as ScheduledController;
+  let moodle: ReturnType<typeof fakeMoodleSession>;
+  let fetchSpy: ReturnType<typeof vi.fn<typeof fetch>>;
+
+  // every run asks Moodle whether its mobile web service is on
+  beforeEach(() => {
+    moodle = fakeMoodleSession({ mobileService: true });
+    fetchSpy = vi.fn(moodle.fetch);
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Gives a stored credential a live web session. */
+  async function addSession(id: number, cookie: string): Promise<void> {
+    const { key } = await getRuntime(env);
+    moodle.state.live.add(cookie);
+    await store.updateCredentialStatus(id, {
+      sessionEnc: await key.encrypt(cookie),
+      sesskeyEnc: await key.encrypt(SESSKEY),
+      sessionOkAt: 1,
+    });
+  }
 
   it('recognises only the 03:17 UTC run as the daily purge slot', () => {
     expect(isPurgeRun(PURGE_TIME)).toBe(true);
@@ -283,48 +308,36 @@ describe('scheduled', () => {
     spy.mockRestore();
   });
 
-  it('runs only the credential keepalive on the 16:17 and 19:17 UTC night runs', async () => {
+  it('is scheduled every hour of the day', () => {
+    const wrangler = readFileSync(new URL('../../wrangler.jsonc', import.meta.url), 'utf8');
+    expect(wrangler).toContain('"crons": ["17 * * * *"]');
+  });
+
+  it('runs only the session keepalive on the night runs, 15:17 to 21:17 UTC (00–06 JST)', async () => {
     await seedCredential();
-    const rt = await getRuntime(env);
-    const sessionEnc = await rt.key.encrypt('MoodleSession=n1');
-    await store.updateCredentialStatus(userId, { sessionEnc, sessionOkAt: 1 });
-    const web = fakeMoodleWeb({ live: new Set(['MoodleSession=n1']) });
-    vi.stubGlobal('fetch', vi.fn(web.fetch));
-    try {
-      for (const hour of [16, 19]) await runScheduled(env, Date.UTC(2026, 9, 15, hour, 17), execCtx());
-      expect(refreshSnapshots).not.toHaveBeenCalled();
-      expect(web.requests.map((r) => r.path)).toEqual(['/admin/tool/mobile/launch.php']); // then confirmed recently
-      expect((await store.getCredential(userId))?.sessionOkAt).toBeGreaterThan(1);
-      await runScheduled(env, HOURLY_TIME, execCtx());
-      expect(refreshSnapshots).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    await addSession(userId, 'MoodleSession=n1');
+    for (const hour of [15, 18, 21]) await runScheduled(env, Date.UTC(2026, 9, 15, hour, 17), execCtx());
+    expect(refreshSnapshots).not.toHaveBeenCalled();
+    const touches = moodle.requests.filter((r) => r.path === '/lib/ajax/service.php');
+    expect(touches).toHaveLength(1); // then confirmed recently
+    expect((await store.getCredential(userId))?.sessionOkAt).toBeGreaterThan(1);
+    for (const hour of [22, 14]) await runScheduled(env, Date.UTC(2026, 9, 15, hour, 17), execCtx());
+    expect(refreshSnapshots).toHaveBeenCalledTimes(2);
   });
 
   it('keeps purge + keepalive + sweep within the per-invocation D1 query and subrequest limits', async () => {
-    const rt = await getRuntime(env);
-    const web = fakeMoodleWeb();
     for (let i = 0; i < 25; i++) {
       const u = await store.upsertUser({ moodleUserId: 5000 + i, fullname: `User ${i}`, lang: 'en' });
       await seedCredential(u.id, `h${i}`);
-      const cookie = `MoodleSession=p${i}`;
-      web.state.live.add(cookie);
-      await store.updateCredentialStatus(u.id, { sessionEnc: await rt.key.encrypt(cookie), sessionOkAt: 1 });
+      await addSession(u.id, `MoodleSession=p${i}`);
     }
-    const fetchSpy = vi.fn(web.fetch);
-    vi.stubGlobal('fetch', fetchSpy);
     rec.purge.mockResolvedValue({ done: true });
     const counter = new InvocationBudget(10_000, 10_000); // only counts what the run really sends to D1
-    try {
-      await runScheduled({ ...env, DB: meterD1(env.DB, counter) }, PURGE_TIME, execCtx());
-      await Promise.all(deferred);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    await runScheduled({ ...env, DB: meterD1(env.DB, counter) }, PURGE_TIME, execCtx());
+    await Promise.all(deferred);
     expect(10_000 - counter.queries).toBeLessThanOrEqual(50);
     expect(fetchSpy.mock.calls.length).toBeLessThanOrEqual(50);
-    expect(fetchSpy).toHaveBeenCalled(); // the keepalive ran
+    expect(fetchSpy.mock.calls.length).toBeGreaterThan(1); // the keepalive visited sessions
     expect(refreshSnapshots).toHaveBeenCalled(); // and the sweep still had room
   });
 

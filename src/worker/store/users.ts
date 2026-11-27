@@ -16,10 +16,10 @@ export interface UserRaw {
 
 interface CredentialRaw {
   user_id: number;
-  token_enc: string;
+  token_enc: string | null;
   private_token_enc: string | null;
-  token_hash: string;
-  token_hint: string;
+  token_hash: string | null;
+  token_hint: string | null;
   status: 'active' | 'invalid';
   connected_via: string;
   connected_at: number;
@@ -30,6 +30,7 @@ interface CredentialRaw {
   session_tried_at: number | null;
   renewed_at: number | null;
   autologin_at: number | null;
+  sesskey_enc: string | null; // 0014
 }
 
 function scopeIds(raw: string | null | undefined): number[] | undefined {
@@ -64,6 +65,7 @@ const toCredential = (r: CredentialRaw): CredentialRow => ({
   sessionTriedAt: r.session_tried_at,
   renewedAt: r.renewed_at,
   autologinAt: r.autologin_at,
+  sesskeyEnc: r.sesskey_enc,
 });
 
 const CREDENTIAL_COLUMNS: Record<keyof CredentialPatch, string> = {
@@ -81,6 +83,7 @@ const CREDENTIAL_COLUMNS: Record<keyof CredentialPatch, string> = {
   sessionTriedAt: 'session_tried_at',
   renewedAt: 'renewed_at',
   autologinAt: 'autologin_at',
+  sesskeyEnc: 'sesskey_enc',
 };
 
 /** Patch fields -> column values (undefined fields are left out by updateColumns / setClause). */
@@ -222,16 +225,9 @@ function credentialMethods(db: D1Database): CredentialMethods {
 
     async updateCredentialIf(userId, expect, patch) {
       const sets = Object.entries(credentialColumns(patch));
-      const where = ['user_id = ?', 'token_hash = ?'];
-      const args: unknown[] = [userId, expect.tokenHash];
-      if (expect.sessionEnc !== undefined) {
-        where.push('session_enc IS ?');
-        args.push(expect.sessionEnc);
-      }
-      if (expect.autologinAt !== undefined) {
-        where.push('autologin_at IS ?');
-        args.push(expect.autologinAt);
-      }
+      const expected = Object.entries(credentialColumns(expect));
+      const where = ['user_id = ?', ...expected.map(([column]) => `${column} IS ?`)];
+      const args: unknown[] = [userId, ...expected.map(([, value]) => value)];
       if (sets.length === 0) sets.push(['user_id', userId]); // still reports whether the state matched
       const sql = `UPDATE credentials SET ${sets.map(([c]) => `${c} = ?`).join(', ')} WHERE ${where.join(' AND ')}`;
       return (await changes(db.prepare(sql).bind(...sets.map(([, v]) => v), ...args))) === 1;
@@ -242,23 +238,11 @@ function credentialMethods(db: D1Database): CredentialMethods {
       const { results } = await db
         .prepare(
           `SELECT u.*, c.* FROM users u JOIN credentials c ON c.user_id = u.id
-           WHERE (c.session_enc IS NOT NULL AND ${visited} <= ?)
-              OR (c.session_enc IS NULL AND c.status = 'active' AND c.private_token_enc IS NOT NULL
-                  AND (c.autologin_at IS NULL OR c.autologin_at <= ? OR c.autologin_at < c.connected_at))
-           ORDER BY CASE WHEN c.session_enc IS NOT NULL AND ${visited} > ? AND ${visited} <= ? THEN 0 ELSE 1 END,
-                    CASE WHEN c.session_enc IS NOT NULL THEN ${visited} + ? ELSE COALESCE(c.autologin_at, 0) + ? END,
-                    u.id
+           WHERE c.session_enc IS NOT NULL AND ${visited} <= ?
+           ORDER BY ${visited}, u.id
            LIMIT ?`,
         )
-        .bind(
-          opts.sessionBefore,
-          opts.autologinBefore,
-          opts.mustVisit.after,
-          opts.mustVisit.until,
-          opts.sessionIdleMs,
-          opts.autologinRetryMs,
-          Math.max(1, Math.floor(opts.limit)),
-        )
+        .bind(opts.visitedBefore, Math.max(1, Math.floor(opts.limit)))
         .all<UserRaw & CredentialRaw>();
       return results.map((r) => ({ user: toUser(r), credential: toCredential(r) }));
     },

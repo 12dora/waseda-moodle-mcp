@@ -26,8 +26,8 @@ const REFRESH_TOKEN_TTL_SEC = 7_776_000; // 90 d
 const PURGE_BATCH = 25;
 const PURGE_HOUR_UTC = 3;
 const PURGE_MINUTE_UTC = 17;
-/** Night runs (01:17 and 04:17 JST) only keep the Moodle web sessions alive: no course sweep. */
-const KEEPALIVE_ONLY_HOURS_UTC = new Set([16, 19]);
+/** The night runs, 15–21 UTC (00–06 JST), only keep the Moodle web sessions alive: everything else runs 07–24 JST. */
+const NIGHT_UTC = { first: 15, last: 21 };
 /** What the keepalive leaves for the course sweep on a daytime run. */
 const SWEEP_RESERVE = { moodle: 14, queries: 20 };
 
@@ -105,15 +105,21 @@ async function runPurge(env: Env, now = Date.now()): Promise<void> {
   }
 }
 
-/** The cron (`17 0-14,16,19,22-23 * * *`, UTC) also carries the daily purge, on its 03:17 UTC run only. */
+/** The hourly cron (`17 * * * *`) also carries the daily purge, on its 03:17 UTC run only. */
 export function isPurgeRun(scheduledTime: number): boolean {
   const at = new Date(scheduledTime);
   return at.getUTCHours() === PURGE_HOUR_UTC && at.getUTCMinutes() === PURGE_MINUTE_UTC;
 }
 
+/** Whether this run also sweeps courses (07–24 JST). */
+function isDayRun(scheduledTime: number): boolean {
+  const hour = new Date(scheduledTime).getUTCHours();
+  return hour < NIGHT_UTC.first || hour > NIGHT_UTC.last;
+}
+
 /**
- * One cron run: the purge and the idle mail cleanup when it is the daily slot, the credential keepalive, then the
- * course sweep (07–24 JST).
+ * One cron run: the purge and the idle mail cleanup when it is the daily slot, the session keepalive, then, on a day
+ * run, the course sweep.
  * All three spend ONE invocation budget of Moodle requests and D1 queries (D1 is metered here), so the run stays
  * under the Free plan's per-invocation limits. Each part survives the others' failure.
  */
@@ -124,11 +130,11 @@ export async function runScheduled(env: Env, scheduledTime: number, execCtx?: Ex
     await runPurge(metered);
     await runMailIdle(metered, budget);
   }
-  const sweep = !KEEPALIVE_ONLY_HOURS_UTC.has(new Date(scheduledTime).getUTCHours());
+  const sweep = isDayRun(scheduledTime);
   try {
     await runRenewal(metered, budget, sweep ? SWEEP_RESERVE : undefined);
   } catch (e) {
-    console.error('renewal failed:', e instanceof Error ? e.name : 'unknown');
+    console.error('keepalive failed:', e instanceof Error ? e.name : 'unknown');
   }
   if (!sweep) return;
   try {

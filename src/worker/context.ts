@@ -11,17 +11,26 @@ import type {
   UsageRecorder,
   UserRow,
 } from '../core/context';
-import { createSigner, importMasterKey, type MasterKey, sha256Hex } from '../core/crypto';
+import { createSigner, importMasterKey, type MasterKey } from '../core/crypto';
 import { NeedsReconnect, NotFound } from '../core/errors';
 import { GmailClient } from '../core/mail/client';
 import { mailReconnect } from '../core/mail/connection';
 import { MoodleClient } from '../core/moodle/client';
-import { type RenewalDeps, type RenewalOutcome, refreshCredential } from '../core/services/credential-renewal';
+import { createChannelClient } from '../core/moodle/web/channel';
+import { isUsable } from '../core/services/account';
+import {
+  type RenewalDeps,
+  type RenewalOutcome,
+  refreshCredential,
+  rejectToken,
+  StoredSession,
+} from '../core/services/credential-renewal';
 import { clientLabel, renewalCounts } from '../core/usage';
 import { type Env, googleClientOf, type McpProps, publicUrlOf } from './env';
+import { mobileServiceOn, setMobileService } from './site-flag';
 import { createD1Store, type D1Store } from './store-d1';
 
-/** lastOkAt (Moodle) and lastUsedAt (mail) are written at most this often per credential. */
+/** lastOkAt / sessionOkAt (Moodle) and lastUsedAt (mail) are written at most this often per credential. */
 export const LAST_OK_INTERVAL_MS = 10 * 60_000;
 
 interface Runtime {
@@ -72,8 +81,8 @@ export function makeDefer(execCtx: WaitUntil | undefined): Defer {
 
 export const renewalDeps = (rt: Runtime): RenewalDeps => ({ store: rt.store, key: rt.key });
 
-/** Credential-health counters of one refresh (operator statistics; never activity). Never throws. */
-async function countRenewal(store: D1Store, outcome: RenewalOutcome): Promise<void> {
+/** Credential-health counters of one refresh or ended session (operator statistics; never activity). Never throws. */
+async function countRenewal(store: D1Store, outcome: Pick<RenewalOutcome, 'status' | 'reason'>): Promise<void> {
   const counts = renewalCounts(outcome);
   if (counts.length > 0) await store.recordCounts(Date.now(), counts).catch(() => undefined);
 }
@@ -83,28 +92,31 @@ interface ClientOptions {
   budget?: InvocationBudget;
 }
 
+type ChannelOptions = Parameters<typeof createChannelClient>[0];
+
+/** What the two channels of one client share. */
+interface Connection {
+  rt: Runtime;
+  user: UserRow;
+  cred: CredentialRow;
+  defer: Defer;
+  limits: ClientOptions;
+}
+
+/** Whether a stamp is old enough to be written again. */
+const isStale = (at: number | null | undefined): boolean => Date.now() - (at ?? 0) >= LAST_OK_INTERVAL_MS;
+
 /**
- * Moodle client for a stored credential. When Moodle rejects the token, a stored web session is asked for the current
- * one first (launch.php only, charged to this client, never an autologin: concurrent requests cannot open sessions).
- * An `invalid` credential with a session is therefore still tried: its first rejection renews it. Without success the
- * rejected token is marked invalid, unless the row holds another token meanwhile. Refreshes `lastOkAt` lazily (at most
- * once per LAST_OK_INTERVAL_MS).
+ * The token channel. When Moodle rejects the token, a stored web session is asked for the current one first (launch.php
+ * only, charged to this client, never an autologin: concurrent requests cannot open sessions). Without success the
+ * rejected token is given up (rejectToken). Refreshes `lastOkAt` lazily (at most once per LAST_OK_INTERVAL_MS).
  */
-async function createMoodleClient(
-  rt: Runtime,
-  user: UserRow,
-  defer: Defer,
-  opts: ClientOptions = {},
-): Promise<MoodleApi> {
-  const cred = await rt.store.getCredential(user.id);
-  if (!cred) throw new NeedsReconnect('Moodle is not connected for this account. Reconnect in the console.');
-  if (cred.status === 'invalid' && !cred.sessionEnc) throw new NeedsReconnect();
-  const lastOk = cred.lastOkAt ?? 0;
-  return new MoodleClient({
-    token: await rt.key.decrypt(cred.tokenEnc),
+async function tokenChannel(c: Connection, tokenEnc: string): Promise<NonNullable<ChannelOptions['token']>> {
+  const { rt, user, cred, defer } = c;
+  return {
+    ...c.limits,
+    token: await rt.key.decrypt(tokenEnc),
     moodleUserId: user.moodleUserId,
-    maxCalls: opts.maxCalls,
-    budget: opts.budget,
     renewToken: cred.sessionEnc
       ? async (fetch) => {
           const outcome = await refreshCredential({ ...renewalDeps(rt), fetch }, user, cred);
@@ -112,19 +124,82 @@ async function createMoodleClient(
           return outcome.token ?? null;
         }
       : undefined,
-    onTokenInvalid: async (rejected) => {
-      try {
-        const expect = { tokenHash: await sha256Hex(rejected) };
-        const lastError = 'Moodle rejected the stored token. Reconnect to continue.';
-        await rt.store.updateCredentialIf(user.id, expect, { status: 'invalid', lastError });
-      } catch {
-        // the NeedsReconnect that follows still reaches the caller
-      }
+    // best effort: the NeedsReconnect that follows reaches the caller either way
+    onTokenInvalid: (rejected) => rejectToken(rt.store, user.id, rejected).catch(() => undefined),
+    onSuccess: () => {
+      if (!isStale(cred.lastOkAt)) return;
+      defer(rt.store.updateCredentialStatus(user.id, { lastOkAt: Date.now(), lastError: null }));
+    },
+  };
+}
+
+/**
+ * The web session channel: a rotated cookie or new sesskey is stored, an ended session forgotten (the credential then
+ * turns invalid unless a usable token remains), and a successful call stamps `sessionOkAt` lazily, which also spares
+ * the keepalive a visit.
+ */
+async function webChannel(
+  c: Connection,
+  sessionEnc: string,
+  mobileService: () => boolean,
+): Promise<NonNullable<ChannelOptions['session']>> {
+  const { rt, user, cred, defer } = c;
+  const stored = new StoredSession(renewalDeps(rt), user.id, sessionEnc);
+  const later = (write: Promise<unknown>): Promise<void> => {
+    defer(write);
+    return write.then(
+      () => undefined,
+      () => undefined,
+    );
+  };
+  const ended = async () => {
+    if (await stored.end(mobileService())) await countRenewal(rt.store, { status: 'ended' });
+  };
+  return {
+    ...c.limits,
+    moodleUserId: user.moodleUserId,
+    session: {
+      cookie: await rt.key.decrypt(sessionEnc),
+      sesskey: cred.sesskeyEnc ? await rt.key.decrypt(cred.sesskeyEnc) : null,
+      onUpdate: (change) => later(stored.update(change)),
+      onEnded: () => later(ended()),
     },
     onSuccess: () => {
-      const now = Date.now();
-      if (now - lastOk < LAST_OK_INTERVAL_MS) return;
-      defer(rt.store.updateCredentialStatus(user.id, { lastOkAt: now, lastError: null }));
+      if (cred.status === 'active' && !isStale(cred.sessionOkAt)) return;
+      defer(stored.confirm(Date.now()));
+    },
+  };
+}
+
+/**
+ * Moodle client for a stored credential: the token channel while the mobile web service is on and a token exists, the
+ * web session otherwise (moodle/web/channel). A credential with neither needs a reconnect. An `invalid` credential
+ * with a session is still tried: the session works on its own, and it renews a rejected token.
+ */
+async function createMoodleClient(
+  rt: Runtime,
+  user: UserRow,
+  defer: Defer,
+  limits: ClientOptions = {},
+): Promise<MoodleApi> {
+  const cred = await rt.store.getCredential(user.id);
+  if (!cred) {
+    throw new NeedsReconnect(
+      'Moodle is not connected for this account. Reconnect in the console (browser extension or Moodle session cookie).',
+    );
+  }
+  let mobileService = await mobileServiceOn(rt.store);
+  if (!isUsable(cred, mobileService)) throw new NeedsReconnect();
+  const connection: Connection = { rt, user, cred, defer, limits };
+  const { tokenEnc, sessionEnc } = cred;
+  return createChannelClient({
+    moodleUserId: user.moodleUserId,
+    mobileService,
+    token: tokenEnc ? await tokenChannel(connection, tokenEnc) : null,
+    session: sessionEnc ? await webChannel(connection, sessionEnc, () => mobileService) : null,
+    onMobileServiceOff: () => {
+      mobileService = false;
+      return setMobileService(rt.store, false);
     },
   });
 }
@@ -284,11 +359,13 @@ export function consoleProps(user: UserRow): McpProps {
 // ------------------------------------------------------------------ connect wiring
 
 /**
- * After a connect or refresh that stored a private token: opens the web session right away, so renewal is active at
- * once (a newly connected credential is tried at once; otherwise the policy's retry wait applies).
+ * After a connect or refresh that stored a private token, while the mobile web service is on: opens the web session
+ * right away, so renewal is active at once (a newly connected credential is tried at once; otherwise the policy's retry
+ * wait applies).
  */
 export async function startRenewal(rt: Runtime, user: UserRow, cred: CredentialRow | null): Promise<void> {
   if (!cred?.privateTokenEnc || cred.sessionEnc || cred.status !== 'active') return;
+  if (!(await mobileServiceOn(rt.store))) return;
   await countRenewal(rt.store, await refreshCredential(renewalDeps(rt), user, cred, { autologin: true }));
 }
 
@@ -298,5 +375,7 @@ export function connectDeps(rt: Runtime, allowRegistration: (moodleUserId: numbe
     key: rt.key,
     makeClient: (token: string, moodleUserId: number): MoodleApi => new MoodleClient({ token, moodleUserId }),
     allowRegistration,
+    // a launch-link connect must work at once, not only after the cron has noticed the service is back
+    onTokenVerified: () => setMobileService(rt.store, true),
   };
 }

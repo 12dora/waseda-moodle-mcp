@@ -40,6 +40,7 @@ const DAILY_METRICS = [
   'ics_feeds',
   'renew_renewed',
   'renew_kept',
+  'renew_ended',
   'renew_failed',
   'connect',
 ];
@@ -250,7 +251,7 @@ async function readCounters(db: D1Database, dayList: string[], now: number) {
       .bind(periods.month),
     db.prepare(
       `SELECT TOTAL(status = 'active') AS active, TOTAL(status = 'invalid') AS invalid,
-         TOTAL(session_enc IS NOT NULL OR (status = 'active' AND private_token_enc IS NOT NULL)) AS auto_renew
+         TOTAL(session_enc IS NOT NULL) AS sessions
        FROM credentials`,
     ),
     db
@@ -282,6 +283,7 @@ function dailyStats(dayList: string[], created: Rows, counters: Rows): DayStats[
       icsFeeds: at('ics_feeds'),
       renewed: at('renew_renewed'),
       renewKept: at('renew_kept'),
+      renewEnded: at('renew_ended'),
       renewFailed: at('renew_failed'),
       connects: at('connect'),
     };
@@ -296,7 +298,7 @@ async function getUsageStats(db: D1Database, days: number, now: number): Promise
   const sum = (field: Exclude<keyof DayStats, 'day'>) => daily.reduce((n, d) => n + d[field], 0);
   const dim = groupByMetric(rowsOf<CountRow>(r.byDim));
   const active = new Map(rowsOf<CountRow>(r.active).map((x) => [`${x.period}|${x.metric}`, Number(x.total)]));
-  const cred = rowsOf<{ active: number; invalid: number; auto_renew: number }>(r.credentials)[0];
+  const cred = rowsOf<{ active: number; invalid: number; sessions: number }>(r.credentials)[0];
 
   return {
     generatedAt: now,
@@ -321,9 +323,10 @@ async function getUsageStats(db: D1Database, days: number, now: number): Promise
     credentials: {
       active: Number(cred?.active ?? 0),
       invalid: Number(cred?.invalid ?? 0),
-      autoRenew: Number(cred?.auto_renew ?? 0),
+      sessions: Number(cred?.sessions ?? 0),
       renewed: sum('renewed'),
       kept: sum('renewKept'),
+      ended: sum('renewEnded'),
       failed: sum('renewFailed'),
       failures: ranked(dim('renew_failed')).map(([reason, count]) => ({ reason, count })),
       connects: ranked(dim('connect')).map(([via, count]) => ({ via, count })),

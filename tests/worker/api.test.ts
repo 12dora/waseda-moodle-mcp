@@ -7,6 +7,7 @@ import { streamDownload, streamUpload } from '../../src/core/services/files';
 import { createApi } from '../../src/worker/api';
 import { resetRateLimitMemory, resolveApiKey, SESSION_COOKIE } from '../../src/worker/auth';
 import type { Env } from '../../src/worker/env';
+import { resetSiteFlagMemory } from '../../src/worker/site-flag';
 import { createD1Store } from '../../src/worker/store-d1';
 import { createTestD1, type TestD1 } from '../helpers/d1-sqlite';
 import { MemoryKV } from '../helpers/memory-kv';
@@ -191,6 +192,7 @@ function stubMoodle() {
 
 beforeEach(() => {
   resetRateLimitMemory();
+  resetSiteFlagMemory();
   pending = [];
   env = makeEnv();
   stubMoodle();
@@ -270,7 +272,8 @@ describe('connect, session and account', () => {
     const body = (await res.json()) as Body;
     expect(body.created).toBe(true);
     expect(body.user).toMatchObject({ moodleUserId: 1001, fullname: 'Taro Yamada' });
-    expect(body.credential).toMatchObject({ status: 'active', connectedVia: 'paste', tokenHint: 'aaaa' });
+    expect(body.credential).toMatchObject({ status: 'active', connectedVia: 'paste' });
+    expect(JSON.stringify(body.credential)).not.toContain(TOKEN_A.slice(-4));
 
     const me = await call('/api/me', { cookie: sc.split(';')[0] });
     expect(me.status).toBe(200);
@@ -387,8 +390,8 @@ describe('extension refresh', () => {
 });
 
 describe('token hand-off', () => {
-  const MOODLE_ORIGIN = 'https://wsdmoodle.waseda.jp';
-  const handoff = (body: unknown, origin: string | null = MOODLE_ORIGIN, ip = nextIp('192.0.2')) =>
+  const EXTENSION_ORIGIN = 'chrome-extension://abcdef';
+  const handoff = (body: unknown, origin: string | null = EXTENSION_ORIGIN, ip = nextIp('192.0.2')) =>
     call('/api/connect/handoff', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -397,9 +400,9 @@ describe('token hand-off', () => {
     });
 
   it('stores an encrypted payload and returns a short-lived code, with credential-less CORS', async () => {
-    const res = await handoff({ launch: TOKEN_A, via: 'bookmarklet', passport: 'abc' });
+    const res = await handoff({ launch: TOKEN_A, via: 'extension', passport: 'abc' });
     expect(res.status).toBe(200);
-    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(MOODLE_ORIGIN);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(EXTENSION_ORIGIN);
     expect(res.headers.get('Access-Control-Allow-Credentials')).toBeNull();
     expect(res.headers.get('Vary')).toContain('Origin');
     const { code } = (await res.json()) as Body;
@@ -412,26 +415,26 @@ describe('token hand-off', () => {
     expect((rows[0]?.expires_at as number) - (rows[0]?.created_at as number)).toBe(120_000);
   });
 
-  it('answers the preflight for Moodle and extension origins only', async () => {
-    for (const origin of [MOODLE_ORIGIN, 'chrome-extension://abcdef', 'moz-extension://1234']) {
+  it('answers the preflight for extension origins only', async () => {
+    for (const origin of ['chrome-extension://abcdef', 'moz-extension://1234']) {
       const res = await call('/api/connect/handoff', { method: 'OPTIONS', headers: { Origin: origin } });
       expect(res.status, origin).toBe(204);
       expect(res.headers.get('Access-Control-Allow-Origin')).toBe(origin);
     }
-    const denied = await call('/api/connect/handoff', {
-      method: 'OPTIONS',
-      headers: { Origin: 'https://evil.example.org' },
-    });
-    expect(denied.status).toBe(403);
-    expect(denied.headers.get('Access-Control-Allow-Origin')).toBeNull();
-    expect((await handoff({ launch: TOKEN_A, via: 'bookmarklet' }, 'https://evil.example.org')).status).toBe(403);
+    for (const origin of ['https://evil.example.org', 'https://wsdmoodle.waseda.jp']) {
+      const denied = await call('/api/connect/handoff', { method: 'OPTIONS', headers: { Origin: origin } });
+      expect(denied.status, origin).toBe(403);
+      expect(denied.headers.get('Access-Control-Allow-Origin')).toBeNull();
+      expect((await handoff({ launch: TOKEN_A, via: 'extension' }, origin)).status, origin).toBe(403);
+    }
   });
 
   it('checks the launch format without calling Moodle and validates via', async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     fetchMock.mockClear();
-    expect((await handoff({ launch: 'not a token!', via: 'bookmarklet' })).status).toBe(400);
+    expect((await handoff({ launch: 'not a token!', via: 'extension' })).status).toBe(400);
     expect((await handoff({ launch: TOKEN_A, via: 'paste' })).status).toBe(400);
+    expect((await handoff({ launch: TOKEN_A, via: 'bookmarklet' })).status).toBe(400);
     expect((await handoff({ via: 'extension' })).status).toBe(400);
     expect((await handoff({ launch: TOKEN_A, via: 'extension' })).status).toBe(200);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -440,19 +443,18 @@ describe('token hand-off', () => {
   it('is rate limited to 60 per hour per IP', async () => {
     const ip = nextIp('192.0.2');
     const statuses: number[] = [];
-    for (let i = 0; i < 62; i++)
-      statuses.push((await handoff({ launch: TOKEN_A, via: 'bookmarklet' }, null, ip)).status);
+    for (let i = 0; i < 62; i++) statuses.push((await handoff({ launch: TOKEN_A, via: 'extension' }, null, ip)).status);
     expect(statuses.slice(0, 60).every((s) => s === 200)).toBe(true);
     expect(statuses.slice(60)).toEqual([429, 429]);
   });
 
   it('connect redeems the code once and records how the token arrived', async () => {
-    const { code } = (await (await handoff({ launch: TOKEN_A, via: 'bookmarklet', passport: 'wmm' })).json()) as Body;
+    const { code } = (await (await handoff({ launch: TOKEN_A, via: 'extension', passport: 'wmm' })).json()) as Body;
     const res = await post('/api/connect', { code });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Body;
     expect(body.created).toBe(true);
-    expect(body.credential).toMatchObject({ connectedVia: 'bookmarklet', tokenHint: 'aaaa' });
+    expect(body.credential).toMatchObject({ connectedVia: 'extension' });
     expect(res.headers.get('Set-Cookie')).toContain(SESSION_COOKIE);
     expect(handoffRows()).toHaveLength(0);
 
@@ -484,7 +486,7 @@ describe('token hand-off', () => {
 
   it('asks before switching to a different account and keeps the code valid', async () => {
     const first = await connect(TOKEN_A);
-    const { code } = (await (await handoff({ launch: TOKEN_C, via: 'bookmarklet' })).json()) as Body;
+    const { code } = (await (await handoff({ launch: TOKEN_C, via: 'extension' })).json()) as Body;
 
     const refused = await post('/api/connect', { code }, first.cookie);
     expect(refused.status).toBe(409);

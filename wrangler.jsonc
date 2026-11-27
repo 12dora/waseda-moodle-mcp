@@ -50,5 +50,5 @@
     "MAIL_SLOTS": "",
     "MAIL_IDLE_DAYS": ""
   },
-  "triggers": { "crons": ["17 0-14,16,19,22-23 * * *"] }
+  "triggers": { "crons": ["17 * * * *"] }
 }

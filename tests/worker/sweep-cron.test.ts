@@ -6,6 +6,7 @@ import { resolveScope } from '../../src/core/services/scope';
 import { CRON_MAX_AGE_MS, refreshSnapshots } from '../../src/core/services/sweep/refresh';
 import { getRuntime } from '../../src/worker/context';
 import type { Env } from '../../src/worker/env';
+import { resetSiteFlagMemory } from '../../src/worker/site-flag';
 import { createD1Store, type D1Store } from '../../src/worker/store-d1';
 import { runCourseSweep, SWEEP_CALL_BUDGET, SWEEP_MAX_USERS } from '../../src/worker/sweep-cron';
 import { createTestD1 } from '../helpers/d1-sqlite';
@@ -57,7 +58,7 @@ async function addUser(moodleUserId: number, status: 'active' | 'invalid' = 'act
   return user;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   const { db } = createTestD1();
   env = {
     DB: db,
@@ -67,6 +68,9 @@ beforeEach(() => {
     PUBLIC_URL: 'https://wasemoodle.example.com',
   } as Env;
   store = createD1Store(db);
+  // the users below connect with an app token, which works while the mobile web service is on
+  resetSiteFlagMemory();
+  await store.putSiteState('mobile_service', '1', Date.now());
   moodleCalls = 0;
   seen.length = 0;
   plan = new Map();

@@ -155,13 +155,13 @@ export async function buildFeed(ctx: ServiceContext, now: number): Promise<strin
 }
 
 /**
- * What a calendar app shows while the Moodle credential is missing or rejected: one all-day event today that tells
+ * What a calendar app shows while the Moodle connection is missing or has ended: one all-day event today that tells
  * the user to reconnect, pointing at the console (`publicUrl`, may be empty).
  */
 export function reconnectFeed(opts: { publicUrl: string; now: number }): string {
   const today = isoJst(opts.now).slice(0, 10);
   const where = opts.publicUrl ? `Open ${opts.publicUrl}` : 'Open the console';
-  const description = `The Moodle connection has expired, so this calendar is not updated. ${where} and connect again.`;
+  const description = `The Moodle connection has ended, so this calendar is not updated. ${where} and connect again.`;
   return renderCalendar({
     name: CALENDAR_NAME,
     stamp: opts.now,

@@ -5,10 +5,18 @@ import type { UserRow } from '../../core/context';
 import { type MasterKey, sha256Hex } from '../../core/crypto';
 import { InvalidInput } from '../../core/errors';
 import { launchUrl, MOODLE_URL, parseLaunch } from '../../core/moodle/launch';
-import { connectFromLaunch, refreshFromLaunch, toCredentialInfo, toUserInfo } from '../../core/services/account';
+import { normalizeSessionCookie } from '../../core/moodle/web/identify';
+import {
+  connectAccount,
+  refreshFromLaunch,
+  refreshFromSession,
+  type SignInInput,
+  toCredentialInfo,
+  toUserInfo,
+} from '../../core/services/account';
 import { applyScheduleOverrides, validateScheduleOverrides } from '../../core/services/schedule-overrides';
 import { setMyCourses } from '../../core/services/scope';
-import type { ConnectVia, UserSettings } from '../../core/types';
+import type { CredentialInfo, SignInVia, UserSettings } from '../../core/types';
 import {
   type AppEnv,
   clearSessionCookieHeader,
@@ -21,6 +29,7 @@ import {
 } from '../auth';
 import { connectDeps, getRuntime, startRenewal } from '../context';
 import { adminMoodleUserIds, publicUrlOf, registrationMode, VERSION } from '../env';
+import { mobileServiceOn } from '../site-flag';
 import { normalizeSettings } from '../store/rows';
 import type { D1Store } from '../store-d1';
 import { consumeHandoff, peekHandoff } from './handoff';
@@ -31,10 +40,10 @@ import {
   EXTENSION_REFRESH_PATH,
   oneOf,
   optionalSessionUser,
-  optString,
   readJson,
   reqString,
   session,
+  signInFields,
   storeOf,
 } from './shared';
 
@@ -43,6 +52,9 @@ const MAX_MY_COURSES = 60;
 const MAX_COURSE_ID = 2_147_483_647;
 const WRITE_MODES: readonly UserSettings['writeMode'][] = ['off', 'chat', 'console'];
 const UI_LANGS: readonly UserSettings['uiLang'][] = ['auto', 'ja', 'en', 'zh-CN'];
+/** Who may say a session came from them; a pasted launch link is always 'paste'. */
+const SESSION_VIAS: readonly SignInVia[] = ['paste', 'extension'];
+const LAUNCH_VIAS: readonly SignInVia[] = ['paste'];
 
 const EXTENSION_CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -107,12 +119,12 @@ async function patchSettings(c: Context<AppEnv>, user: UserRow, body: Record<str
 }
 
 interface ConnectRequest {
-  input: { launch: string; via: ConnectVia; passport?: string };
+  input: SignInInput;
   /** Present for hand-offs: consumed once the sign-in is accepted. */
   code?: string;
 }
 
-/** `{ code }` reads a hand-off (bookmarklet / extension); otherwise `{ launch }` is a pasted link. */
+/** `{ code }` reads a hand-off (browser extension); otherwise `{ session }` or `{ launch }` is sent directly. */
 async function connectRequest(
   body: Record<string, unknown>,
   rt: { store: D1Store; key: MasterKey },
@@ -121,23 +133,26 @@ async function connectRequest(
     const code = reqString(body.code, 'code', 200);
     return { input: await peekHandoff(rt, code), code };
   }
-  oneOf(body.via ?? 'paste', ['paste'], 'via must be paste when sending a launch link.');
-  return {
-    input: {
-      launch: reqString(body.launch, 'launch', 4096),
-      via: 'paste',
-      passport: optString(body.passport, 'passport', 64),
-    },
-  };
+  const fields = signInFields(body);
+  const via = fields.session
+    ? oneOf(body.via ?? 'paste', SESSION_VIAS, 'via must be paste or extension when sending a session.')
+    : oneOf(body.via ?? 'paste', LAUNCH_VIAS, 'via must be paste when sending a launch link.');
+  return { input: { ...fields, via } };
 }
 
-/** Signs in from a pasted launch link or a hand-off code and starts a console session. */
+/** The stored credential as the console shows it; null for an account without one. */
+async function credentialInfo(store: D1Store, userId: number): Promise<CredentialInfo | null> {
+  const cred = await store.getCredential(userId);
+  return cred ? toCredentialInfo(cred, await mobileServiceOn(store)) : null;
+}
+
+/** Signs in from a Moodle session, a pasted launch link or a hand-off code and starts a console session. */
 async function connect(c: Context<AppEnv>): Promise<Response> {
   const rt = await getRuntime(c.env);
   await rateLimit(rt.store, { key: `connect:ip:${clientIp(c.req.raw)}`, limit: 60, windowMs: 10 * 60_000 });
   const body = await readJson(c);
   const request = await connectRequest(body, rt);
-  const result = await connectFromLaunch(connectDeps(rt, registrationPolicy(c.env)), request.input);
+  const result = await connectAccount(connectDeps(rt, registrationPolicy(c.env)), request.input);
 
   // A hand-off link must not silently replace the account that is signed in (login CSRF): ask first.
   if (request.code) {
@@ -157,33 +172,47 @@ async function connect(c: Context<AppEnv>): Promise<Response> {
       sha256Hex(old).then((h) => rt.store.deleteSession(h)),
     );
 
-  const cred = await rt.store.getCredential(result.user.id);
-  deferOn(c, startRenewal(rt, result.user, cred));
+  deferOn(
+    c,
+    rt.store.getCredential(result.user.id).then((cred) => startRenewal(rt, result.user, cred)),
+  );
   deferOn(c, rt.store.recordCounts(Date.now(), [{ metric: 'connect', dim: request.input.via }]));
   c.header('Set-Cookie', setCookie);
   return c.json({
     user: toUserInfo(result.user),
-    credential: cred ? toCredentialInfo(cred) : null,
+    credential: await credentialInfo(rt.store, result.user.id),
     created: result.created,
   });
 }
 
-/** Browser extension: refreshes the stored token from a fresh launch link. */
+/**
+ * Browser extension: silently stores the browser's current Moodle session (or refreshes the token from a launch link)
+ * for an existing account. Limited per IP, per launch token, and per account when a session is sent.
+ */
 async function extensionRefresh(c: Context<AppEnv>): Promise<Response> {
   const store = storeOf(c.env);
   await rateLimit(store, { key: `ext:ip:${clientIp(c.req.raw)}`, limit: 300, windowMs: HOUR_MS });
-  const body = await readJson(c);
-  const launch = reqString(body.launch, 'launch', 4096);
-  // per token: a stolen or looping client cannot hammer Moodle through one credential
-  const tokenKey = await sha256Hex(parseLaunch(launch).token);
-  await rateLimit(store, { key: `ext:token:${tokenKey}`, limit: 6, windowMs: HOUR_MS });
+  const { session: moodleSession, launch, passport } = signInFields(await readJson(c));
+  // per credential before Moodle is asked, per account after: a stolen or looping client cannot hammer Moodle
+  // through one credential, nor through rotating cookies of one account
+  const limit = (key: string) => rateLimit(store, { key, limit: 6, windowMs: HOUR_MS });
+  if (moodleSession) await limit(`ext:session:${await sha256Hex(normalizeSessionCookie(moodleSession))}`);
+  else if (launch) await limit(`ext:token:${await sha256Hex(parseLaunch(launch).token)}`);
   const rt = await getRuntime(c.env);
-  const r = await refreshFromLaunch(connectDeps(rt, registrationPolicy(c.env)), { launch });
+  const deps = connectDeps(rt, registrationPolicy(c.env));
+  const r = moodleSession
+    ? await refreshFromSession(deps, {
+        session: moodleSession,
+        launch,
+        passport,
+        admit: (user) => limit(`ext:user:${user.id}`),
+      })
+    : await refreshFromLaunch(deps, { launch: reqString(launch, 'launch', 4096) });
   deferOn(
     c,
     rt.store.getCredential(r.user.id).then((cred) => startRenewal(rt, r.user, cred)),
   );
-  return c.json({ status: r.tokenChanged ? 'updated' : 'unchanged' });
+  return c.json({ status: r.changed ? 'updated' : 'unchanged' });
 }
 
 /** Revokes the account's OAuth grants and its Google mail token, then deletes the account and everything it owns. */
@@ -221,7 +250,7 @@ export function accountRoutes(): Hono<AppEnv> {
 
   app.post('/api/connect', connect);
 
-  // Browser extension: silent token refresh. No cookie, any origin; protected by the token itself + a rate limit.
+  // Browser extension: silent refresh. No cookie, any origin; protected by the sign-in it carries + a rate limit.
   app.use(EXTENSION_REFRESH_PATH, async (c, next) => {
     await next();
     for (const [k, v] of Object.entries(EXTENSION_CORS)) c.res.headers.set(k, v);
@@ -236,14 +265,14 @@ export function accountRoutes(): Hono<AppEnv> {
     return c.json({ ok: true });
   });
 
-  // `credential` is null only for an account without a stored token (never after a successful connect).
+  // `credential` is null only for an account without a stored one (never after a successful connect).
   app.get('/api/me', session, async (c) => {
     const user = c.get('user');
     const store = storeOf(c.env);
-    const [cred, mail] = await Promise.all([store.getCredential(user.id), mailInfo(c.env, store, user)]);
+    const [credential, mail] = await Promise.all([credentialInfo(store, user.id), mailInfo(c.env, store, user)]);
     return c.json({
       user: toUserInfo(user),
-      credential: cred ? toCredentialInfo(cred) : null,
+      credential,
       isAdmin: adminMoodleUserIds(c.env).has(user.moodleUserId),
       mail,
     });

@@ -89,12 +89,18 @@ export function snapshotMethods(db: D1Database): SnapshotMethods {
         .run();
     },
 
-    /** Never-swept users first, then the least recently swept; the stamp is set even when a sweep failed. */
+    /**
+     * Users whose credential works now (isUsable: a web session, or an active token while the site's mobile service
+     * is on): never-swept first, then the least recently swept; the stamp is set even when a sweep failed.
+     */
     async listSweepUsers(limit) {
       const { results } = await db
         .prepare(
           `SELECT u.* FROM users u
-           JOIN credentials c ON c.user_id = u.id AND c.status = 'active'
+           JOIN credentials c ON c.user_id = u.id
+           WHERE c.session_enc IS NOT NULL
+              OR (c.status = 'active' AND c.token_enc IS NOT NULL
+                  AND (SELECT value FROM site_state WHERE key = 'mobile_service') = '1')
            ORDER BY u.last_swept_at ASC NULLS FIRST, u.id ASC
            LIMIT ?`,
         )

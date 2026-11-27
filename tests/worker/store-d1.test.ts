@@ -195,42 +195,45 @@ describe('credentials', () => {
     expect(await store.getCredential(user.id)).toMatchObject({ sessionEnc: null, sessionOkAt: null, renewedAt: 20 });
   });
 
-  it('lists renewal candidates by urgency: idle deadline of a session, retry time of a session to open', async () => {
+  it('lists the sessions to keep alive, most idle first', async () => {
     const add = async (moodleUserId: number, over: Partial<CredentialRow>) => {
       const u = await store.upsertUser({ moodleUserId, fullname: `User ${moodleUserId}`, lang: 'en' });
-      const { sessionEnc, sessionOkAt, autologinAt, ...row } = over;
+      const { sessionEnc, sessionOkAt, sessionTriedAt, ...row } = over;
       await store.putCredential(credential(u.id, row));
-      await store.updateCredentialStatus(u.id, { sessionEnc, sessionOkAt, autologinAt });
+      await store.updateCredentialStatus(u.id, { sessionEnc, sessionOkAt, sessionTriedAt });
       return u.id;
     };
     const stale = await add(2001, { sessionEnc: 's', sessionOkAt: 100, status: 'invalid' });
     const older = await add(2002, { sessionEnc: 's', sessionOkAt: 50 });
-    await add(2003, { sessionEnc: 's', sessionOkAt: 900 }); // confirmed recently
-    const open = await add(2004, { privateTokenEnc: 'p' });
-    const retried = await add(2005, { privateTokenEnc: 'p', autologinAt: 200 });
-    await add(2006, { privateTokenEnc: 'p', autologinAt: 800, connectedAt: 700 }); // tried recently
-    await add(2007, { privateTokenEnc: 'p', status: 'invalid' }); // needs a reconnect
-    await add(2008, {}); // no private token
-    const reconnected = await add(2009, { privateTokenEnc: 'p', autologinAt: 800, connectedAt: 900 });
-    const unconfirmed = await add(2010, { sessionEnc: 's' }); // saved after an autologin, launch.php failed
-    const opts = {
-      sessionBefore: 500,
-      autologinBefore: 500,
-      sessionIdleMs: 1000,
-      autologinRetryMs: 1000,
-      mustVisit: { after: 0, until: 0 },
-      limit: 10,
-    };
-    const ids = async (o: typeof opts) => (await store.listRenewalCandidates(o)).map((c) => c.user.id);
-    expect(await ids(opts)).toEqual([open, unconfirmed, older, stale, retried, reconnected]);
-    expect(await ids({ ...opts, limit: 1 })).toEqual([open]);
-    // sessions that idle out before the next run go ahead of every session to open
-    const must = { ...opts, mustVisit: { after: 0, until: 100 } };
-    expect(await ids(must)).toEqual([older, stale, open, unconfirmed, retried, reconnected]);
-    expect(await ids({ ...must, limit: 2 })).toEqual([older, stale]);
-    const [first] = await store.listRenewalCandidates(opts);
-    expect(first?.credential).toMatchObject({ userId: open, privateTokenEnc: 'p', sessionEnc: null });
-    expect(first?.user).toMatchObject({ id: open, moodleUserId: 2004 });
+    await add(2003, { sessionEnc: 's', sessionOkAt: 900 }); // used recently
+    await add(2004, { privateTokenEnc: 'p' }); // no session: nothing to keep alive
+    const failing = await add(2005, { sessionEnc: 's', sessionOkAt: 20, sessionTriedAt: 300 }); // tried since
+    const unconfirmed = await add(2006, { sessionEnc: 's' }); // saved after an autologin, launch.php failed
+    const tokenless = await add(2007, { sessionEnc: 's', sessionOkAt: 400, tokenEnc: null, tokenHash: null });
+    const ids = async (limit: number) =>
+      (await store.listRenewalCandidates({ visitedBefore: 500, limit })).map((c) => c.user.id);
+    expect(await ids(10)).toEqual([unconfirmed, older, stale, failing, tokenless]);
+    expect(await ids(2)).toEqual([unconfirmed, older]);
+    const [first] = await store.listRenewalCandidates({ visitedBefore: 500, limit: 1 });
+    expect(first?.credential).toMatchObject({ userId: unconfirmed, sessionEnc: 's' });
+    expect(first?.user).toMatchObject({ id: unconfirmed, moodleUserId: 2006 });
+  });
+
+  it('stores a connection without an app token and its sesskey', async () => {
+    await store.putCredential(credential(user.id, { tokenEnc: null, tokenHash: null, tokenHint: null }));
+    await store.updateCredentialStatus(user.id, { sessionEnc: 'enc-cookie', sesskeyEnc: 'enc-key' });
+    expect(await store.getCredential(user.id)).toMatchObject({
+      tokenEnc: null,
+      tokenHash: null,
+      tokenHint: null,
+      sessionEnc: 'enc-cookie',
+      sesskeyEnc: 'enc-key',
+    });
+    const asRead = { sessionEnc: 'enc-cookie' }; // a session write does not depend on the token
+    expect(await store.updateCredentialIf(user.id, asRead, { sesskeyEnc: null })).toBe(true);
+    expect(await store.updateCredentialIf(user.id, { tokenHash: null }, { lastOkAt: 3 })).toBe(true);
+    expect(await store.updateCredentialIf(user.id, { sessionEnc: 'other' }, { lastOkAt: 4 })).toBe(false);
+    expect(await store.getCredential(user.id)).toMatchObject({ sesskeyEnc: null, lastOkAt: 3 });
   });
 
   it('updates conditionally on the token hash, the session and the autologin stamp', async () => {
@@ -499,6 +502,7 @@ describe('course snapshots', () => {
   });
 
   it('listSweepUsers: active credentials only, never-swept users first, then the least recently swept', async () => {
+    await store.putSiteState('mobile_service', '1', 0);
     const mk = async (moodleUserId: number, status: 'active' | 'invalid' | null) => {
       const u = await store.upsertUser({ moodleUserId, fullname: `U${moodleUserId}`, lang: 'en' });
       if (status) await store.putCredential(credential(u.id, { status, tokenHash: `h${moodleUserId}` }));
@@ -519,6 +523,26 @@ describe('course snapshots', () => {
     expect(limited.map((u) => u.id)).toEqual([fresh.id, stale.id]);
     expect(limited[0]).toMatchObject({ moodleUserId: 2001, settings: { myCourseIds: null } });
   });
+
+  it('listSweepUsers: only credentials usable now (a web session; a token only while the mobile service is on)', async () => {
+    const mk = async (moodleUserId: number, over: Partial<CredentialRow>, session = false) => {
+      const u = await store.upsertUser({ moodleUserId, fullname: `U${moodleUserId}`, lang: 'en' });
+      await store.putCredential(credential(u.id, { tokenHash: `h${moodleUserId}`, ...over }));
+      if (session)
+        await t.db.prepare('UPDATE credentials SET session_enc = ? WHERE user_id = ?').bind('enc', u.id).run();
+      return u;
+    };
+    const tokenOnly = await mk(2101, {});
+    const both = await mk(2102, {}, true);
+    const sessionOnly = await mk(2103, { tokenEnc: null, tokenHash: null, tokenHint: null }, true);
+    const deadToken = await mk(2104, { status: 'invalid' }, true);
+    await mk(2105, { status: 'invalid' });
+    const ids = async () => (await store.listSweepUsers(10)).map((u) => u.id).sort((a, b) => a - b);
+    // migration 0014 stores the mobile service as off
+    expect(await ids()).toEqual([both.id, sessionOnly.id, deadToken.id]);
+    await store.putSiteState('mobile_service', '1', 0);
+    expect(await ids()).toEqual([tokenOnly.id, both.id, sessionOnly.id, deadToken.id]);
+  });
 });
 
 describe('scope course ids', () => {
@@ -528,6 +552,8 @@ describe('scope course ids', () => {
     return u;
   };
   const totalChanges = async () => (await t.db.prepare('SELECT total_changes() AS n').first<{ n: number }>())?.n ?? -1;
+
+  beforeEach(() => store.putSiteState('mobile_service', '1', 0));
 
   it('are stored sorted and deduplicated, and come back with listSweepUsers', async () => {
     const u = await mk();

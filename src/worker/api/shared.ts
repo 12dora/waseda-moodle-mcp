@@ -3,6 +3,7 @@
 import type { Context } from 'hono';
 import type { UserRow } from '../../core/context';
 import { InvalidInput } from '../../core/errors';
+import type { SignInInput } from '../../core/services/account';
 import type { Scope } from '../../core/types';
 import { type AppEnv, deferOn, isBackgroundRequest, loadSession, readSessionCookie, requireSession } from '../auth';
 import { buildServiceContext, consoleProps, tryExecutionContext } from '../context';
@@ -19,6 +20,8 @@ export const CSRF_EXEMPT_PATHS: ReadonlySet<string> = new Set([EXTENSION_REFRESH
 export const MAX_COURSE_ID = 2_147_483_647;
 
 const MAX_BODY_BYTES = 64 * 1024;
+/** A pasted cookie header or launch link. */
+const MAX_SIGN_IN_CHARS = 4096;
 
 export const storeOf = (env: Env): D1Store => createD1Store(env.DB);
 
@@ -76,7 +79,7 @@ export function reqString(v: unknown, name: string, max: number): string {
   return v;
 }
 
-export function optString(v: unknown, name: string, max: number): string | undefined {
+function optString(v: unknown, name: string, max: number): string | undefined {
   if (v === undefined || v === null || v === '') return undefined;
   return reqString(v, name, max);
 }
@@ -87,6 +90,14 @@ export function intParam(v: string | undefined, name: string, range: { min: numb
   const n = Number(v);
   if (n < range.min || n > range.max) throw new InvalidInput(`${name} must be between ${range.min} and ${range.max}.`);
   return n;
+}
+
+/** The sign-in fields of a connect, hand-off or refresh body: the Moodle session, a launch link, or both. */
+export function signInFields(body: Record<string, unknown>): Pick<SignInInput, 'session' | 'launch' | 'passport'> {
+  const session = optString(body.session, 'session', MAX_SIGN_IN_CHARS);
+  const launch = optString(body.launch, 'launch', MAX_SIGN_IN_CHARS);
+  if (!session && !launch) throw new InvalidInput('session or launch is required.');
+  return { session, launch, passport: optString(body.passport, 'passport', 64) };
 }
 
 export function oneOf<T extends string>(v: unknown, allowed: readonly T[], message: string): T {
