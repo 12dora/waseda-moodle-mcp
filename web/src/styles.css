@@ -292,18 +292,51 @@ a:hover {
 .sidenav-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-top: 8px;
+  gap: 10px;
+  padding: 12px 8px 4px 12px;
   border-top: 1px solid var(--border);
 }
-.user-name {
+.user-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+.user-meta {
+  flex: 1;
   min-width: 0;
+}
+.user-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 20px;
+}
+.sign-out {
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--text-muted);
-  font-size: 13px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.sign-out:hover:not(:disabled) {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.sign-out:disabled {
+  cursor: progress;
 }
 
 .main {
@@ -330,6 +363,7 @@ a:hover {
     border-bottom: 0;
     border-right: 1px solid var(--border);
     box-shadow: none;
+    overflow-y: auto;
   }
   .sidenav-brand {
     display: inline-flex;

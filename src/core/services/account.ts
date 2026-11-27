@@ -6,6 +6,7 @@
 import type { CredentialRow, MoodleApi, Store, UserRow } from '../context';
 import { type MasterKey, sha256Hex } from '../crypto';
 import { Forbidden, InvalidInput, MoodleError, NeedsReconnect, NotFound, WmmError } from '../errors';
+import { displayName } from '../format';
 import { type LaunchToken, MOODLE_URL, parseLaunch } from '../moodle/launch';
 import { identifySession, normalizeSessionCookie } from '../moodle/web/identify';
 import { isoJst, nowMs } from '../time';
@@ -85,7 +86,7 @@ async function identifyLaunch(deps: ConnectDeps, launch: string, passport?: stri
   if (typeof userid !== 'number' || !Number.isInteger(userid) || userid <= 0) {
     throw new InvalidInput('Moodle did not report a user for this token.');
   }
-  const name = (typeof info.fullname === 'string' ? info.fullname : '').replace(/\s+/g, ' ').trim();
+  const name = displayName(typeof info.fullname === 'string' ? info.fullname : '');
   const fullname = name || (typeof info.username === 'string' ? info.username : '') || `User ${userid}`;
   const lang = typeof info.lang === 'string' && info.lang ? info.lang : 'en';
   await deps.onTokenVerified?.();
@@ -100,7 +101,7 @@ async function identifyCookie(deps: ConnectDeps, session: string) {
   const cookie = normalizeSessionCookie(session);
   const doFetch = deps.fetch ?? ((input, init) => globalThis.fetch(input, init));
   const who = await identifySession(doFetch, cookie);
-  return { ...who, fullname: who.fullname.trim() || `User ${who.moodleUserId}` };
+  return { ...who, fullname: displayName(who.fullname) || `User ${who.moodleUserId}` };
 }
 
 /** The account of a verified Moodle user, created when new (and allowed); name and language are refreshed. */
@@ -317,7 +318,7 @@ export function toUserInfo(row: UserRow): UserInfo {
   return {
     id: row.id,
     moodleUserId: row.moodleUserId,
-    fullname: row.fullname,
+    fullname: displayName(row.fullname),
     lang: row.lang,
     settings: { ...DEFAULT_SETTINGS, ...row.settings },
     createdAt: isoJst(row.createdAt),

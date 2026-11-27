@@ -7,7 +7,6 @@ import { errorText } from '../lib/errors';
 import { SOURCE_URL } from '../lib/links';
 import { PENDING_LIMIT, pendingCountText } from '../lib/pending';
 import { useSession } from '../session';
-import { Button } from './Button';
 import { useToast } from './Toast';
 
 const NAV: ReadonlyArray<{ to: string; key: MessageKey; end?: boolean; admin?: boolean; mail?: boolean }> = [
@@ -187,12 +186,17 @@ export function Layout() {
           {t('app.source')}
         </a>
         <div className="sidenav-foot">
-          <div className="user-name" title={me.user.fullname}>
-            {me.user.fullname}
+          <span className="user-avatar" aria-hidden="true">
+            {initial(me.user.fullname)}
+          </span>
+          <div className="user-meta">
+            <div className="user-name" title={me.user.fullname}>
+              {me.user.fullname}
+            </div>
+            <button type="button" className="sign-out" disabled={signingOut} onClick={onSignOut}>
+              {t('nav.signOut')}
+            </button>
           </div>
-          <Button variant="ghost" size="sm" busy={signingOut} onClick={onSignOut}>
-            {t('nav.signOut')}
-          </Button>
         </div>
       </aside>
       <main id="main" className="main" tabIndex={-1}>
@@ -200,6 +204,11 @@ export function Layout() {
       </main>
     </div>
   );
+}
+
+/** The avatar letter: the first letter or character of the name. */
+function initial(name: string): string {
+  return Array.from(name.trim())[0]?.toUpperCase() ?? '';
 }
 
 export function PageHeader({ title, desc, actions }: { title: string; desc?: string; actions?: ReactNode }) {

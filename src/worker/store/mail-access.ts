@@ -1,5 +1,6 @@
 /** Mail access applications and operator decisions (migrations/0013_mail_access.sql). */
 
+import { displayName } from '../../core/format';
 import type {
   MailAccessChange,
   MailAccessListItem,
@@ -34,7 +35,7 @@ const toMailAccess = (r: MailAccessRaw): MailAccessRow => ({
 
 const toListItem = (r: MailAccessListRaw): MailAccessListItem => ({
   userId: r.user_id,
-  fullname: r.fullname,
+  fullname: displayName(r.fullname),
   moodleUserId: r.moodle_user_id,
   status: r.status,
   requestedAt: r.requested_at,
