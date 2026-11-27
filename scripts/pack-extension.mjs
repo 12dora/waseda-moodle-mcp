@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Builds dist/extension-<version>.zip for the Chrome Web Store / Edge Add-ons (manifest.json at the zip root).
 // Excludes tests, dotfiles and store/ (listing sources). Needs the `zip` CLI.
-// `EXTENSION_SERVICE_URL=https://…` fills in the settings page's default service URL (lib/defaults.js) in the package
-// only; the source keeps it empty.
+// `EXTENSION_SERVICE_URL=https://…` fills in the settings page's default service URL (lib/defaults.js) and declares it
+// as a host permission, in the package only; the source keeps both empty.
 // `--out <path>` writes the zip there instead (the deploy puts it at web/dist/extension.zip: the connect page offers
 // it for a manual install while no store listing is configured).
 import { execFileSync } from 'node:child_process';
@@ -31,6 +31,11 @@ try {
   cpSync(extDir, staging, { recursive: true });
   const origin = serviceOrigin();
   if (origin) {
+    // the default service is a declared host permission: saving it asks nothing; another URL still asks on Save
+    const manifestFile = join(staging, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), `${origin}/*`])];
+    writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
     const file = join(staging, 'lib', 'defaults.js');
     const src = readFileSync(file, 'utf8').replace(
       "export const DEFAULT_SERVICE_URL = '';",
