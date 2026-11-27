@@ -110,15 +110,16 @@ screen and use the same text.
 | Mature content | No |
 
 4. **Privacy** (if shown as its own page): answers from [permissions.md](permissions.md), as for Chrome.
-5. **Store listings**, for English, Japanese and Chinese (Simplified):
+5. **Store listings**, Japanese first (the default language), then English and Chinese (Simplified):
 
 | Field | Enter |
 |---|---|
 | Display name, Short description | Read from the package |
 | Description | That language's block in listing.md (250–10,000 characters) |
 | Extension logo | `extension/store/logo-300.png` |
-| Small promotional tile | `extension/store/promo-440x280.png` |
-| Large promotional tile, video | Leave empty |
+| Small promotional tile | That language's `promo/promo-440x280-<lang>.png` |
+| Large promotional tile | Japanese: `promo/marquee-1400x560-ja.png`; others empty |
+| Video | Leave empty |
 | Screenshots | That language's folder, or `en` |
 | Search terms | listing.md, "Search terms" |
 
@@ -153,7 +154,7 @@ Check without an account:
 
 With a Waseda account: after sign-in the extension reads the MoodleSession cookie, posts it to <service URL>/api/connect/handoff and opens <service URL>/connect to finish linking the account. After a new Moodle sign-in, every 12 hours and on "Sync now", it posts the cookie to <service URL>/api/extension/refresh. Nothing is sent anywhere else.
 
-Permissions: cookies reads that one cookie, only after consent; storage keeps the URL, consent and last result; alarms runs the 12-hour sync; the optional https://*/* permission exists because the user types the service address, and only that origin is requested.
+Permissions: cookies reads that one cookie, only after consent; storage keeps the URL, consent and last result; alarms runs the 12-hour sync; the default service URL is a declared host; the optional https://*/* permission is for a service address the user types instead, and only that origin is requested.
 
 Source (the package is this folder, unminified, no build step, no remote code): https://github.com/12dora/waseda-moodle-mcp/tree/main/extension
 Key files: background.js, lib/session.js, lib/consent.js.
