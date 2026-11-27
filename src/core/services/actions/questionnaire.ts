@@ -8,6 +8,10 @@
  * existing_response_action(), which deletes the page's saved answers before inserting (L1180), but `submit` calls
  * response_insert() directly (save_mobile_data, L4455) and only adds rows. So a continued draft's last page is first
  * cleared with an empty `previouspage` (it never checks the format, L1169), then `submit` saves and checks it as usual.
+ *
+ * On the web channel the same steps post the plugin's own form (complete.php) like a browser: `next`, then `submit`
+ * or `resume` (save a draft) on the last page (questionnaire-web.ts). Both channels share the orchestration below;
+ * only the sender differs.
  */
 
 import type { MoodleApi, ServiceContext } from '../../context';
@@ -15,7 +19,9 @@ import { InvalidInput, NeedsReconnect } from '../../errors';
 import type { ActionPreview, QuestionnaireDetail, QuestionnaireQuestion } from '../../types';
 import { loadQuestionnaireForm } from '../activity/questionnaire';
 import { type ActivityInfo, courseNameMap, getCourseModule } from '../shared';
-import { answerText, fieldKey, parseQuestionnaireIndex, parseQuestionnairePage } from '../submission/questionnaire';
+import { parseQuestionnaireIndex, parseQuestionnairePage, type QuestionnaireIndex } from '../submission/questionnaire';
+import { answerText, fieldKey } from '../submission/questionnaire-fields';
+import { webSender } from './questionnaire-web';
 import { type ActionOutcome, assertWriteAllowed, positiveInt, type Raw, savePreview, truncate } from './shared';
 
 export interface QuestionnaireAnswerInput {
@@ -35,7 +41,7 @@ interface PrepareQuestionnaireInput {
 
 type Fields = Record<string, string>;
 
-type QuestionnairePayload = {
+export type QuestionnairePayload = {
   cmid: number;
   questionnaireId: number;
   surveyId: number;
@@ -43,9 +49,36 @@ type QuestionnairePayload = {
   final: boolean;
   pages: number;
   fields: Record<string, Fields>; // page -> response_* fields
-  listedBefore: number; // responses on the index page before the write (the draft included)
+  submittedBefore: number; // completed responses before the write
   url: string;
 };
+
+/** What Moodle shows after a step: a form page (`page` null: no form, e.g. its index with a notice). */
+export interface Shown {
+  page: number | null;
+  last: boolean;
+  rid: number;
+  notice: string | null;
+}
+
+/** How a channel sends the pages; the order, the checks and the messages are shared (submitPages). */
+export interface QuestionnaireSender {
+  /** The first page (the web-service channel needs no request for it). */
+  open(): Promise<Shown>;
+  /** Saves the shown page and moves on: the page Moodle shows next. */
+  next(shown: Shown): Promise<Shown>;
+  /** Sends the last page (submit, or save as a draft): Moodle's index afterwards, null when the form came back. */
+  finish(shown: Shown): Promise<Finished>;
+}
+
+interface Finished {
+  index: QuestionnaireIndex | null;
+  /** Moodle's notice on the page it showed after the last one. */
+  notice: string | null;
+  cleared: boolean;
+  /** Moodle answered with its thank-you page, which it shows only for a committed response (web channel). */
+  thanked?: boolean;
+}
 
 const MAX_TEXT = 20_000;
 const MAX_STEPS = 12;
@@ -145,7 +178,7 @@ function answerLine(q: QuestionnaireQuestion, fields: Fields | undefined): strin
 }
 
 /** The questionnaire and its form, read fresh; refuses when Moodle does not offer every page for answering now. */
-async function answerableForm(ctx: ServiceContext, api: MoodleApi, cmid: number) {
+async function answerableForm(ctx: ServiceContext, api: MoodleApi, cmid: number, final: boolean) {
   const [cm, names] = await Promise.all([getCourseModule(api, cmid), courseNameMap(ctx)]);
   if (cm.modname !== 'questionnaire') throw new InvalidInput('This activity is not a questionnaire.');
   const url = `${api.baseUrl}/mod/questionnaire/view.php?id=${cmid}`;
@@ -158,6 +191,13 @@ async function answerableForm(ctx: ServiceContext, api: MoodleApi, cmid: number)
   const { submitIds } = form;
   if (!form.complete || !submitIds) {
     throw new InvalidInput('Not every page of this questionnaire could be read; answer it in Moodle.');
+  }
+  if (form.unsupported?.length) {
+    const list = form.unsupported.join(', ');
+    throw new InvalidInput(`This questionnaire has questions this server cannot answer (${list}); use Moodle.`);
+  }
+  if (!final && form.canDraft === false) {
+    throw new InvalidInput('This questionnaire cannot be saved as a draft; submit it (final: true) or use Moodle.');
   }
   return { detail, form: { ...form, submitIds }, url };
 }
@@ -179,7 +219,7 @@ export async function prepareQuestionnaire(
   const final = input.final ?? true;
   if (typeof final !== 'boolean') throw new InvalidInput('final must be true or false.');
   if (!Array.isArray(input.answers) || input.answers.length === 0) throw new InvalidInput('Give at least one answer.');
-  const { detail, form, url } = await answerableForm(ctx, await ctx.moodle(), cmid);
+  const { detail, form, url } = await answerableForm(ctx, await ctx.moodle(), cmid, final);
   const byQuestion = mapAnswers(form.questions, input.answers);
   const fields: Record<string, Fields> = {};
   for (const q of form.questions) fields[q.page] = { ...fields[q.page], ...byQuestion.get(q.id) };
@@ -190,7 +230,7 @@ export async function prepareQuestionnaire(
     final,
     pages: form.pages,
     fields,
-    listedBefore: detail.submissions + (detail.status === 'draft' ? 1 : 0),
+    submittedBefore: detail.submissions,
     url,
   };
   return savePreview(ctx, {
@@ -229,59 +269,93 @@ function notAccepted(page: number, notice: string | null, cleared = false): Inva
   return new InvalidInput(`Moodle did not accept page ${page}${why}${saved}${lost}`);
 }
 
+/** The web-service channel: the app's `nextpage` / `previouspage` / `submit` actions. */
+function templateSender(api: MoodleApi, p: QuestionnairePayload): QuestionnaireSender {
+  const shownOf = (form: ReturnType<typeof parseQuestionnairePage>, rid: number): Shown => ({
+    page: form.pageNumber,
+    last: (form.pageNumber ?? 0) >= p.pages,
+    rid: form.rid || rid,
+    notice: form.notice,
+  });
+  return {
+    open: async () => ({ page: 1, last: p.pages <= 1, rid: p.rid, notice: null }),
+    next: async (shown) => {
+      const view = { rid: shown.rid, completeq: 1, action: 'nextpage', pagenum: shown.page ?? 1 };
+      return shownOf((await sendPage(api, p, view)).form, shown.rid);
+    },
+    finish: async (shown) => {
+      const page = shown.page ?? 1;
+      if (p.rid) {
+        // `submit` only adds rows: an empty `previouspage` first clears what the continued draft has on this page
+        const view = { rid: shown.rid, completeq: 1, action: 'previouspage', pagenum: page };
+        const { form } = await sendPage(api, p, view, {});
+        // Moodle shows the page before (or this one, on page 1); its index means it refused the save
+        if (form.pageNumber === null) throw notAccepted(page, form.notice);
+      }
+      const view = {
+        questionnaireid: p.questionnaireId,
+        surveyid: p.surveyId,
+        userid: api.moodleUserId,
+        pagenum: page,
+        completed: 0,
+        rid: shown.rid,
+        submit: p.final ? 1 : 0,
+        action: 'submit',
+      };
+      const { res, form } = await sendPage(api, p, view);
+      const index = form.questions.length > 0 ? null : parseQuestionnaireIndex(res);
+      return { index, notice: form.notice, cleared: p.rid > 0 };
+    },
+  };
+}
+
 /** What this run has written: the response it works on and the last page Moodle saved. */
 interface Progress {
   rid: number;
   saved: number;
 }
 
-/**
- * Saves the pages before the last one (`nextpage`, which replaces their saved answers) and clears the last page of a
- * continued draft; returns the last page. Moodle answers a save with the next page and the response id on its buttons.
- */
-async function savePages(api: MoodleApi, p: QuestionnairePayload, progress: Progress): Promise<number> {
-  let page = 1;
-  for (let step = 0; page < p.pages; step++) {
+/** Saves the pages before the last one; returns the last page as Moodle shows it. */
+async function savePages(sender: QuestionnaireSender, progress: Progress): Promise<Shown> {
+  let shown = await sender.open();
+  if (shown.page === null) {
+    throw new InvalidInput(`This questionnaire cannot be answered now${shown.notice ? `: ${shown.notice}` : '.'}`);
+  }
+  for (let step = 0; !shown.last; step++) {
     if (step >= MAX_STEPS) throw new InvalidInput('The questionnaire has too many pages to answer here.');
-    const { form } = await sendPage(api, p, { rid: progress.rid, completeq: 1, action: 'nextpage', pagenum: page });
-    if (form.pageNumber === null || form.pageNumber <= page) throw notAccepted(page, form.notice);
-    progress.rid = form.rid || progress.rid;
+    const page: number = shown.page ?? 1;
+    const next = await sender.next(shown);
+    if (next.page === null || next.page <= page) throw notAccepted(page, next.notice);
+    progress.rid = next.rid || progress.rid;
     progress.saved = page;
-    page = form.pageNumber;
+    shown = next;
   }
-  if (p.rid) {
-    const view = { rid: progress.rid, completeq: 1, action: 'previouspage', pagenum: page };
-    const { form } = await sendPage(api, p, view, {});
-    // Moodle shows the page before (or this one, on page 1); its index means it refused the save
-    if (form.pageNumber === null) throw notAccepted(page, form.notice);
-  }
-  return page;
+  return shown;
 }
 
 /**
- * The last page goes with `submit` (`submit=1` commits; `submit=0` keeps it a saved draft). Success is read from
- * the page Moodle returns: the index with one more response (or the draft's resume button), not the form again.
+ * Whether Moodle shows the answers committed: a draft by its resume button; a response by the thank-you page, or by
+ * one response more on the index. The web index only tells whether there is a response (`exact` false): that proves
+ * this one only when there was none before, never on a repeat submission.
  */
-async function submitPages(api: MoodleApi, p: QuestionnairePayload, progress: Progress): Promise<ActionOutcome> {
-  const page = await savePages(api, p, progress);
-  const view = {
-    questionnaireid: p.questionnaireId,
-    surveyid: p.surveyId,
-    userid: api.moodleUserId,
-    pagenum: page,
-    completed: 0,
-    rid: progress.rid,
-    submit: p.final ? 1 : 0,
-    action: 'submit',
-  };
-  const { res, form } = await sendPage(api, p, view);
-  if (form.questions.length > 0) throw notAccepted(page, form.notice, p.rid > 0);
-  const index = parseQuestionnaireIndex(res);
-  // a new response adds a review link; a continued draft turns into a submitted one
-  const listed = p.listedBefore + (p.rid ? 0 : 1);
-  const done = p.final ? !index.draft && index.submissionIds.length >= listed : index.draft;
-  if (!done) {
-    const why = index.notice ? ` (${index.notice})` : '';
+function confirmed(p: QuestionnairePayload, index: QuestionnaireIndex, thanked: boolean): boolean {
+  if (!p.final) return index.draft;
+  if (index.draft) return false;
+  if (thanked) return true;
+  return index.exact ? index.responses > p.submittedBefore : p.submittedBefore === 0 && index.responses > 0;
+}
+
+/**
+ * The last page goes with submit (or is saved as a draft). Success is read from what Moodle shows afterwards
+ * (confirmed), not the form again.
+ */
+async function submitPages(sender: QuestionnaireSender, p: QuestionnairePayload, progress: Progress) {
+  const shown = await savePages(sender, progress);
+  const { index, notice, cleared, thanked = false } = await sender.finish(shown);
+  if (!index) throw notAccepted(shown.page ?? 1, notice, cleared);
+  if (!confirmed(p, index, thanked)) {
+    const shownNotice = notice ?? index.notice;
+    const why = shownNotice ? ` (${shownNotice})` : '';
     throw new InvalidInput(`Moodle did not confirm the answers${why}. Check them in Moodle before trying again.`);
   }
   const message = p.final ? 'Answers submitted.' : 'Answers saved as a draft; submit them in Moodle.';
@@ -289,15 +363,17 @@ async function submitPages(api: MoodleApi, p: QuestionnairePayload, progress: Pr
 }
 
 /**
- * A rejected token hands the action back for a retry, which is safe while it continues the draft it was prepared on
- * (every save replaces). A response this run created exists only here, so a retry would start another one: the
+ * A rejected session hands the action back for a retry, which is safe while it continues the draft it was prepared
+ * on (every save replaces). A response this run created exists only here, so a retry would start another one: the
  * action ends instead, and a new prepare continues the saved draft.
  */
 export async function executeQuestionnaire(api: MoodleApi, payload: Raw): Promise<ActionOutcome> {
   const p = payload as QuestionnairePayload;
   const progress: Progress = { rid: p.rid, saved: 0 };
+  // the one place the channel picks how the pages travel
+  const sender = api.channel === 'web' ? webSender(api, p) : templateSender(api, p);
   try {
-    return await submitPages(api, p, progress);
+    return await submitPages(sender, p, progress);
   } catch (e) {
     if (!(e instanceof NeedsReconnect) || progress.rid === p.rid) throw e;
     const saved = progress.saved > 1 ? `Pages 1–${progress.saved} are` : 'Page 1 is';

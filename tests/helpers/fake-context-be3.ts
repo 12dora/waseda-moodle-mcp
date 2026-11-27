@@ -32,6 +32,7 @@ export function makeFakeContext(
   const api: MoodleApi = {
     baseUrl: FAKE_BASE_URL,
     moodleUserId,
+    channel: 'ws',
     get callsMade() {
       return calls.length;
     },

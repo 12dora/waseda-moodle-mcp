@@ -5,7 +5,7 @@ import type { ServiceContext } from '../context';
 type Mode = ServiceContext['mode'];
 
 export const RECONNECT_STDIO =
-  'The Moodle token has expired or was revoked. Ask the user to run "waseda-moodle-mcp connect" in a terminal (it explains how to get the link), then restart this MCP server.';
+  'The Moodle connection has ended. Ask the user to run "waseda-moodle-mcp connect" in a terminal (it explains how to copy the Moodle session cookie), then restart this MCP server.';
 
 const FILES_WORKER =
   'Files are never inlined by default: get_file returns a short-lived download link; fetch it with your own tools (e.g. curl) and read the file locally.';

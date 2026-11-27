@@ -413,6 +413,23 @@ describe('prepareForumPost: attachments and subscription', () => {
     );
   });
 
+  it('refuses Advanced Forum posts once the first call settled the channel on the web session', async () => {
+    const t = createTestContext();
+    const base = { forumType: 'hsuforum' as const, forumId: 4, subject: 's', message: 'x' };
+    const toWeb = () => Object.assign(t.moodle, { channel: 'web' });
+    t.moodle.handlers.mod_hsuforum_can_add_discussion = () => {
+      toWeb();
+      return { status: true };
+    };
+    await expect(prepareForumPost(t.ctx, base)).rejects.toThrow('not available through the Moodle web session');
+    Object.assign(t.moodle, { channel: 'ws' });
+    t.moodle.handlers.mod_hsuforum_can_add_discussion = () => {
+      toWeb();
+      throw new MoodleError('Not available through the Moodle web session.', 'servicenotavailable');
+    };
+    await expect(prepareForumPost(t.ctx, base)).rejects.toThrow('not available through the Moodle web session');
+  });
+
   it('stores the whole message in the preview and sends no options when nothing was chosen', async () => {
     const t = createTestContext();
     forumSite(t);
@@ -443,6 +460,28 @@ describe('prepareForumPostChange: edit', () => {
     await expect(prepareForumPostChange(t.ctx, edit({ message: 'x' }))).rejects.toThrow("You can't edit this post");
     forumSite(t, { posts: ownPosts() });
     await expect(prepareForumPostChange(t.ctx, edit())).rejects.toThrow('Nothing to change');
+  });
+
+  it('refuses a post whose author Moodle did not show (web channel: edit form without the rendered post)', async () => {
+    const t = createTestContext();
+    forumSite(t, { posts: ownPosts({ author: {} }) });
+    await expect(prepareForumPostChange(t.ctx, edit({ message: 'x' }))).rejects.toThrow('Could not check who wrote');
+    const del = { forumCmid: FORUM_CMID, postId: 80, action: 'delete' as const };
+    await expect(prepareForumPostChange(t.ctx, del)).rejects.toThrow('Could not check who wrote');
+  });
+
+  it('checks the own post before the attachment right and settings (web: they come from its form)', async () => {
+    const t = createTestContext();
+    forumSite(t, { posts: ownPosts() });
+    t.moodle.files.set(OLD_FILE_URL, { body: 'pdf' });
+    await prepareForumPostChange(t.ctx, edit({ files: [{ name: 'new.txt', text: 'n' }] }));
+    const order = t.moodle.calls.map((c) => c.fn);
+    const own = order.indexOf('mod_forum_get_discussion_post');
+    expect(own).toBeGreaterThan(-1);
+    expect(order.indexOf('mod_forum_get_forum_access_information')).toBeGreaterThan(own);
+    expect(order.indexOf('mod_forum_get_forums_by_courses')).toBeGreaterThan(
+      order.indexOf('mod_forum_get_forum_access_information'),
+    );
   });
 
   it('needs a standard forum that contains the post', async () => {
@@ -738,6 +777,11 @@ describe('createUploadLink for a forum', () => {
     expect(link).toMatchObject({ maxBytes: MIB, usedBy: 'prepare_forum_post' });
     expect(await t.signer.verify(link.uploadUrl.split('/u/')[1] ?? '')).toMatchObject({ mb: MIB, mf: 2 });
     expect(t.store.uploads.get(link.uploadId)?.cmid).toBe(FORUM_CMID);
+    // The right first: on the web channel it reads the post form the settings take their limits from.
+    const order = t.moodle.calls.map((c) => c.fn);
+    expect(order.indexOf('mod_forum_get_forum_access_information')).toBeLessThan(
+      order.indexOf('mod_forum_get_forums_by_courses'),
+    );
   });
 
   it('refuses hsuforum, forums without attachments and users who cannot attach', async () => {

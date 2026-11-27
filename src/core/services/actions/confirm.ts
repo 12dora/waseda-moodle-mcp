@@ -11,6 +11,7 @@ import {
   WmmError,
 } from '../../errors';
 import { requireMail } from '../../mail/connection';
+import { settleChannel } from '../../moodle/web/channel';
 import { isoJst, nowMs } from '../../time';
 import type { ActionKind, ActionRecord, ActionResult, ActionStatus } from '../../types';
 import { executeCompletion } from './completion';
@@ -30,6 +31,7 @@ type Via = 'mcp' | 'console';
 const ALREADY_RUNNING = 'This action is already running.';
 const RIVAL_RUNNING = 'Another action for the same target is running.';
 const SUPERSEDED = 'Another action for the same target already ran. Prepare it again if you still need it.';
+const CHANNEL_CHANGED = 'The Moodle connection changed since this action was prepared. Prepare it again.';
 
 const MOODLE_EXECUTORS: Record<
   Exclude<ActionKind, MailKind>,
@@ -175,16 +177,34 @@ async function refuseBlocked(ctx: ServiceContext, row: ActionRow, via: Via): Pro
   throw new InvalidInput(RIVAL_RUNNING);
 }
 
-/** Resolves the API client. A throw here means the write never left (missing mail, reconnect). */
-async function bindExecutor(ctx: ServiceContext, row: ActionRow): Promise<() => Promise<ActionOutcome>> {
+/**
+ * Moodle payloads hold channel-specific ids (savePreview records the channel; payloads from before it are 'ws').
+ * A fresh client on 'ws' may still fall back to 'web' on its first call (whichever channel the action was prepared
+ * on), so one read settles it before any write.
+ */
+async function assertSameChannel(api: MoodleApi, payload: Raw): Promise<void> {
+  const prepared = payload.channel === 'web' ? 'web' : 'ws';
+  await settleChannel(api);
+  if (api.channel !== prepared) throw new InvalidInput(CHANNEL_CHANGED);
+}
+
+interface Executor {
+  run: () => Promise<ActionOutcome>;
+  /** Requests so far that may have changed the target (MoodleApi.writesSent; a mail send is one request). */
+  writes: () => number;
+}
+
+/** Resolves the API client. A throw here means the write never left (missing mail, reconnect, channel changed). */
+async function bindExecutor(ctx: ServiceContext, row: ActionRow): Promise<Executor> {
   if (isMailKind(row.kind)) {
     const run = MAIL_EXECUTORS[row.kind];
     const api = await requireMail(ctx);
-    return () => run(api, row.payload);
+    return { run: () => run(api, row.payload), writes: () => 0 };
   }
   const run = MOODLE_EXECUTORS[row.kind];
   const api = await ctx.moodle();
-  return () => run(api, row.payload);
+  await assertSameChannel(api, row.payload);
+  return { run: () => run(api, row.payload), writes: () => api.writesSent ?? 0 };
 }
 
 /** Hands the claim back: the write never left, so the row stays pending. */
@@ -193,14 +213,15 @@ async function handBack(ctx: ServiceContext, id: string, e: unknown): Promise<ne
   throw e;
 }
 
-function isUncertain(e: unknown): boolean {
-  if (e instanceof MoodleUnavailable) return true;
+/** `written` = a request that may have changed Moodle left before the failure. */
+function isUncertain(e: unknown, written: boolean): boolean {
+  if (e instanceof MoodleUnavailable || (written && e instanceof NeedsReconnect)) return true;
   return e instanceof MailUnavailable && e.maybeSent;
 }
 
-function failMessage(kind: ActionKind, e: unknown): string {
+function failMessage(kind: ActionKind, e: unknown, written = false): string {
   const base = e instanceof WmmError ? e.message : 'Unexpected error while executing the action.';
-  return isUncertain(e) ? `${base} ${checkUncertain(kind)} before retrying.` : base;
+  return isUncertain(e, written) ? `${base} ${checkUncertain(kind)} before retrying.` : base;
 }
 
 /** Missing mail connection (requireMail). Gmail 404 from the executor is a definite failure, not this. */
@@ -210,20 +231,24 @@ function clientMissing(kind: ActionKind, e: unknown): boolean {
 }
 
 async function runAction(ctx: ServiceContext, row: ActionRow, via: Via): Promise<ActionResult> {
-  let run: () => Promise<ActionOutcome>;
+  let executor: Executor;
   try {
-    run = await bindExecutor(ctx, row);
+    executor = await bindExecutor(ctx, row);
   } catch (e) {
-    if (clientMissing(row.kind, e)) return handBack(ctx, row.id, e);
+    // nothing was written yet: an unreachable Moodle (channel check) leaves the action pending, not uncertain
+    if (clientMissing(row.kind, e) || e instanceof MoodleUnavailable) return handBack(ctx, row.id, e);
     return failAction(ctx, row, via, failMessage(row.kind, e));
   }
+  const before = executor.writes();
   let outcome: ActionOutcome;
   try {
-    outcome = await run();
+    outcome = await executor.run();
   } catch (e) {
-    // reconnect during execute: nothing was sent. A Gmail 404 (deleted thread) fails definitely.
-    if (e instanceof NeedsReconnect) return handBack(ctx, row.id, e);
-    return failAction(ctx, row, via, failMessage(row.kind, e));
+    // a reconnect before anything that may write was sent hands the action back; after one, it may have gone
+    // through (a read after the write failed). A Gmail 404 (deleted thread) fails definitely.
+    const written = executor.writes() > before;
+    if (e instanceof NeedsReconnect && !written) return handBack(ctx, row.id, e);
+    return failAction(ctx, row, via, failMessage(row.kind, e, written));
   }
   await recordOutcome(ctx, row.id, { status: 'executed', executedAt: nowMs(), result: encodeResult(outcome) });
   await auditSafe(ctx, 'action:execute', { id: row.id, kind: row.kind, status: 'executed' }, via);

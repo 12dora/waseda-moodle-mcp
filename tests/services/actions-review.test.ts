@@ -49,9 +49,10 @@ describe('files-only submissions keep the online text (P0)', () => {
         files_filemanager: t.moodle.uploads[0]!.itemId,
       },
     });
-    // the pre-save read must come before the save, and the post-save status read must not reuse its memo
+    // the pre-save read must come before the save, and the post-save status reads (before and after the submit of
+    // the draft) must not reuse its memo
     const reads = t.moodle.calls.filter((c) => c.fn === 'mod_assign_get_submission_status');
-    expect(reads.map((c) => c.params.groupid)).toEqual([undefined, 0]);
+    expect(reads.map((c) => c.params.groupid)).toEqual([undefined, 0, 0]);
     const order = t.moodle.calls.map((c) => c.fn);
     expect(order.indexOf('mod_assign_get_submission_status')).toBeLessThan(order.indexOf('mod_assign_save_submission'));
   });

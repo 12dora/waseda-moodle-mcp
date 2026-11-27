@@ -90,6 +90,8 @@ class Refresher {
   private fullLeft: number;
   private largeLeft: number;
   private readonly budget: CallBudget;
+  /** Calls one full fetch costs: the web channel reads the course-format state AND the course page. */
+  private readonly fetchCost: number;
   private readonly unknownIsLarge: boolean;
   readonly tally: { large: number };
 
@@ -102,6 +104,7 @@ class Refresher {
     this.fullLeft = opts.maxFull;
     this.largeLeft = opts.maxLarge ?? opts.maxFull;
     this.budget = new CallBudget(opts.maxCalls);
+    this.fetchCost = api.channel === 'web' ? 2 : 1;
     this.unknownIsLarge = opts.unknownIsLarge ?? false;
     this.tally = opts.tally ?? { large: 0 };
   }
@@ -131,7 +134,7 @@ class Refresher {
    */
   private reserve(entry: Entry): { large: boolean } | null {
     const large = entry.snap ? (entry.snap.z ?? 0) > LARGE_COURSE_BYTES : this.unknownIsLarge;
-    if (this.fullLeft <= 0 || (large && this.largeLeft <= 0) || !this.budget.take()) return null;
+    if (this.fullLeft <= 0 || (large && this.largeLeft <= 0) || !this.budget.take(this.fetchCost)) return null;
     this.fullLeft--;
     if (large) this.takeLarge();
     return { large };
@@ -169,9 +172,9 @@ class Refresher {
     }
   }
 
-  /** A check must leave a call for every refetch it might trigger. */
+  /** A check must leave the calls of every refetch it might trigger. */
   private canCheck(): boolean {
-    return this.budget.remaining - 1 >= this.fullLeft;
+    return this.budget.remaining - 1 >= this.fullLeft * this.fetchCost;
   }
 
   private async syncCompletion(entry: Entry, snap: CourseSnapshot): Promise<void> {

@@ -65,6 +65,7 @@ function makeFakeMoodle(responses: Record<string, FakeResponse> = {}, opts: Fake
   const api: FakeMoodle = {
     baseUrl: opts.baseUrl ?? 'https://moodle.example.edu',
     moodleUserId: opts.moodleUserId ?? 1001,
+    channel: 'ws',
     get callsMade() {
       return calls.length;
     },

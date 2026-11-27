@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getActivity } from '../../src/core/services/activity';
-import { MAX_ATTENDANCE_HTML, mapAttendance, parseSessionTime } from '../../src/core/services/activity/attendance';
+import { MAX_ATTENDANCE_HTML, mapAttendance } from '../../src/core/services/activity/attendance';
+import { parseSessionTime } from '../../src/core/services/activity/attendance-text';
 import type { AttendanceDetail } from '../../src/core/types';
 import { ATTENDANCE_SUMMARY_ONLY, ATTENDANCE_WITH_SESSIONS, attendanceMobileHtml } from '../fixtures/attendance/mobile';
 import { FAKE_BASE_URL, makeFakeContext } from '../helpers/fake-context-be3';

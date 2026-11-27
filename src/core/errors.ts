@@ -42,10 +42,13 @@ export class MailUnavailable extends WmmError {
   }
 }
 
-/** Stored token missing/invalid/expired (errorcode invalidtoken, or accessexception with "token expired"). */
+/**
+ * No working Moodle connection: the web session ended, or the app token is missing / rejected (errorcode invalidtoken,
+ * or accessexception with "token expired"). The local server replaces the message with its own (mcp/wording).
+ */
 export class NeedsReconnect extends WmmError {
   constructor(
-    message = 'The Moodle connection has expired. Connect again (in the console, or with the connect command in local mode).',
+    message = 'The Moodle connection has ended. Reconnect in the console (browser extension or Moodle session cookie).',
     code = 'needs_reconnect',
   ) {
     super(message, code);

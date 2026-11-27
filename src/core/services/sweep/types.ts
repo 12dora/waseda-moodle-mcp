@@ -12,9 +12,10 @@ export class CallBudget {
   constructor(calls: number) {
     this.left = calls;
   }
-  take(): boolean {
-    if (this.left <= 0) return false;
-    this.left--;
+  /** Reserves `calls` calls (all or none). */
+  take(calls = 1): boolean {
+    if (this.left < calls) return false;
+    this.left -= calls;
     return true;
   }
   get remaining(): number {

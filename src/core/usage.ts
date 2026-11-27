@@ -146,12 +146,14 @@ const tag = (s: string | undefined, fallback: string): string =>
     .replace(/[^a-z0-9_]/g, '_')
     .slice(0, 40) || fallback;
 
-type RenewalStatus = 'renewed' | 'kept' | 'failed' | 'skipped';
+type RenewalStatus = 'renewed' | 'kept' | 'ended' | 'failed' | 'skipped';
 
-/** Counters of one credential refresh: renewed / kept, or the failure reason. Skips are not renewal attempts. */
+/**
+ * Credential-health counters of one keepalive visit or token renewal: renewed / kept / ended, or the failure reason.
+ * Skips are not attempts.
+ */
 export function renewalCounts(outcome: { status: RenewalStatus; reason?: string }): DayCount[] {
-  if (outcome.status === 'renewed') return [{ metric: 'renew_renewed', dim: '' }];
-  if (outcome.status === 'kept') return [{ metric: 'renew_kept', dim: '' }];
+  if (outcome.status === 'skipped') return [];
   if (outcome.status === 'failed') return [{ metric: 'renew_failed', dim: tag(outcome.reason, 'error') }];
-  return [];
+  return [{ metric: `renew_${outcome.status}`, dim: '' }];
 }

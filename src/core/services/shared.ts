@@ -3,6 +3,7 @@
 import type { MoodleApi, ServiceContext } from '../context';
 import { MoodleError, MoodleUnavailable, NotFound } from '../errors';
 import { decodeEntities } from '../html';
+import { isObj } from '../moodle/wire';
 import { fromTs } from '../time';
 import type { FileRef } from '../types';
 import { listAllCourses } from './courses';
@@ -188,4 +189,10 @@ export async function getCourseModule(api: MoodleApi, cmid: number): Promise<Cou
     throw new NotFound(`Activity ${cmid} was not found or is not accessible.`);
   }
   return { cmid, courseId: cm.course, modname: cm.modname, instance: cm.instance, name: decodeEntities(cm.name ?? '') };
+}
+
+/** The HTML of a mobile-app page answer (`tool_mobile_get_content`: `templates[].html`, joined). */
+export function templateHtml(content: unknown): string {
+  if (!isObj(content) || !Array.isArray(content.templates)) return '';
+  return content.templates.map((t) => (isObj(t) && typeof t.html === 'string' ? t.html : '')).join('\n');
 }

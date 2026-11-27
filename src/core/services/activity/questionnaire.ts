@@ -1,7 +1,8 @@
 /**
  * Questionnaire detail (read only): window, the user's progress and every question with the user's own answers.
- * One mobile-template call for the index, then one per question page (`respond`) or one for the latest response
- * (`review`); the templates are parsed in submission/questionnaire.ts.
+ * Web-service channel: one mobile-template call for the index, then one per question page (`respond`) or one for the
+ * latest response (`review`); the templates are parsed in submission/questionnaire.ts. Web channel: the plugin's own
+ * pages (questionnaire-web.ts). Both give the same QuestionnaireIndex / FormRead.
  */
 
 import type { MoodleApi } from '../../context';
@@ -9,7 +10,7 @@ import { MoodleError } from '../../errors';
 import { decodeEntities, htmlToMarkdown } from '../../html';
 import type { RawDate } from '../../moodle/raw-course';
 import { fromTs, nowMs, toMs } from '../../time';
-import type { IsoJst, QuestionnaireDetail } from '../../types';
+import type { IsoJst, QuestionnaireDetail, QuestionnaireQuestion } from '../../types';
 import { type ActivityInfo, type CourseModuleInfo, pickLang } from '../shared';
 import {
   parseQuestionnaireIndex,
@@ -18,6 +19,7 @@ import {
   questionnaireRequest,
 } from '../submission/questionnaire';
 import { fetchModuleRow } from './content';
+import { webReader } from './questionnaire-web';
 
 /** Question pages read per call of get_activity (one Moodle call each). */
 const MAX_PAGES = 8;
@@ -27,6 +29,28 @@ type View = Parameters<typeof questionnaireRequest>[2];
 type Questions = Pick<QuestionnaireDetail, 'questions' | 'answers' | 'complete'> & {
   refused?: { notice: string | null };
 };
+
+/** The form as Moodle takes it: the response id to continue (0 = new) and the ids its submit button carries. */
+export interface FormRead extends Questions {
+  rid: number;
+  submitIds: { questionnaireId: number; surveyId: number } | null;
+  pages: number;
+  /** Questions of a kind this server does not answer (web channel: answering is refused). */
+  unsupported?: string[];
+  /** Whether the form offers saving a draft (web channel; unknown on the web-service channel). */
+  canDraft?: boolean;
+}
+
+/** How a channel reads a questionnaire: the index, the latest submitted response, the form. */
+export interface QuestionnaireReader {
+  index(api: MoodleApi, cmid: number): Promise<QuestionnaireIndex>;
+  /** The latest submitted response read back in full; [] when Moodle does not show it. */
+  review(api: MoodleApi, cmid: number, index: QuestionnaireIndex): Promise<QuestionnaireQuestion[]>;
+  /** The form page by page (read only), with the saved draft's answers when there is one. */
+  form(api: MoodleApi, cmid: number, index: QuestionnaireIndex): Promise<FormRead>;
+}
+
+// ------------------------------------------------------------------ web-service channel: mobile templates
 
 async function template(api: MoodleApi, cmid: number, view?: View): Promise<unknown> {
   const req = questionnaireRequest(cmid, api.moodleUserId, view);
@@ -41,34 +65,18 @@ async function optionalTemplate(api: MoodleApi, cmid: number, view: View): Promi
   });
 }
 
-function dateOf(dates: RawDate[] | null | undefined, ids: readonly string[]): IsoJst | null {
-  return fromTs(dates?.find((d) => d.dataid && ids.includes(d.dataid))?.timestamp);
-}
-
-function windowOf(opensAt: IsoJst | null, closesAt: IsoJst | null, now: number): QuestionnaireDetail['window'] {
-  if (opensAt && now < toMs(opensAt)) return 'not-open';
-  return closesAt && now >= toMs(closesAt) ? 'closed' : 'open';
-}
-
 /** The latest response read back in full (all pages in one call). */
-async function reviewed(api: MoodleApi, cmid: number, ids: readonly number[]): Promise<Questions | null> {
-  const res = await optionalTemplate(api, cmid, { action: 'review', submissionid: Math.max(...ids) });
-  const questions = res ? parseQuestionnairePage(res, 1).questions : [];
-  return questions.length ? { questions, answers: 'submitted', complete: true } : null;
-}
-
-/** The form as Moodle takes it: the response id to continue (0 = new) and the ids its submit button carries. */
-interface FormRead extends Questions {
-  rid: number;
-  submitIds: { questionnaireId: number; surveyId: number } | null;
-  pages: number;
+async function templateReview(api: MoodleApi, cmid: number, index: QuestionnaireIndex) {
+  if (!index.submissionIds.length) return [];
+  const res = await optionalTemplate(api, cmid, { action: 'review', submissionid: Math.max(...index.submissionIds) });
+  return res ? parseQuestionnairePage(res, 1).questions : [];
 }
 
 /**
- * The form page by page (read only), with the saved draft's answers when there is one. Only the requested page
- * counts: when Moodle refuses responding (closed meanwhile) it renders its index with the notice instead.
+ * Only the requested page counts: when Moodle refuses responding (closed meanwhile) it renders its index with the
+ * notice instead.
  */
-async function form(api: MoodleApi, cmid: number, index: QuestionnaireIndex): Promise<FormRead> {
+async function templateForm(api: MoodleApi, cmid: number, index: QuestionnaireIndex): Promise<FormRead> {
   const out: FormRead = {
     questions: [],
     answers: index.draft ? 'draft' : null,
@@ -92,25 +100,53 @@ async function form(api: MoodleApi, cmid: number, index: QuestionnaireIndex): Pr
   return out;
 }
 
+const templateReader: QuestionnaireReader = {
+  index: async (api, cmid) => parseQuestionnaireIndex(await template(api, cmid)),
+  review: templateReview,
+  form: templateForm,
+};
+
+/** The one place the channel picks how a questionnaire is read. */
+const readerOf = (api: MoodleApi): QuestionnaireReader => (api.channel === 'web' ? webReader : templateReader);
+
+// ------------------------------------------------------------------ detail
+
+function dateOf(dates: RawDate[] | null | undefined, ids: readonly string[]): IsoJst | null {
+  return fromTs(dates?.find((d) => d.dataid && ids.includes(d.dataid))?.timestamp);
+}
+
+function windowOf(opensAt: IsoJst | null, closesAt: IsoJst | null, now: number): QuestionnaireDetail['window'] {
+  if (opensAt && now < toMs(opensAt)) return 'not-open';
+  return closesAt && now >= toMs(closesAt) ? 'closed' : 'open';
+}
+
 /** What the detail shows of a form read (the ids only answering needs stay out). */
-const questionsOf = ({ rid: _rid, submitIds: _ids, pages: _pages, ...questions }: FormRead): Questions => questions;
+const questionsOf = ({
+  rid: _rid,
+  submitIds: _ids,
+  pages: _pages,
+  unsupported: _unsupported,
+  canDraft: _canDraft,
+  ...questions
+}: FormRead): Questions => questions;
 
 /**
  * A submitted response is shown as answered (also when another response is allowed); otherwise the form while
  * Moodle offers it. Closed / not-yet-open questionnaires show no questions in the app either.
  */
 async function readQuestions(api: MoodleApi, cmid: number, index: QuestionnaireIndex): Promise<Questions> {
-  if (!index.draft && index.submissionIds.length > 0) {
-    const done = await reviewed(api, cmid, index.submissionIds);
-    if (done) return done;
+  const reader = readerOf(api);
+  if (!index.draft && index.responses > 0) {
+    const questions = await reader.review(api, cmid, index);
+    if (questions.length) return { questions, answers: 'submitted', complete: true };
   }
-  if (index.canAnswer) return questionsOf(await form(api, cmid, index));
-  return { questions: [], answers: null, complete: index.submissionIds.length === 0 };
+  if (index.canAnswer) return questionsOf(await reader.form(api, cmid, index));
+  return { questions: [], answers: null, complete: index.responses === 0 };
 }
 
 function statusOf(index: QuestionnaireIndex): QuestionnaireDetail['status'] {
   if (index.draft) return 'draft';
-  return index.submissionIds.length > 0 || index.state?.status === 'submitted' ? 'submitted' : 'none';
+  return index.responses > 0 || index.state?.status === 'submitted' ? 'submitted' : 'none';
 }
 
 type Base = Omit<QuestionnaireDetail, 'questions' | 'answers' | 'complete'>;
@@ -126,8 +162,7 @@ async function readBase(
   cm: CourseModuleInfo,
   info: ActivityInfo,
 ): Promise<{ base: Base; index: QuestionnaireIndex }> {
-  const [row, indexRaw] = await Promise.all([fetchModuleRow(api, cm), template(api, cm.cmid)]);
-  const index = parseQuestionnaireIndex(indexRaw);
+  const [row, index] = await Promise.all([fetchModuleRow(api, cm), readerOf(api).index(api, cm.cmid)]);
   const opensAt = dateOf(row.dates, ['timeopen', 'opendate']);
   const closesAt = dateOf(row.dates, ['timeclose', 'closedate']);
   const base: Base = {
@@ -143,8 +178,7 @@ async function readBase(
     window: windowOf(opensAt, closesAt, nowMs()),
     status: statusOf(index),
     submittedAt: index.state?.submittedAt ?? null,
-    // the saved draft is listed with the submitted responses
-    submissions: Math.max(0, index.submissionIds.length - (index.draft ? 1 : 0)),
+    submissions: index.responses,
     canAnswer: index.canAnswer,
     notice: index.notice,
   };
@@ -168,7 +202,7 @@ export async function loadQuestionnaireForm(
 ): Promise<{ detail: QuestionnaireDetail; form: FormRead | null }> {
   const { base, index } = await readBase(api, cm, info);
   if (!index.canAnswer) return { detail: { ...base, questions: [], answers: null, complete: true }, form: null };
-  const read = await form(api, cm.cmid, index);
+  const read = await readerOf(api).form(api, cm.cmid, index);
   const detail = detailOf(base, questionsOf(read));
   return { detail, form: detail.canAnswer ? read : null };
 }

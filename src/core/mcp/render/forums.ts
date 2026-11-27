@@ -234,6 +234,7 @@ export function renderForumSearch(r: ForumSearchResult): string {
   const footer = [
     ...(r.skippedForums > 0 ? [`(${plural(r.skippedForums, 'forum')} not searched; pass course_id to narrow.)`] : []),
     ...(r.messagesNote ? [`(${r.messagesNote})`] : []),
+    ...(r.bodyNote ? [`(${r.bodyNote})`] : []),
   ];
   const hits = r.hits.map((d) => ({ text: `${discussionLine(d)}\n  > ${oneLine(d.snippet, 180)}`, item: true }));
   return assemble({ head, entries: [...hits, ...messageEntries(r)], footer, hint: 'lower limit or pass course_id' });

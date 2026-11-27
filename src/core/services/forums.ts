@@ -1,6 +1,6 @@
 /** Forum discussions (mod_forum and Open LMS mod_hsuforum). */
 
-import type { MoodleApi, ServiceContext } from '../context';
+import type { CallHint, MoodleApi, ServiceContext } from '../context';
 import { InvalidInput, MoodleError, NotFound } from '../errors';
 import { decodeEntities, htmlToMarkdown } from '../html';
 import { fromTs } from '../time';
@@ -14,6 +14,8 @@ export type ForumType = 'forum' | 'hsuforum';
 
 /** Most forums read in one call (each costs one Moodle request). */
 export const MAX_FORUMS_PER_CALL = 15;
+/** Web channel: Moodle requests a forum listing or search may spend of the client's 40 (a page or ajax POST each). */
+const WEB_CALLS = 36;
 /** Moodle `mod_forum_get_forum_discussions` sortorder: last post, newest first. */
 const LASTPOST_DESC = 1;
 const INTRO_MAX_CHARS = 600;
@@ -33,10 +35,11 @@ export interface RawForum {
   timemodified?: number | null;
   anonymous?: boolean | number | null;
   numdiscussions?: number | null;
+  istracked?: boolean | null;
 }
 
 export interface RawDiscussion {
-  id: number; // first post id
+  id: number | null; // first post id (null on the web channel when the list does not show it)
   discussion?: number | null; // discussion id
   name?: string | null;
   subject?: string | null;
@@ -72,6 +75,8 @@ export interface ForumRef {
   modifiedTs: number; // forum.timemodified, 0 if unknown
   anonymous: boolean;
   numDiscussions: number | null;
+  /** Unread tracking is on for the user (null = unknown). */
+  tracked: boolean | null;
 }
 
 export function mapForumRef(raw: RawForum, forumType: ForumType): ForumRef {
@@ -89,15 +94,24 @@ export function mapForumRef(raw: RawForum, forumType: ForumType): ForumRef {
     modifiedTs: typeof raw.timemodified === 'number' ? raw.timemodified : 0,
     anonymous: raw.anonymous === true || raw.anonymous === 1,
     numDiscussions: typeof raw.numdiscussions === 'number' ? raw.numdiscussions : null,
+    tracked: typeof raw.istracked === 'boolean' ? raw.istracked : null,
   };
 }
 
-/** Forums of the given courses. hsuforum may be unavailable/forbidden -> []. Never queries with an empty id list (= all enrolled). */
-export async function fetchForums(api: MoodleApi, forumType: ForumType, courseIds: number[]): Promise<ForumRef[]> {
+/**
+ * Forums of the given courses. hsuforum may be unavailable/forbidden -> []. Never queries with an empty id list (= all
+ * enrolled). `hint.cmid`: only that forum is wanted (the web channel then reads just its page).
+ */
+export async function fetchForums(
+  api: MoodleApi,
+  forumType: ForumType,
+  courseIds: number[],
+  hint?: CallHint,
+): Promise<ForumRef[]> {
   if (courseIds.length === 0) return [];
   let list: RawForum[] | null | undefined;
   try {
-    list = await api.call<RawForum[]>(`mod_${forumType}_get_forums_by_courses`, { courseids: courseIds });
+    list = await api.call<RawForum[]>(`mod_${forumType}_get_forums_by_courses`, { courseids: courseIds }, hint);
   } catch (e) {
     if (forumType === 'hsuforum' && e instanceof MoodleError) return [];
     throw e;
@@ -105,8 +119,13 @@ export async function fetchForums(api: MoodleApi, forumType: ForumType, courseId
   return Array.isArray(list) ? list.map((f) => mapForumRef(f, forumType)) : [];
 }
 
-export async function fetchForumsOfTypes(api: MoodleApi, types: ForumType[], courseIds: number[]): Promise<ForumRef[]> {
-  const lists = await Promise.all(types.map((t) => fetchForums(api, t, courseIds)));
+export async function fetchForumsOfTypes(
+  api: MoodleApi,
+  types: ForumType[],
+  courseIds: number[],
+  hint?: CallHint,
+): Promise<ForumRef[]> {
+  const lists = await Promise.all(types.map((t) => fetchForums(api, t, courseIds, hint)));
   return lists.flat();
 }
 
@@ -136,8 +155,8 @@ export function mapDiscussion(raw: RawDiscussion, ref: ForumRef, courseName: str
     forumName: ref.name,
     courseId: ref.courseId,
     courseName,
-    discussionId: raw.discussion ?? raw.id,
-    firstPostId: raw.id,
+    discussionId: raw.discussion ?? raw.id ?? 0,
+    firstPostId: raw.id ?? 0,
     subject: decodeEntities(raw.subject || raw.name || ''),
     author: decodeEntities(raw.userfullname ?? ''),
     createdAt: fromTs(raw.created),
@@ -178,21 +197,19 @@ async function fetchHsuDiscussions(
  * Latest raw discussions of one forum. Anonymous hsuforum uses `mod_hsuforum_get_forum_discussions`
  * (paginated returns nothing); that function is paged server-side. Moodle lists pinned first, then by
  * last post, so a small `limit` can be filled by pinned ones; callers that merge forums re-sort by
- * modification time.
+ * modification time. `messages`: the web channel reads the first posts too (one more request; it marks them read
+ * on tracked forums) — the web service always includes them; without it `message` is null on the web channel.
  */
 export async function fetchRawDiscussions(
   api: MoodleApi,
   ref: ForumRef,
-  limit: number,
-  page = 0,
+  opts: { limit: number; page?: number; messages?: boolean },
 ): Promise<RawDiscussion[]> {
+  const { limit, page = 0 } = opts;
   if (ref.forumType === 'forum') {
-    const res = await api.call<RawDiscussionList>('mod_forum_get_forum_discussions', {
-      forumid: ref.forumId,
-      sortorder: LASTPOST_DESC,
-      page,
-      perpage: limit,
-    });
+    const params = { forumid: ref.forumId, sortorder: LASTPOST_DESC, page, perpage: limit };
+    const hint = opts.messages ? { messages: true } : undefined;
+    const res = await api.call<RawDiscussionList>('mod_forum_get_forum_discussions', params, hint);
     return res?.discussions ?? [];
   }
   if (ref.anonymous) return fetchHsuDiscussions(api, ref, limit, page);
@@ -215,24 +232,30 @@ export async function fetchDiscussions(
   courseName: string,
   opts: { limit: number; page?: number },
 ): Promise<DiscussionSummary[]> {
-  return (await fetchRawDiscussions(api, ref, opts.limit, opts.page ?? 0)).map((d) =>
-    mapDiscussion(d, ref, courseName),
-  );
+  return (await fetchRawDiscussions(api, ref, opts)).map((d) => mapDiscussion(d, ref, courseName));
 }
 
 /** Forums worth a Moodle call: those known to be empty cost nothing. */
-const nonEmptyForums = (refs: ForumRef[]) => refs.filter((r) => r.numDiscussions !== 0);
+export const nonEmptyForums = (refs: ForumRef[]) => refs.filter((r) => r.numDiscussions !== 0);
+
+/** Web channel: requests left of WEB_CALLS for this listing or search; unbounded on the web service. */
+export const webCallsLeft = (api: MoodleApi) =>
+  api.channel === 'web' ? Math.max(0, WEB_CALLS - api.callsMade) : Number.POSITIVE_INFINITY;
+
+/** How many forums readEach may read now (one request each). */
+export const forumReadCap = (api: MoodleApi) => Math.min(MAX_FORUMS_PER_CALL, webCallsLeft(api));
 
 /**
- * Runs `read` for up to MAX_FORUMS_PER_CALL forums in parallel (one Moodle call each); forums that cannot be read
- * (no permission, ...) and those over the cap count as skipped.
+ * Runs `read` for up to `cap` (≤ MAX_FORUMS_PER_CALL) forums in parallel (one Moodle call each); forums that cannot
+ * be read (no permission, ...) and those over the cap count as skipped.
  */
 export async function readEach<T>(
   refs: ForumRef[],
   read: (ref: ForumRef) => Promise<T[]>,
+  cap = MAX_FORUMS_PER_CALL,
 ): Promise<{ items: T[]; skipped: number }> {
   const nonEmpty = nonEmptyForums(refs);
-  const candidates = nonEmpty.slice(0, MAX_FORUMS_PER_CALL);
+  const candidates = nonEmpty.slice(0, Math.min(cap, MAX_FORUMS_PER_CALL));
   let skipped = nonEmpty.length - candidates.length;
   const lists = await Promise.all(
     candidates.map(async (ref) => {
@@ -337,7 +360,8 @@ export async function getDiscussion(
   let ref: ForumRef | null = null;
   let courseName = '';
   if (courseId != null) {
-    const [forums, names] = await Promise.all([fetchForums(api, forumType, [courseId]), courseNameMap(ctx)]);
+    const hint = forumCmid != null ? { cmid: forumCmid } : undefined;
+    const [forums, names] = await Promise.all([fetchForums(api, forumType, [courseId], hint), courseNameMap(ctx)]);
     ref = forums.find((f) => (forumId != null ? f.forumId === forumId : f.cmid === forumCmid)) ?? null;
     courseName = names.get(courseId) ?? `Course ${courseId}`;
   }

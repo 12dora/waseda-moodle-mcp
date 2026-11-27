@@ -269,8 +269,9 @@ async function uploadLimits(ctx: ServiceContext, cmid: number): Promise<UploadLi
   const act = await getActivity(ctx, cmid);
   if (act.type === 'forum') {
     const api = await ctx.moodle();
-    const settings = await readForumSettings(api, act.forumType, act.courseId, act.forumId);
+    // The right first: on the web channel it reads a post form, which the settings then take their limits from.
     const canAttach = act.forumType === 'forum' ? await readCanAttach(api, act.forumId) : null;
+    const settings = await readForumSettings(api, act.forumType, act.courseId, act.forumId);
     const limits = attachmentLimits(settings, act.forumType, canAttach);
     postingWindow(settings, nowMs());
     return { ...limits, usedBy: 'prepare_forum_post' };

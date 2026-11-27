@@ -68,7 +68,21 @@ function dispositionName(cd: string): string | null {
       /* fall back to the plain filename */
     }
   }
-  return /filename\s*=\s*"([^"]+)"/.exec(cd)?.[1] ?? /filename\s*=\s*([^;]+)/.exec(cd)?.[1]?.trim() ?? null;
+  const plain = /filename\s*=\s*"([^"]+)"/.exec(cd)?.[1] ?? /filename\s*=\s*([^;]+)/.exec(cd)?.[1]?.trim();
+  return plain ? headerUtf8(plain) : null;
+}
+
+/**
+ * Header values arrive as bytes read one per character (Latin-1); Moodle puts the raw UTF-8 bytes of the name in the
+ * quoted `filename`. Valid UTF-8 is decoded; anything else stays as it is.
+ */
+function headerUtf8(value: string): string {
+  if (!/[\u0080-\u00ff]/.test(value) || [...value].some((c) => c.charCodeAt(0) > 0xff)) return value;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(value, (c) => c.charCodeAt(0)));
+  } catch {
+    return value;
+  }
 }
 
 function pathName(path: string): string {
@@ -307,7 +321,8 @@ async function pipeUpload(
 ): Promise<Response> {
   const api = await env.makeMoodle(userId);
   const mime = uploadMime(up.contentType, up.name);
-  const res = await api.uploadToDraft({ name: up.name, body: up.body, size: up.size, mime }, draft.draftItemId);
+  const upload = { name: up.name, body: up.body, size: up.size, mime };
+  const res = await api.uploadToDraft(upload, draft.draftItemId, { cmid: draft.cmid });
   const file = { name: up.name, size: res.filesize || up.size, mime };
   await env.store.appendUploadedFile(draft.id, file);
   try {

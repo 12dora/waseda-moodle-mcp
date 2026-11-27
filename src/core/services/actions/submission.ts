@@ -57,7 +57,9 @@ type SubmitPayload = {
   /** The assignment takes online text: it must be sent along with every save or Moodle blanks it. */
   textPluginEnabled: boolean;
   submitForGrading: boolean;
-  draftsEnabled: boolean;
+  /** null: Moodle did not show whether the assignment has a draft stage (the save may submit at once). */
+  draftsEnabled: boolean | null;
+  /** The user accepted the statement the preview showed them (false when none was shown). */
   acceptStatement: boolean;
 };
 
@@ -116,13 +118,13 @@ async function planSubmission(ctx: ServiceContext, act: AssignDetail, input: Pre
 }
 
 /** Uploads at prepare time so confirm is fast. Returns the draft item id the save should reference. */
-async function stageDraft(ctx: ServiceContext, plan: Plan): Promise<number | null> {
+async function stageDraft(ctx: ServiceContext, plan: Plan, cmid: number): Promise<number | null> {
   const api = await ctx.moodle();
-  let itemId = await uploadInline(api, plan.staged.inline, plan.staged.uploadRow?.draftItemId ?? null);
+  let itemId = await uploadInline(api, plan.staged.inline, plan.staged.uploadRow?.draftItemId ?? null, cmid);
   if (plan.newFiles.length > 0) {
     const have = new Set((plan.staged.uploadRow?.files ?? []).map((f) => f.name.toLowerCase()));
     for (const f of plan.keptFiles) {
-      if (!have.has(f.name.toLowerCase())) itemId = await copyIntoDraft(api, f, itemId);
+      if (!have.has(f.name.toLowerCase())) itemId = await copyIntoDraft(api, f, itemId, cmid);
     }
   } else if (plan.clearsFiles) {
     itemId = await allocateDraft(api);
@@ -130,9 +132,12 @@ async function stageDraft(ctx: ServiceContext, plan: Plan): Promise<number | nul
   return plan.touchesFiles ? itemId : null;
 }
 
-function gradingLabel(draftsEnabled: boolean, submit: boolean): string {
-  if (!draftsEnabled) return 'yes (saving submits immediately)';
-  return submit ? 'yes' : 'no (stays a draft)';
+const MAY_SUBMIT = 'Moodle does not show whether this assignment has a draft stage: saving may submit it at once.';
+
+function gradingLabel(draftsEnabled: boolean | null, submit: boolean): string {
+  if (draftsEnabled === false) return 'yes (saving submits immediately)';
+  if (submit) return 'yes';
+  return draftsEnabled ? 'no (stays a draft)' : 'no, if Moodle keeps drafts (saving may submit it at once)';
 }
 
 function previewDetails(act: AssignDetail, plan: Plan): string[] {
@@ -164,6 +169,7 @@ function sameNameWarnings(existing: FileRef[], plan: Plan): string[] {
 
 function draftWarnings(act: AssignDetail, submitForGrading: boolean): string[] {
   if (submitForGrading) return [];
+  if (act.draftsEnabled === null) return [MAY_SUBMIT];
   return [
     act.draftsEnabled
       ? 'It will stay a draft until it is submitted for grading.'
@@ -197,7 +203,7 @@ export async function prepareSubmission(ctx: ServiceContext, input: PrepareSubmi
   const windowWarnings = checkSubmissionWindow(act, nowMs());
   const plan = await planSubmission(ctx, act, { ...input, cmid });
   await claimUpload(ctx, plan.staged);
-  const draftItemId = await stageDraft(ctx, plan);
+  const draftItemId = await stageDraft(ctx, plan, cmid);
   const payload: SubmitPayload = {
     cmid,
     assignId: act.instanceId,
@@ -209,7 +215,8 @@ export async function prepareSubmission(ctx: ServiceContext, input: PrepareSubmi
     textPluginEnabled: act.submissionTypes.includes('onlinetext'),
     submitForGrading: plan.submitForGrading,
     draftsEnabled: act.draftsEnabled,
-    acceptStatement: !act.requiresStatement || input.acceptStatement === true,
+    // only a statement the preview showed can be accepted; one Moodle shows later (on the submit form) is refused
+    acceptStatement: act.requiresStatement && input.acceptStatement === true,
   };
   return savePreview(ctx, {
     kind: 'assign_submit',
@@ -254,12 +261,13 @@ function currentOnlineText(submission: Raw | null): { text: string; format: numb
 }
 
 /**
- * onlinetext_editor for the save, or null when the assignment takes no online text. A save without it blanks the
- * text, so a files-only submission sends the current text back unchanged.
+ * onlinetext_editor for the save, or null when the assignment takes no online text. A web-service save without it
+ * blanks the text, so a files-only submission sends the current text back unchanged. The web channel posts the edit
+ * form, which already holds the stored text: echoing the (filtered) text of the status page would alter it.
  */
 async function onlineTextEditor(api: MoodleApi, p: SubmitPayload): Promise<Raw | null> {
   if (p.onlineText) return { text: markdownToSimpleHtml(p.onlineText), format: 1, itemid: 0 };
-  if (!p.textPluginEnabled) return null;
+  if (!p.textPluginEnabled || api.channel === 'web') return null;
   return { ...currentOnlineText(await readSubmission(api, p.assignId, false)), itemid: 0 };
 }
 
@@ -273,25 +281,58 @@ function statusMessage(status: string | null): string {
 async function saveSubmission(api: MoodleApi, p: SubmitPayload): Promise<void> {
   const editor = await onlineTextEditor(api, p);
   const hasText = typeof editor?.text === 'string' && editor.text.trim() !== '';
-  if (p.draftItemId !== null && p.draftFileCount === 0 && !hasText) {
+  // web: the form keeps the stored text when none is sent (prepare checked the result is not empty)
+  const keepsText = api.channel === 'web' && p.textPluginEnabled && !editor;
+  if (p.draftItemId !== null && p.draftFileCount === 0 && !hasText && !keepsText) {
     throw new InvalidInput('This would leave the submission empty. Keep or add at least one file or some online text.');
   }
   const plugindata: Raw = {};
   if (editor) plugindata.onlinetext_editor = editor;
   if (p.draftItemId !== null) plugindata.files_filemanager = p.draftItemId;
-  const saved = await api.call<unknown>('mod_assign_save_submission', { assignmentid: p.assignId, plugindata });
+  const params: Raw = { assignmentid: p.assignId, plugindata };
+  // the web form asks for the statement on the save when the assignment has no draft stage (the web service has no
+  // such parameter and refuses unknown ones)
+  if (api.channel === 'web') params.acceptsubmissionstatement = p.acceptStatement;
+  const saved = await api.call<unknown>('mod_assign_save_submission', params);
   if (hasWarnings(saved)) throw refusal('refused the submission', saved);
+}
+
+/**
+ * Submits for grading only what is still a draft after the save: without a draft stage the save already submitted
+ * it (success, not a refusal). An unreadable status falls back to the known setting.
+ */
+function needsSubmit(p: SubmitPayload, status: string | null): boolean {
+  if (!p.submitForGrading) return false;
+  return status === null ? p.draftsEnabled === true : status === 'draft';
+}
+
+/** The web channel's refusal for a statement the user was not shown (it is on the submit form only). */
+const statementRefused = (res: unknown): boolean =>
+  Array.isArray(res) && res.some((w) => isRec(w) && w.warningcode === 'submissionstatementrequired');
+
+const STATEMENT_NEXT =
+  ' Show the statement to the user and, only after they accept it, prepare the submission again with' +
+  ' accept_statement=true.';
+
+async function submitDraft(api: MoodleApi, p: SubmitPayload, saved: boolean): Promise<void> {
+  const sent = await api.call<unknown>('mod_assign_submit_for_grading', {
+    assignmentid: p.assignId,
+    acceptsubmissionstatement: p.acceptStatement,
+  });
+  if (!hasWarnings(sent)) return;
+  const err = refusal('refused to submit it for grading', sent, saved ? 'Saved as a draft, but ' : '');
+  if (statementRefused(sent)) throw new InvalidInput(`${err.message}${STATEMENT_NEXT}`);
+  throw err;
 }
 
 export async function executeSubmission(api: MoodleApi, payload: Raw): Promise<ActionOutcome> {
   const p = payload as SubmitPayload;
-  if (p.onlineText || p.draftItemId !== null) await saveSubmission(api, p);
-  if (p.submitForGrading && p.draftsEnabled) {
-    const sent = await api.call<unknown>('mod_assign_submit_for_grading', {
-      assignmentid: p.assignId,
-      acceptsubmissionstatement: p.acceptStatement,
-    });
-    if (hasWarnings(sent)) throw refusal('refused to submit it for grading', sent, 'Saved, but ');
+  const saves = !!p.onlineText || p.draftItemId !== null;
+  if (saves) await saveSubmission(api, p);
+  let status = await readStatus(api, p.assignId);
+  if (needsSubmit(p, status)) {
+    await submitDraft(api, p, saves);
+    status = await readStatus(api, p.assignId);
   }
-  return { message: statusMessage(await readStatus(api, p.assignId)), url: p.assignUrl };
+  return { message: statusMessage(status), url: p.assignUrl };
 }

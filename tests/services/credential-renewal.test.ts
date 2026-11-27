@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { CredentialRow, UserRow } from '../../src/core/context';
 import { importMasterKey, type MasterKey, sha256Hex } from '../../src/core/crypto';
-import { AUTOLOGIN_RETRY_MS, refreshCredential } from '../../src/core/services/credential-renewal';
+import { AUTOLOGIN_RETRY_MS, refreshCredential, SESSION_ENDED } from '../../src/core/services/credential-renewal';
 import { MemoryStore } from '../../src/node/store-memory';
 import { fakeMoodleWeb } from '../helpers/fake-moodle-web';
 
@@ -132,12 +132,18 @@ describe('refreshCredential with a stored session', () => {
 
   it('without autologin, an ended session is forgotten and nothing else happens', async () => {
     const c = await seed({ session: LIVE, privateToken: 'Priv4teTok3n' });
-    expect(await refreshCredential(deps(fakeMoodleWeb()), user, c)).toEqual({
-      status: 'skipped',
-      reason: 'no_session',
-      calls: 1,
+    expect(await refreshCredential(deps(fakeMoodleWeb()), user, c)).toEqual({ status: 'ended', calls: 1 });
+    expect(await cred()).toMatchObject({ sessionEnc: null, sesskeyEnc: null, status: 'active' });
+  });
+
+  it('turns the credential invalid when the session ends and no token is left', async () => {
+    const c = await seed({ session: LIVE });
+    await store.updateCredentialStatus(user.id, { tokenEnc: null, tokenHash: null, tokenHint: null });
+    const noToken = { ...c, tokenEnc: null, tokenHash: null, tokenHint: null };
+    expect(await refreshCredential(deps(fakeMoodleWeb()), user, noToken, { autologin: true })).toMatchObject({
+      status: 'ended',
     });
-    expect((await cred()).sessionEnc).toBeNull();
+    expect(await cred()).toMatchObject({ sessionEnc: null, status: 'invalid', lastError: SESSION_ENDED });
   });
 
   it('keeps the session when Moodle is unreachable', async () => {

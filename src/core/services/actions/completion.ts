@@ -1,4 +1,8 @@
-/** Manual activity completion toggles. */
+/**
+ * Manual activity completion toggles. Both channels: the state from core_completion_get_activities_completion_status
+ * (emulated from the course page on the web channel; the cmid hint lets it read the activity alone), the change through
+ * core_completion_update_activity_completion_status_manually (ajax-enabled).
+ */
 
 import type { MoodleApi, ServiceContext } from '../../context';
 import { InvalidInput, NeedsReconnect, NotFound } from '../../errors';
@@ -56,10 +60,11 @@ async function loadModule(api: MoodleApi, cmid: number): Promise<CourseModule> {
 
 /** Whether the activity is currently complete; throws unless completion is tracked manually. */
 async function manualCompletionState(api: MoodleApi, courseId: number, cmid: number): Promise<boolean> {
-  const res = await api.call<Raw>('core_completion_get_activities_completion_status', {
-    courseid: courseId,
-    userid: api.moodleUserId,
-  });
+  const res = await api.call<Raw>(
+    'core_completion_get_activities_completion_status',
+    { courseid: courseId, userid: api.moodleUserId },
+    { cmid },
+  );
   const statuses = Array.isArray(res.statuses) ? res.statuses : [];
   const entry = statuses.find((s): s is Raw => isRec(s) && num(s.cmid) === cmid);
   const tracking = entry ? num(entry.tracking) : null;

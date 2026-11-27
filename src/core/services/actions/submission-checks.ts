@@ -61,12 +61,13 @@ export function checkFileCount(act: AssignDetail, finalCount: number, keptFiles:
 
 export function checkSubmittable(act: AssignDetail, hasChange: boolean, submitForGrading: boolean): void {
   if (hasChange) return;
-  const canSubmitDraft = act.submission.status === 'draft' && submitForGrading && act.draftsEnabled;
+  const canSubmitDraft = act.submission.status === 'draft' && submitForGrading && act.draftsEnabled === true;
   if (!canSubmitDraft) throw new InvalidInput('Nothing to submit: provide online_text, files or upload_id.');
 }
 
 export function checkStatement(act: AssignDetail, submitForGrading: boolean, accepted: boolean | undefined): void {
-  const needed = act.requiresStatement && (submitForGrading || !act.draftsEnabled);
+  // without a known draft stage the save itself may submit, so it needs the statement too
+  const needed = act.requiresStatement && (submitForGrading || act.draftsEnabled !== true);
   if (!needed || accepted) return;
   const text = act.statement ? ` ("${truncate(act.statement, 300)}")` : '';
   throw new InvalidInput(

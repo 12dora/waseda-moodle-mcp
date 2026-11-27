@@ -2,7 +2,8 @@
  * The user's own progress on due items: assignment submissions, quiz attempts, questionnaire answers.
  * The calendar keeps listing questionnaires after they are answered and quizzes whatever the attempts, so the
  * listing asks Moodle: round 1 resolves course modules to instance ids (one batched call), round 2 reads the
- * statuses (one more). Best effort: any failure leaves `submission: null`.
+ * statuses (one more). On the web channel there is no batch: statuses are read from pages within the call budget
+ * (web-status.ts). Best effort: any failure, or a check the budget leaves out, leaves `submission: null`.
  */
 
 import type { MoodleApi, ServiceContext } from '../../context';
@@ -13,6 +14,7 @@ import { assignStatusRequest, parseAssignStatus } from './assign';
 import { type BatchRequest, type BatchResult, callBatch } from './batch';
 import { parseQuestionnaire, questionnaireRequest } from './questionnaire';
 import { parseQuizState, quizAccessRequest, quizAttemptsRequest } from './quiz';
+import { readWebStatuses } from './web-status';
 
 type Kind = 'assign' | 'quiz' | 'questionnaire';
 type Target = DueItem & { cmid: number; kind: Kind };
@@ -112,7 +114,7 @@ function parseJob(kind: Kind, results: readonly BatchResult[]): DueSubmission | 
   return parseQuizState({ attempts: main.data, access: extra?.ok ? extra.data : null });
 }
 
-async function readStatuses(api: MoodleApi, targets: readonly Target[]): Promise<Statuses> {
+async function readTemplateStatuses(api: MoodleApi, targets: readonly Target[]): Promise<Statuses> {
   const instances = await resolveInstances(api, targets);
   const jobs: Job[] = targets.map((t) => ({
     cmid: t.cmid,
@@ -132,6 +134,10 @@ async function readStatuses(api: MoodleApi, targets: readonly Target[]): Promise
   }
   return out;
 }
+
+/** The one place the channel picks how statuses are read (web: pages within the budget, web-status.ts). */
+const readStatuses = (api: MoodleApi, targets: readonly Target[]): Promise<Statuses> =>
+  api.channel === 'web' ? readWebStatuses(api, targets) : readTemplateStatuses(api, targets);
 
 // ------------------------------------------------------------------ memo + apply
 

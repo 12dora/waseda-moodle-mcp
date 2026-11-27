@@ -14,7 +14,9 @@ export type IsoJst = string;
 
 export type WriteMode = 'off' | 'chat' | 'console';
 export type Scope = 'moodle:read' | 'moodle:write';
+/** How a connection was made. 'bookmarklet' is retired: stored rows keep it, nothing new does. */
 export type ConnectVia = 'bookmarklet' | 'extension' | 'paste' | 'stdio';
+export type SignInVia = Exclude<ConnectVia, 'bookmarklet'>;
 export type UiLang = 'auto' | 'ja' | 'en' | 'zh-CN';
 
 // ------------------------------------------------------------------ user
@@ -43,15 +45,13 @@ export interface UserInfo {
 }
 
 export interface CredentialInfo {
+  /** 'active' while a channel works: the web session, or the app token while the mobile web service is on. */
   status: 'active' | 'invalid';
   connectedVia: ConnectVia;
   connectedAt: IsoJst;
-  lastOkAt: IsoJst | null;
-  lastError: string | null;
-  tokenHint: string; // last 4 chars of the token, display only
-  /** The token is renewed automatically (a Moodle web session, or a private token to open one). */
-  autoRenew: boolean;
-  renewedAt: IsoJst | null; // last automatic renewal
+  lastOkAt: IsoJst | null; // Moodle last confirmed the connection
+  lastError: string | null; // why it stopped working; null while active
+  sessionOkAt: IsoJst | null; // Moodle last answered through the web session (a request or the keepalive)
 }
 
 // ------------------------------------------------------------------ courses

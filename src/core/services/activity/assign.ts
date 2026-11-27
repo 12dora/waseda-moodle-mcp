@@ -213,7 +213,8 @@ export function mapAssign(
     cutoffAt: fromTs(raw.cutoffdate),
     submissionTypes: types,
     ...mapLimits(raw.configs, types),
-    draftsEnabled: raw.submissiondrafts === 1,
+    // null: not known (the web channel cannot always tell, see adapters/assign.ts draftsSetting)
+    draftsEnabled: raw.submissiondrafts === 0 || raw.submissiondrafts === 1 ? raw.submissiondrafts === 1 : null,
     requiresStatement: raw.requiresubmissionstatement === 1,
     statement: raw.requiresubmissionstatement === 1 ? md(raw.submissionstatement, lang) || null : null,
     teamSubmission: team,
@@ -223,9 +224,11 @@ export function mapAssign(
 }
 
 export async function loadAssign(api: MoodleApi, cm: CourseModuleInfo, info: ActivityInfo): Promise<AssignDetail> {
+  // the hint lets the web channel read this one assignment instead of the course
   const res = await api.call<{ courses?: Array<{ assignments?: RawAssign[] | null }> | null }>(
     'mod_assign_get_assignments',
     { courseids: [cm.courseId] },
+    { cmid: cm.cmid },
   );
   const raw = (res?.courses ?? []).flatMap((c) => c.assignments ?? []).find((a) => a.cmid === cm.cmid);
   if (!raw) throw new NotFound(`Assignment ${cm.cmid} was not found or is not visible.`);

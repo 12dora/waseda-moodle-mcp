@@ -16,4 +16,5 @@ export const forumSearchOut = z.looseObject({
   /** null = messages were not requested. */
   messages: list({ name: z.string(), text: z.string(), fromMe: z.boolean() }).nullable(),
   messagesNote: z.string().nullable(),
+  bodyNote: z.string().optional(),
 });

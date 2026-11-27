@@ -6,7 +6,7 @@ import { decodeEntities } from '../../html';
 import type { ActionPreview } from '../../types';
 import { fetchConversationInfo, mapConversation } from '../messages';
 import type { RawNotification } from '../messages/notifications';
-import { loadForumThread, lookupForumPost, requireDiscussion, resolveForum } from './forum-info';
+import { type DiscussionEntry, loadForumThread, lookupForumPost, requireDiscussion, resolveForum } from './forum-info';
 import {
   type ActionOutcome,
   assertWriteAllowed,
@@ -117,6 +117,20 @@ async function conversationTarget(ctx: ServiceContext, api: MoodleApi, conversat
 }
 
 /**
+ * Subject and read-marking mode of the discussion's first post. The web channel can show a post only to someone who
+ * may edit or reply to it (announcements: neither) and does not see manual marking at all, so there the discussion
+ * list's subject stands in for it.
+ */
+type FirstPost = { subject: string | null; manualRead: boolean };
+
+async function firstPost(api: MoodleApi, entry: DiscussionEntry): Promise<FirstPost> {
+  const post = entry.firstPostId === null ? null : await lookupForumPost(api, entry.firstPostId);
+  if (post) return post;
+  if (api.channel === 'web' && entry.subject) return { subject: entry.subject, manualRead: false };
+  throw new NotFound(`Discussion ${entry.id} could not be read.`);
+}
+
+/**
  * Standard forums only. Prepare reads the discussion list and its first post, which mark nothing read; the confirmed
  * action then reads the posts and calls mod_forum_mark_posts_read.
  */
@@ -129,8 +143,7 @@ async function forumDiscussionTarget(api: MoodleApi, forumCmid: number, discussi
     throw new InvalidInput('This forum does not track read posts, so there is nothing to mark.');
   }
   const entry = await requireDiscussion(api, forum, discussionId);
-  const first = entry.firstPostId === null ? null : await lookupForumPost(api, entry.firstPostId);
-  if (!first) throw new NotFound(`Discussion ${discussionId} could not be read.`);
+  const first = await firstPost(api, entry);
   if (first.manualRead) {
     throw new InvalidInput(
       'This site marks forum posts read by hand, which the Moodle web service cannot do. Use the Moodle site.',

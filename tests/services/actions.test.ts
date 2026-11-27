@@ -397,11 +397,16 @@ describe('prepareSubmission', () => {
 });
 
 describe('confirmAction (assign_submit)', () => {
-  async function setup(over: Parameters<typeof createTestContext>[0] = {}) {
-    const t = createTestContext(over);
+  /** Moodle's status as the writes change it: a save leaves a draft (or submits, without drafts). */
+  async function setup(opts: { before?: 'new' | 'draft'; saveSubmits?: boolean } = {}) {
+    const t = createTestContext();
     t.moodle.handlers.mod_assign_save_submission = [];
     t.moodle.handlers.mod_assign_submit_for_grading = [];
-    t.moodle.handlers.mod_assign_get_submission_status = statusResponse('submitted');
+    t.moodle.handlers.mod_assign_get_submission_status = () => {
+      if (t.moodle.callsTo('mod_assign_submit_for_grading').length) return statusResponse('submitted');
+      if (!t.moodle.callsTo('mod_assign_save_submission').length) return statusResponse(opts.before ?? 'new');
+      return statusResponse(opts.saveSubmits ? 'submitted' : 'draft');
+    };
     return t;
   }
 
@@ -428,12 +433,13 @@ describe('confirmAction (assign_submit)', () => {
         files_filemanager: moodle.uploads[0]!.itemId,
       },
     });
+    // no statement was shown, so none is accepted
     expect(moodle.callsTo('mod_assign_submit_for_grading')).toEqual([
-      { assignmentid: ASSIGN_INSTANCE, acceptsubmissionstatement: true },
+      { assignmentid: ASSIGN_INSTANCE, acceptsubmissionstatement: false },
     ]);
-    expect(moodle.callsTo('mod_assign_get_submission_status')).toEqual([
-      { assignid: ASSIGN_INSTANCE, userid: 1001, groupid: 0 },
-    ]);
+    // the status after the save (still a draft: submit it) and after the submit
+    const read = { assignid: ASSIGN_INSTANCE, userid: 1001, groupid: 0 };
+    expect(moodle.callsTo('mod_assign_get_submission_status')).toEqual([read, read]);
     const row = store.actions.get(preview.actionId)!;
     expect(row).toMatchObject({
       status: 'executed',
@@ -473,14 +479,13 @@ describe('confirmAction (assign_submit)', () => {
 
   it('skips submit_for_grading when the assignment has no draft stage or the user keeps a draft', async () => {
     getActivityMock.mockResolvedValue(makeAssign({ draftsEnabled: false }));
-    const a = await setup();
+    const a = await setup({ saveSubmits: true });
     const p1 = await prepareSubmission(a.ctx, { cmid: ASSIGN_CMID, onlineText: 'x' });
     await confirmAction(a.ctx, p1.actionId, 'mcp');
     expect(a.moodle.callsTo('mod_assign_submit_for_grading')).toHaveLength(0);
 
     getActivityMock.mockResolvedValue(makeAssign());
     const b = await setup();
-    b.moodle.handlers.mod_assign_get_submission_status = statusResponse('draft');
     const p2 = await prepareSubmission(b.ctx, { cmid: ASSIGN_CMID, onlineText: 'x', submitForGrading: false });
     const r = await confirmAction(b.ctx, p2.actionId, 'mcp');
     expect(b.moodle.callsTo('mod_assign_submit_for_grading')).toHaveLength(0);
@@ -504,7 +509,7 @@ describe('confirmAction (assign_submit)', () => {
 
   it('sends only submit_for_grading for an existing draft', async () => {
     getActivityMock.mockResolvedValue(makeAssign({ submission: makeSubmission({ status: 'draft' }) }));
-    const { ctx, moodle } = await setup();
+    const { ctx, moodle } = await setup({ before: 'draft' });
     const preview = await prepareSubmission(ctx, { cmid: ASSIGN_CMID });
     await confirmAction(ctx, preview.actionId, 'mcp');
     expect(moodle.callsTo('mod_assign_save_submission')).toHaveLength(0);

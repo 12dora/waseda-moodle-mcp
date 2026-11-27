@@ -52,7 +52,7 @@ describe('connectFromLaunch', () => {
     const res = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'paste' });
 
     expect(res.created).toBe(true);
-    expect(res.tokenChanged).toBe(true);
+    expect(res.changed).toBe(true);
     expect(res.user).toMatchObject({ moodleUserId: 1001, fullname: 'Taro Yamada', lang: 'ja' });
     expect(clients).toEqual([{ token: TOKEN_A, userId: 0 }]);
     expect(registrationChecks).toEqual([1001]);
@@ -73,7 +73,7 @@ describe('connectFromLaunch', () => {
       userId: res.user.id,
       action: 'connect',
       actor: 'console',
-      detail: { via: 'paste', created: true, tokenChanged: true },
+      detail: { via: 'paste', created: true, changed: true },
     });
     expect(JSON.stringify(store.auditLog)).not.toContain(TOKEN_A);
   });
@@ -82,7 +82,7 @@ describe('connectFromLaunch', () => {
     const { deps, store } = setup();
     const res = await connectFromLaunch(deps, {
       launch: launchUrl(TOKEN_A, 'p1', 'P'.repeat(64)),
-      via: 'bookmarklet',
+      via: 'extension',
       passport: 'p1',
     });
     const cred = store.credentials.get(res.user.id)!;
@@ -94,11 +94,11 @@ describe('connectFromLaunch', () => {
     const { deps, store } = setup();
     const first = await connectFromLaunch(deps, {
       launch: launchUrl(TOKEN_A, 'p1', 'P'.repeat(64)),
-      via: 'bookmarklet',
+      via: 'extension',
     });
     const second = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'paste' });
     expect(second.created).toBe(false);
-    expect(second.tokenChanged).toBe(false);
+    expect(second.changed).toBe(false);
     expect(second.user.id).toBe(first.user.id);
     const cred = store.credentials.get(first.user.id)!;
     expect(cred.privateTokenEnc).toBe(`enc(${'P'.repeat(64)})`);
@@ -106,12 +106,12 @@ describe('connectFromLaunch', () => {
     expect(store.users.size).toBe(1);
   });
 
-  it('a different token reports tokenChanged, drops the old private token and reactivates', async () => {
+  it('a different token reports changed, drops the old private token and reactivates', async () => {
     const { deps, store } = setup();
     const first = await connectFromLaunch(deps, { launch: launchUrl(TOKEN_A, 'p1', 'P'.repeat(64)), via: 'paste' });
     await store.updateCredentialStatus(first.user.id, { status: 'invalid', lastError: 'expired' });
     const second = await connectFromLaunch(deps, { launch: TOKEN_B, via: 'paste' });
-    expect(second.tokenChanged).toBe(true);
+    expect(second.changed).toBe(true);
     expect(store.credentials.get(first.user.id)).toMatchObject({
       tokenEnc: `enc(${TOKEN_B})`,
       privateTokenEnc: null,
@@ -184,26 +184,26 @@ describe('launch signature and private token handling', () => {
   it('rejects a link whose signature belongs to another passport', async () => {
     const { deps, clients } = setup();
     const link = launchUrl(TOKEN_A, 'p1');
-    await expect(connectFromLaunch(deps, { launch: link, via: 'bookmarklet', passport: 'p2' })).rejects.toThrow(
+    await expect(connectFromLaunch(deps, { launch: link, via: 'extension', passport: 'p2' })).rejects.toThrow(
       'This link was created for a different sign-in. Generate a new one.',
     );
     expect(clients).toHaveLength(0);
-    await expect(connectFromLaunch(deps, { launch: link, via: 'bookmarklet', passport: 'p1' })).resolves.toBeTruthy();
+    await expect(connectFromLaunch(deps, { launch: link, via: 'extension', passport: 'p1' })).resolves.toBeTruthy();
     await expect(refreshFromLaunch(deps, { launch: link, passport: 'p2' })).rejects.toBeInstanceOf(InvalidInput);
   });
 
   it('a silent refresh with the same token keeps a newly supplied private token', async () => {
     const { deps, store } = setup();
-    const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'bookmarklet' });
+    const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'extension' });
     await store.updateCredentialStatus(first.user.id, { status: 'invalid', lastError: 'old' });
     const res = await refreshFromLaunch(deps, { launch: launchUrl(TOKEN_A, 'p1', 'P'.repeat(64)) });
-    expect(res.tokenChanged).toBe(false);
+    expect(res.changed).toBe(false);
     expect(store.credentials.get(first.user.id)).toMatchObject({
       tokenEnc: `enc(${TOKEN_A})`,
       privateTokenEnc: `enc(${'P'.repeat(64)})`,
       status: 'active',
       lastError: null,
-      connectedVia: 'bookmarklet',
+      connectedVia: 'extension',
     });
   });
 });
@@ -218,23 +218,23 @@ describe('refreshFromLaunch', () => {
 
   it('confirms an unchanged token without rewriting the credential', async () => {
     const { deps, store } = setup();
-    const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'bookmarklet' });
+    const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'extension' });
     await store.updateCredentialStatus(first.user.id, { status: 'invalid', lastOkAt: 5, lastError: 'old' });
     const res = await refreshFromLaunch(deps, { launch: TOKEN_A });
-    expect(res.tokenChanged).toBe(false);
+    expect(res.changed).toBe(false);
     const cred = store.credentials.get(first.user.id)!;
-    expect(cred).toMatchObject({ status: 'active', lastError: null, connectedVia: 'bookmarklet' });
+    expect(cred).toMatchObject({ status: 'active', lastError: null, connectedVia: 'extension' });
     expect(cred.lastOkAt).not.toBe(5);
     expect(store.auditLog[store.auditLog.length - 1]).toMatchObject({
       action: 'connect',
       actor: 'extension',
-      detail: { refresh: true, tokenChanged: false },
+      detail: { refresh: true, changed: false },
     });
   });
 
   it('never writes back a stale private token when the same token comes without one', async () => {
     const { deps, store } = setup();
-    const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'bookmarklet' });
+    const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'extension' });
     // a private token another writer stored after this refresh read the row
     const getCredential = store.getCredential.bind(store);
     store.getCredential = async (id) => {
@@ -267,7 +267,7 @@ describe('refreshFromLaunch', () => {
     const first = await connectFromLaunch(deps, { launch: launchUrl(TOKEN_A, 'p1', 'P1'.repeat(32)), via: 'paste' });
     renewAfterRead(store, 'enc(P2)');
     const res = await refreshFromLaunch(deps, { launch: launchUrl(TOKEN_A, 'p1', 'P1'.repeat(32)) });
-    expect(res.tokenChanged).toBe(false);
+    expect(res.changed).toBe(false);
     expect(store.credentials.get(first.user.id)).toMatchObject({
       tokenEnc: `enc(${TOKEN_B})`,
       privateTokenEnc: 'enc(P2)',
@@ -279,22 +279,22 @@ describe('refreshFromLaunch', () => {
     const { deps, store } = setup();
     const first = await connectFromLaunch(deps, { launch: launchUrl(TOKEN_A, 'p1', 'P1'.repeat(32)), via: 'paste' });
     renewAfterRead(store, 'enc(P2)');
-    const res = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'bookmarklet' });
-    expect(res.tokenChanged).toBe(true);
+    const res = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'extension' });
+    expect(res.changed).toBe(true);
     // the explicit connect wins, but never with the renewed token's private token
     expect(store.credentials.get(first.user.id)).toMatchObject({
       tokenEnc: `enc(${TOKEN_A})`,
       privateTokenEnc: null,
-      connectedVia: 'bookmarklet',
+      connectedVia: 'extension',
       status: 'active',
     });
   });
 
   it('stores a new token as an extension connection', async () => {
     const { deps, store } = setup();
-    const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'bookmarklet' });
+    const first = await connectFromLaunch(deps, { launch: TOKEN_A, via: 'extension' });
     const res = await refreshFromLaunch(deps, { launch: TOKEN_B });
-    expect(res.tokenChanged).toBe(true);
+    expect(res.changed).toBe(true);
     expect(store.credentials.get(first.user.id)).toMatchObject({
       tokenEnc: `enc(${TOKEN_B})`,
       connectedVia: 'extension',
@@ -320,38 +320,15 @@ describe('toUserInfo / toCredentialInfo', () => {
     cred.connectedAt = Date.UTC(2026, 9, 14, 3, 0, 0);
     cred.lastOkAt = null;
     cred.lastError = 'boom';
-    expect(toCredentialInfo(cred)).toEqual({
+    expect(toCredentialInfo(cred, true)).toEqual({
       status: 'active',
       connectedVia: 'paste',
       connectedAt: '2026-10-14T12:00:00+09:00',
       lastOkAt: null,
-      lastError: 'boom',
-      tokenHint: TOKEN_A.slice(-4),
-      autoRenew: false,
-      renewedAt: null,
-    });
-    expect(Object.keys(toCredentialInfo(cred))).not.toContain('tokenEnc');
-  });
-
-  it('reports automatic renewal: a web session, or an active credential with a private token', () => {
-    const base = {
-      userId: 1,
-      tokenEnc: 'e',
-      privateTokenEnc: null,
-      tokenHash: 'h',
-      tokenHint: 'abcd',
-      status: 'active' as const,
-      connectedVia: 'paste' as const,
-      connectedAt: 0,
-      lastOkAt: null,
       lastError: null,
-    };
-    expect(toCredentialInfo(base).autoRenew).toBe(false);
-    expect(toCredentialInfo({ ...base, privateTokenEnc: 'p' }).autoRenew).toBe(true);
-    expect(toCredentialInfo({ ...base, privateTokenEnc: 'p', status: 'invalid' }).autoRenew).toBe(false);
-    const renewed = toCredentialInfo({ ...base, status: 'invalid', sessionEnc: 's', renewedAt: Date.UTC(2026, 9, 14) });
-    expect(renewed).toMatchObject({ autoRenew: true, renewedAt: '2026-10-14T09:00:00+09:00' });
-    expect(Object.keys(renewed)).not.toContain('sessionEnc');
+      sessionOkAt: null,
+    });
+    expect(Object.keys(toCredentialInfo(cred, true))).not.toContain('tokenEnc');
   });
 
   it('fills missing settings with defaults', () => {

@@ -1,7 +1,7 @@
 /** Newest discussions across forums (listing and paging). */
 
 import type { MoodleApi, ServiceContext } from '../context';
-import { InvalidInput, NotFound } from '../errors';
+import { InvalidInput, MoodleError, NotFound } from '../errors';
 import { nowSec, toMs } from '../time';
 import type { DiscussionList, DiscussionSummary, ForumListEntry, TruncatedForum } from '../types';
 import { listCourses } from './courses';
@@ -9,9 +9,13 @@ import {
   type ForumRef,
   type ForumType,
   fetchDiscussions,
+  fetchForums,
   fetchForumsOfTypes,
+  forumReadCap,
   MAX_FORUMS_PER_CALL,
+  nonEmptyForums,
   readEach,
+  webCallsLeft,
 } from './forums';
 import { clampInt, courseNameMap, getCourseModule } from './shared';
 
@@ -21,6 +25,8 @@ const PER_FORUM_WHEN_MANY = 10;
 interface ForumSelection {
   refs: ForumRef[];
   names: Map<number, string>;
+  /** Forums not looked at (the call budget ran out before their course). */
+  skipped: number;
 }
 
 interface ListOptions {
@@ -55,9 +61,10 @@ async function selectByCmid(
   courseId?: number,
 ): Promise<ForumSelection> {
   const [where, names] = await Promise.all([locateForum(api, wanted, courseId), courseNameMap(ctx)]);
-  const refs = (await fetchForumsOfTypes(api, where.types, [where.course])).filter((r) => r.cmid === wanted);
+  const hint = { cmid: wanted };
+  const refs = (await fetchForumsOfTypes(api, where.types, [where.course], hint)).filter((r) => r.cmid === wanted);
   if (refs.length === 0) throw new NotFound(`Forum ${wanted} was not found in this course.`);
-  return { refs, names };
+  return { refs, names, skipped: 0 };
 }
 
 /** Recent activity first so the 15-forum cap keeps live discussion forums, not stale news. */
@@ -65,23 +72,124 @@ function byRecentActivity(a: ForumRef, b: ForumRef): number {
   return b.modifiedTs - a.modifiedTs || (b.numDiscussions ?? 0) - (a.numDiscussions ?? 0);
 }
 
-async function selectByCourse(ctx: ServiceContext, api: MoodleApi, courseId: number): Promise<ForumSelection> {
-  const [refs, names] = await Promise.all([
-    fetchForumsOfTypes(api, ['forum', 'hsuforum'], [courseId]),
-    courseNameMap(ctx),
+// ------------------------------------------------------------------ forums of courses
+
+export interface ForumScope {
+  refs: ForumRef[];
+  /** Forums of courses left out for the call budget (counted from the course structure). */
+  skipped: number;
+  /** Web channel: cmids of each course's first section-0 forum, where Moodle puts the announcements forum. */
+  likelyNews: Set<number>;
+}
+
+/** One course's forum activities from its structure; counts null when the structure could not be read. */
+interface CourseForums {
+  courseId: number;
+  forums: number | null;
+  hsuforums: number | null;
+  newsCmid: number | null;
+}
+
+interface StateCm {
+  id?: string | number;
+  module?: string;
+  sectionnumber?: number;
+  uservisible?: boolean;
+}
+
+/** The `cm` list of a `core_courseformat_get_state` answer (`data` is a JSON string); null when unreadable. */
+function stateCms(state: unknown): StateCm[] | null {
+  try {
+    const parsed: unknown = typeof state === 'string' ? JSON.parse(state) : state;
+    const cms = (parsed as { cm?: unknown } | null)?.cm;
+    return Array.isArray(cms) ? (cms as StateCm[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function courseForums(courseId: number, state: unknown): CourseForums {
+  const cms = stateCms(state)?.filter((c) => c.uservisible !== false);
+  if (!cms) return { courseId, forums: null, hsuforums: null, newsCmid: null };
+  const newsCmid = Number(cms.find((c) => c.module === 'forum' && c.sectionnumber === 0)?.id);
+  return {
+    courseId,
+    forums: cms.filter((c) => c.module === 'forum').length,
+    hsuforums: cms.filter((c) => c.module === 'hsuforum').length,
+    newsCmid: Number.isSafeInteger(newsCmid) && newsCmid > 0 ? newsCmid : null,
+  };
+}
+
+/**
+ * Which courses' forum lists to read within `left` requests, in course order: a course costs its forum overview
+ * when it has forums and its hsuforum index when it has Advanced Forums (plus one shared course-structure batch for
+ * their cmids); half of `left` (at most MAX_FORUMS_PER_CALL) stays for reading the forums.
+ */
+function planScope(courses: CourseForums[], left: number): { forum: number[]; hsuforum: number[]; skipped: number } {
+  let budget = left - Math.min(MAX_FORUMS_PER_CALL, Math.floor(left / 2));
+  const plan = { forum: [] as number[], hsuforum: [] as number[], skipped: 0 };
+  for (const c of courses) {
+    const forum = c.forums !== 0;
+    const hsu = c.hsuforums !== 0;
+    const cost = Number(forum) + (hsu ? 1 + Number(plan.hsuforum.length === 0) : 0);
+    if (cost > budget) {
+      plan.skipped += (c.forums ?? 0) + (c.hsuforums ?? 0);
+      continue;
+    }
+    budget -= cost;
+    if (forum) plan.forum.push(c.courseId);
+    if (hsu) plan.hsuforum.push(c.courseId);
+  }
+  return plan;
+}
+
+const unreadable = (e: unknown) => {
+  if (e instanceof MoodleError) return null;
+  throw e;
+};
+
+/**
+ * Web channel: every forum list costs a page per course and type, so read the courses' structure first (one ajax
+ * batch) and list only the types each course has, as far as the call budget allows.
+ */
+async function webScope(api: MoodleApi, courseIds: number[]): Promise<ForumScope> {
+  const states = await Promise.all(
+    courseIds.map((courseid) => api.call<unknown>('core_courseformat_get_state', { courseid }).catch(unreadable)),
+  );
+  const courses = courseIds.map((id, i) => courseForums(id, states[i]));
+  const plan = planScope(courses, webCallsLeft(api));
+  const [forums, hsuforums] = await Promise.all([
+    fetchForums(api, 'forum', plan.forum),
+    fetchForums(api, 'hsuforum', plan.hsuforum),
   ]);
-  return { refs: refs.sort(byRecentActivity), names };
+  const news = courses.flatMap((c) => (c.newsCmid === null ? [] : [c.newsCmid]));
+  return { refs: [...forums, ...hsuforums], skipped: plan.skipped, likelyNews: new Set(news) };
+}
+
+/** Standard and Advanced Forums of the courses (see webScope for the web channel). */
+export async function forumsInScope(api: MoodleApi, courseIds: number[]): Promise<ForumScope> {
+  if (api.channel === 'web' && courseIds.length > 0) return webScope(api, courseIds);
+  const refs = await fetchForumsOfTypes(api, ['forum', 'hsuforum'], courseIds);
+  return { refs, skipped: 0, likelyNews: new Set() };
+}
+
+async function selectByCourse(ctx: ServiceContext, api: MoodleApi, courseId: number): Promise<ForumSelection> {
+  const [scope, names] = await Promise.all([forumsInScope(api, [courseId]), courseNameMap(ctx)]);
+  return { refs: scope.refs.sort(byRecentActivity), names, skipped: scope.skipped };
 }
 
 /** Forums of the courses in the user's scope (announcements and discussion forums). */
 async function selectCurrentCourses(ctx: ServiceContext, api: MoodleApi): Promise<ForumSelection> {
   const courses = await listCourses(ctx);
-  const all = await fetchForumsOfTypes(
+  const scope = await forumsInScope(
     api,
-    ['forum', 'hsuforum'],
     courses.map((c) => c.id),
   );
-  return { refs: all.sort(byRecentActivity), names: new Map(courses.map((c) => [c.id, c.name])) };
+  return {
+    refs: scope.refs.sort(byRecentActivity),
+    names: new Map(courses.map((c) => [c.id, c.name])),
+    skipped: scope.skipped,
+  };
 }
 
 function selectForums(ctx: ServiceContext, api: MoodleApi, opts: ListOptions): Promise<ForumSelection> {
@@ -89,9 +197,6 @@ function selectForums(ctx: ServiceContext, api: MoodleApi, opts: ListOptions): P
   if (opts.courseId != null) return selectByCourse(ctx, api, opts.courseId);
   return selectCurrentCourses(ctx, api);
 }
-
-/** Forums worth a Moodle call: those known to be empty cost nothing. */
-const nonEmpty = (refs: ForumRef[]) => refs.filter((r) => r.numDiscussions !== 0);
 
 function toListEntry(ref: ForumRef, courseName: string): ForumListEntry {
   return {
@@ -117,13 +222,14 @@ async function readForums(
   opts: { limit: number; page: number; single: boolean },
 ): Promise<{ fetches: ForumFetch[]; skipped: number; perForum: number; page: number }> {
   const page = opts.single ? opts.page : 0;
-  const many = !opts.single && nonEmpty(selection.refs).length > 1;
+  const many = !opts.single && nonEmptyForums(selection.refs).length > 1;
   const perForum = many ? Math.min(opts.limit, PER_FORUM_WHEN_MANY) : opts.limit;
-  const { items: fetches, skipped } = await readEach(selection.refs, async (ref) => {
+  const read = async (ref: ForumRef): Promise<ForumFetch[]> => {
     const name = selection.names.get(ref.courseId) ?? `Course ${ref.courseId}`;
     const discussions = await fetchDiscussions(api, ref, name, { limit: perForum, page });
     return [{ ref, discussions }];
-  });
+  };
+  const { items: fetches, skipped } = await readEach(selection.refs, read, forumReadCap(api));
   return { fetches, skipped, perForum, page };
 }
 
@@ -211,11 +317,11 @@ export async function listDiscussions(ctx: ServiceContext, opts: ListOptions = {
     : fetches.flatMap((f) => f.discussions);
   recent.sort((a, b) => modifiedMs(b) - modifiedMs(a) || b.discussionId - a.discussionId);
   const shown = recent.slice(0, limit);
-  const listedRefs = single ? selection.refs : nonEmpty(selection.refs).slice(0, MAX_FORUMS_PER_CALL);
+  const listedRefs = single ? selection.refs : nonEmptyForums(selection.refs).slice(0, MAX_FORUMS_PER_CALL);
   return {
     forums: listedRefs.map((ref) => toListEntry(ref, selection.names.get(ref.courseId) ?? `Course ${ref.courseId}`)),
     discussions: shown,
-    skippedForums: skipped,
+    skippedForums: skipped + selection.skipped,
     truncatedForums: truncations({ fetches, shown, perForum, page: fetchPage, single }),
   };
 }

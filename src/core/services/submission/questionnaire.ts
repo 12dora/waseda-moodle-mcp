@@ -15,7 +15,9 @@ import type {
   QuestionnaireQuestion,
   QuestionnaireQuestionType,
 } from '../../types';
+import { templateHtml } from '../shared';
 import type { BatchRequest } from './batch';
+import { answerFrom, typeOfField, type Values } from './questionnaire-fields';
 
 const KEY = 'plugin.mod_questionnaire.';
 const ANSWER_KEY = `${KEY}answerquestions`;
@@ -94,11 +96,6 @@ const RESUME = /plugin\.mod_questionnaire\.resume\w*/;
 const REVIEW_ID = /\bsubmissionid:\s*(\d+)/g;
 const CARD = /<ion-card-content>([\s\S]*?)<\/ion-card-content>/g;
 
-function templateHtml(content: unknown): string {
-  if (!isObj(content) || !Array.isArray(content.templates)) return '';
-  return content.templates.map((t) => (isObj(t) && typeof t.html === 'string' ? t.html : '')).join('\n');
-}
-
 /** `name: 123` inside the `[args]` of a template button. */
 function argNumber(html: string, name: string): number | null {
   const m = new RegExp(`\\b${name}:\\s*(\\d+)`).exec(html);
@@ -153,38 +150,36 @@ export interface QuestionnaireIndex {
   draft: boolean;
   /** Response id of the saved draft when the resume button names it. */
   draftRid: number | null;
-  /** Review links of the user's responses (the saved draft included), as listed. */
+  /** Review links of the user's responses (the saved draft included), as listed (web channel: none listed). */
   submissionIds: number[];
+  /** Completed responses (the saved draft not counted). */
+  responses: number;
+  /** `responses` is the exact count; the web page only shows whether there is one (then 1, a lower bound). */
+  exact: boolean;
+  /** Web channel: the page that shows the user's responses. */
+  reviewPath: string | null;
   notice: string | null;
 }
 
 export function parseQuestionnaireIndex(content: unknown): QuestionnaireIndex {
   const html = templateHtml(content);
   const draft = RESUME.test(html);
+  const submissionIds = [...html.matchAll(REVIEW_ID)].map((m) => Number(m[1]));
   return {
     state: stateOf(html),
     canAnswer: draft || html.includes(ANSWER_KEY),
     draft,
     draftRid: draft ? argNumber(html, 'rid') : null,
-    submissionIds: [...html.matchAll(REVIEW_ID)].map((m) => Number(m[1])),
+    submissionIds,
+    // the saved draft is listed with the submitted responses
+    responses: Math.max(0, submissionIds.length - (draft ? 1 : 0)),
+    exact: true,
+    reviewPath: null,
     notice: noticeText(html),
   };
 }
 
 // ------------------------------------------------------------------ question pages
-
-const TYPES: Record<number, QuestionnaireQuestionType> = {
-  1: 'yesno',
-  2: 'text',
-  3: 'essay',
-  4: 'radio',
-  5: 'checkbox',
-  6: 'dropdown',
-  8: 'rate',
-  9: 'date',
-  10: 'numeric',
-  11: 'slider',
-};
 
 /**
  * A question heading: an item with the number badge (when numbered), the prompt and the "required" badge, and
@@ -270,8 +265,6 @@ function rangeOf(body: string): QuestionnaireQuestion['range'] {
 
 // ------------------------------------------------------------------ answers (review / saved draft)
 
-type Values = ReadonlyMap<string, string>;
-
 /** `otherdata`: the filled `response_*` fields, as `{name, value}` pairs (or a plain map). */
 function otherValues(content: unknown): Values {
   const data = isObj(content) ? content.otherdata : null;
@@ -286,52 +279,6 @@ function otherValues(content: unknown): Values {
   return out;
 }
 
-const ticked = (v: string | undefined): boolean => v !== undefined && v !== '' && v !== '0' && v !== 'false';
-
-/** A saved text answer as read back: Markdown, bounded. */
-const readText = (value: string): string | null => htmlToMarkdown(value, { maxChars: 4000 }) || null;
-
-/** The answer in plain words: choice labels (with the "other" text), rating rows, or the text through `text`. */
-function answerOf(q: QuestionnaireQuestion, key: string, values: Values, text = readText): string | null {
-  const withOther = (c: QuestionnaireChoice): string => {
-    const text = c.otherText ? values.get(`${key}_o${c.id}`) : undefined;
-    return text ? `${c.label.replace(/[:：]\s*$/, '')}: ${text}` : c.label;
-  };
-  const joined = (list: string[]): string | null => (list.length ? list.join('; ') : null);
-  const own = values.get(key);
-  switch (q.type) {
-    case 'yesno':
-    case 'radio':
-    case 'dropdown': {
-      const c = q.choices.find((x) => x.id === own);
-      return c ? withOther(c) : null;
-    }
-    case 'checkbox':
-      return joined(q.choices.filter((c) => ticked(values.get(`${key}_${c.id}`))).map(withOther));
-    case 'rate':
-      return joined(
-        q.choices.flatMap((c) => {
-          const v = values.get(`${key}_${c.id}`);
-          return v ? [`${c.label}: ${q.scale.find((s) => s.value === v)?.label ?? v}`] : [];
-        }),
-      );
-    default:
-      return own ? text(own) : null;
-  }
-}
-
-/** `response_{type}_{question}`: the field (prefix) the plugin reads for a question; null for unknown types. */
-export function fieldKey(q: QuestionnaireQuestion): string | null {
-  const typeId = Object.keys(TYPES).find((k) => TYPES[Number(k)] === q.type);
-  return typeId ? `response_${typeId}_${q.id}` : null;
-}
-
-/** The answer that a set of fields gives a question, in plain words, with any text in full exactly as it is sent. */
-export function answerText(q: QuestionnaireQuestion, fields: Readonly<Record<string, string>>): string | null {
-  const key = fieldKey(q);
-  return key ? answerOf(q, key, new Map(Object.entries(fields)), (value) => value) : null;
-}
-
 // ------------------------------------------------------------------ page
 
 const CHOICE_TYPES: ReadonlySet<QuestionnaireQuestionType> = new Set(['yesno', 'radio', 'checkbox', 'dropdown']);
@@ -339,7 +286,7 @@ const CHOICE_TYPES: ReadonlySet<QuestionnaireQuestionType> = new Set(['yesno', '
 function question(head: RegExpMatchArray, body: string, page: number, values: Values): QuestionnaireQuestion | null {
   const field = FIELD.exec(body);
   if (!field) return null; // no widget the app can show
-  const type = TYPES[Number(field[1])] ?? 'other';
+  const type = typeOfField(field[1]);
   const number = head[1]?.trim() || null;
   const parts =
     type === 'rate' ? rateParts(body) : { choices: CHOICE_TYPES.has(type) ? listChoices(type, body) : [], scale: [] };
@@ -354,7 +301,7 @@ function question(head: RegExpMatchArray, body: string, page: number, values: Va
     range: type === 'slider' ? rangeOf(body) : null,
     answer: null,
   };
-  return { ...q, answer: answerOf(q, `response_${field[1]}_${field[2]}`, values) };
+  return { ...q, answer: answerFrom(q, `response_${field[1]}_${field[2]}`, values) };
 }
 
 interface QuestionnairePage {

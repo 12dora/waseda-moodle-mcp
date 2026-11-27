@@ -67,11 +67,15 @@ export async function claimUpload(ctx: ServiceContext, staged: StagedFiles): Pro
   }
 }
 
-/** Uploads the inline files into draft `itemId` (null = a new one); returns the draft id (null if nothing ran). */
-export async function uploadInline(api: MoodleApi, files: InlineUpload[], itemId: number | null) {
+/**
+ * Uploads the inline files into draft `itemId` (null = a new one) for the activity `cmid` (the web channel uploads in
+ * its context); returns the draft id (null if nothing ran).
+ */
+export async function uploadInline(api: MoodleApi, files: InlineUpload[], itemId: number | null, cmid: number) {
   let id = itemId;
   for (const f of files) {
-    const uploaded = await api.uploadToDraft({ name: f.name, body: f.bytes, size: f.size, mime: f.mime }, id ?? 0);
+    const file = { name: f.name, body: f.bytes, size: f.size, mime: f.mime };
+    const uploaded = await api.uploadToDraft(file, id ?? 0, { cmid });
     id = uploaded.itemid;
   }
   return id;
@@ -90,14 +94,55 @@ export async function allocateDraft(api: MoodleApi): Promise<number> {
 const isDuplicateUpload = (e: unknown) =>
   e instanceof MoodleError && /exist|duplicate/i.test(`${e.errorcode} ${e.message}`);
 
-/** Streams one of the user's current files into the draft (to keep it); a same-named file already there is fine. */
-export async function copyIntoDraft(api: MoodleApi, f: FileRef, itemId: number | null): Promise<number | null> {
-  const res = await api.fetchFile(f.url);
-  if (!res.ok || !res.body) {
-    throw new MoodleUnavailable(`Could not read the current file '${f.name}' to keep it. Try again.`);
-  }
+const unreadable = (name: string) => `Could not read the current file '${name}' to keep it. Try again.`;
+
+/** The whole body, at most MAX_FILE_BYTES (a larger file cannot be kept: Moodle's own limit is lower). */
+async function bufferCapped(body: ReadableStream<Uint8Array>, name: string): Promise<Uint8Array> {
+  let total = 0;
+  const capped = body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, out) {
+        total += chunk.byteLength;
+        if (total > MAX_FILE_BYTES) throw new RangeError('too large');
+        out.enqueue(chunk);
+      },
+    }),
+  );
   try {
-    const uploaded = await api.uploadToDraft({ name: f.name, body: res.body, size: f.size, mime: f.mime }, itemId ?? 0);
+    return new Uint8Array(await new Response(capped).arrayBuffer());
+  } catch {
+    if (total <= MAX_FILE_BYTES) throw new MoodleUnavailable(unreadable(name));
+    throw new InvalidInput(`The current file '${name}' is over ${formatBytes(MAX_FILE_BYTES)} and cannot be kept.`);
+  }
+}
+
+/**
+ * The upload body for a kept file: streamed when its byte length is known (the file list's size, or Content-Length
+ * of an uncompressed download), else buffered — a stream of unknown length cannot be sent with an exact length.
+ */
+async function keptBody(f: FileRef, headers: Headers, body: ReadableStream<Uint8Array>) {
+  const declared = headers.has('content-encoding') ? 0 : Number(headers.get('content-length'));
+  const size = f.size > 0 ? f.size : declared;
+  if (Number.isSafeInteger(size) && size > 0) return { body, size };
+  const bytes = await bufferCapped(body, f.name);
+  return { body: bytes, size: bytes.byteLength };
+}
+
+/**
+ * Copies one of the user's current files of activity `cmid` into the draft (to keep it); a same-named file already
+ * there is fine. Web pages print no sizes, so the size comes from the download (see keptBody).
+ */
+export async function copyIntoDraft(
+  api: MoodleApi,
+  f: FileRef,
+  itemId: number | null,
+  cmid: number,
+): Promise<number | null> {
+  const res = await api.fetchFile(f.url);
+  if (!res.ok || !res.body) throw new MoodleUnavailable(unreadable(f.name));
+  const body = await keptBody(f, res.headers, res.body);
+  try {
+    const uploaded = await api.uploadToDraft({ name: f.name, ...body, mime: f.mime }, itemId ?? 0, { cmid });
     return uploaded.itemid;
   } catch (e) {
     if (isDuplicateUpload(e)) return itemId;

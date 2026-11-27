@@ -87,16 +87,34 @@ export function postingWindow(s: ForumSettings | null, now: number): { details: 
 
 const HSU_UNSUPPORTED = 'Advanced Forums (hsuforum) are not supported for this action; use the Moodle site.';
 
-export interface ForumTarget {
+interface ForumModule {
   forumType: ForumType;
   forumId: number;
   cmid: number;
   courseId: number;
+}
+
+export interface ForumTarget extends ForumModule {
   settings: ForumSettings | null;
 }
 
-/** The forum activity `cmid` must be of `forumType`; ids from the other module would name unrelated posts. */
-export async function resolveForum(api: MoodleApi, cmid: number, forumType: ForumType): Promise<ForumTarget> {
+/**
+ * The forum activity `cmid` must be of `forumType`; ids from the other module would name unrelated posts.
+ * `attachments`: the caller will check the attachment right; it is read first, so the settings read after it carry
+ * the attachment limits on the web channel too (there they come from the post form the right is read from; on the
+ * web service the second read of the right is memoised).
+ */
+export async function resolveForum(
+  api: MoodleApi,
+  cmid: number,
+  forumType: ForumType,
+  opts: { attachments?: boolean } = {},
+): Promise<ForumTarget> {
+  return forumSettingsOf(api, await forumModule(api, cmid, forumType), opts);
+}
+
+/** resolveForum's first half: the activity `cmid` checked to be a forum of `forumType` (no settings read yet). */
+export async function forumModule(api: MoodleApi, cmid: number, forumType: ForumType): Promise<ForumModule> {
   const cm = await getCourseModule(api, cmid);
   if (cm.modname !== 'forum' && cm.modname !== 'hsuforum') throw new InvalidInput(`Activity ${cmid} is not a forum.`);
   if (cm.modname !== forumType) {
@@ -104,13 +122,28 @@ export async function resolveForum(api: MoodleApi, cmid: number, forumType: Foru
       forumType === 'forum' ? HSU_UNSUPPORTED : `Activity ${cmid} is a standard forum; use forum_type "forum".`,
     );
   }
-  const settings = await readForumSettings(api, forumType, cm.courseId, cm.instance);
-  return { forumType, forumId: cm.instance, cmid, courseId: cm.courseId, settings };
+  return { forumType, forumId: cm.instance, cmid, courseId: cm.courseId };
+}
+
+/**
+ * resolveForum's second half. The settings read is memoised: whatever the web channel must have seen for the
+ * attachment limits (a post form of the forum) has to be read before it, as readCanAttach does.
+ */
+export async function forumSettingsOf(
+  api: MoodleApi,
+  forum: ForumModule,
+  opts: { attachments?: boolean } = {},
+): Promise<ForumTarget> {
+  if (opts.attachments && forum.forumType === 'forum') await readCanAttach(api, forum.forumId);
+  const settings = await readForumSettings(api, forum.forumType, forum.courseId, forum.forumId);
+  return { ...forum, settings };
 }
 
 export interface DiscussionEntry {
   id: number;
+  /** null on the web channel when the list does not show it (discussions with replies). */
   firstPostId: number | null;
+  subject: string | null;
   numReplies: number;
   numUnread: number;
 }
@@ -137,6 +170,7 @@ export async function findDiscussion(
       return {
         id: discussionId,
         firstPostId: num(d.id),
+        subject: decoded(d.subject) ?? decoded(d.name),
         numReplies: Number(d.numreplies) || 0,
         numUnread: num(d.numunread) ?? 0,
       };
@@ -240,8 +274,8 @@ export async function stageForumFiles(
     throw new InvalidInput(`Too many attachments: ${count} (this forum allows ${limits.maxFiles}).${hint}`);
   }
   await claimUpload(ctx, staged);
-  let itemId = await uploadInline(api, staged.inline, staged.uploadRow?.draftItemId ?? null);
-  for (const f of kept) itemId = await copyIntoDraft(api, f, itemId);
+  let itemId = await uploadInline(api, staged.inline, staged.uploadRow?.draftItemId ?? null, s.cmid);
+  for (const f of kept) itemId = await copyIntoDraft(api, f, itemId, s.cmid);
   if (itemId === null) throw new InvalidInput('No files were uploaded to that upload link yet.');
   return { itemId, added: staged.all, kept };
 }
@@ -294,13 +328,17 @@ export async function lookupForumPost(api: MoodleApi, postId: number): Promise<F
   return r && isRec(r.post) ? mapPost(r.post) : null;
 }
 
-/** The post, refusing what is missing or not the user's own (moderators' edit/delete-any rights are not used). */
+/**
+ * The post, refusing what is missing, not the user's own (moderators' edit/delete-any rights are not used) or of an
+ * author Moodle did not show (the web channel reads the author from the page rendering the post).
+ */
 export async function requireOwnPost(api: MoodleApi, postId: number): Promise<ForumPost> {
   const post = await lookupForumPost(api, postId);
   if (!post) throw new NotFound(`Post ${postId} was not found or is not visible.`);
-  if (post.authorId === null || post.authorId !== api.moodleUserId) {
-    throw new InvalidInput('Only your own posts can be edited or deleted here.');
+  if (post.authorId === null) {
+    throw new InvalidInput(`Could not check who wrote post ${postId}; edit or delete it on the Moodle site.`);
   }
+  if (post.authorId !== api.moodleUserId) throw new InvalidInput('Only your own posts can be edited or deleted here.');
   return post;
 }
 

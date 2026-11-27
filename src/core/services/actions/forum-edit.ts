@@ -17,13 +17,14 @@ import {
   type ForumPost,
   type ForumTarget,
   findDiscussion,
+  forumModule,
+  forumSettingsOf,
   lookupForumPost,
   quietThread,
   readCanAttach,
   readForumAccess,
   requireDiscussion,
   requireOwnPost,
-  resolveForum,
   stageForumFiles,
 } from './forum-info';
 import type { FileInfo } from './inline-files';
@@ -154,6 +155,9 @@ function editDetails(post: ForumPost, edit: EditPayload, files: FileChange): str
   return details;
 }
 
+const touchesFiles = (input: PrepareForumPostChangeInput) =>
+  (input.files?.length ?? 0) > 0 || !!input.uploadId || input.keepExistingFiles === false;
+
 async function prepareEdit(own: OwnPost, input: PrepareForumPostChangeInput) {
   const { ctx, forum, post } = own;
   if (!post.canEdit) {
@@ -162,8 +166,7 @@ async function prepareEdit(own: OwnPost, input: PrepareForumPostChangeInput) {
   const subject = input.subject?.trim() ?? '';
   if (subject.length > 255) throw new InvalidInput('The subject is too long (max 255 characters).');
   const message = input.message === undefined ? null : requireText(input.message, 'post text', MAX_POST_CHARS);
-  const touchesFiles = (input.files?.length ?? 0) > 0 || !!input.uploadId || input.keepExistingFiles === false;
-  if (!subject && message === null && !touchesFiles) {
+  if (!subject && message === null && !touchesFiles(input)) {
     throw new InvalidInput('Nothing to change: provide subject, message, files or keep_existing_files=false.');
   }
   const discussionSubscribe = subscriptionChoice(forum, input.discussionSubscribe);
@@ -317,8 +320,11 @@ export async function prepareForumPostChange(
     throw new InvalidInput("action must be 'edit' or 'delete'.");
   }
   const api = await ctx.moodle();
-  const forum = await resolveForum(api, positiveInt(input.forumCmid, 'forum_cmid'), 'forum');
+  const forumCm = await forumModule(api, positiveInt(input.forumCmid, 'forum_cmid'), 'forum');
+  // Own post first: on the web channel its edit form then also gives the attachment right and limits, where the
+  // new-discussion form may be refused (reply-only forums).
   const post = await requireOwnPost(api, postId);
+  const forum = await forumSettingsOf(api, forumCm, { attachments: input.action === 'edit' && touchesFiles(input) });
   const entry = await requireDiscussion(api, forum, post.discussionId);
   const own: OwnPost = { ctx, api, forum, post };
   if (input.action === 'delete') {

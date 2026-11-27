@@ -109,7 +109,8 @@ export const GET_FILE_HINT = '(open a file with get_file, passing its url)';
 
 /** A file list; `hint: false` when the caller states the get_file hint once for several lists. */
 export function fileLines(files: FileRef[], max = 8, opts: { hint?: boolean } = {}): string[] {
-  const out = files.slice(0, max).map((f) => `- ${f.name} (${formatBytes(f.size)}) — ${f.url}`);
+  // a size of 0 means unknown (web pages do not print sizes; get_file reports the real one)
+  const out = files.slice(0, max).map((f) => `- ${f.name}${f.size > 0 ? ` (${formatBytes(f.size)})` : ''} — ${f.url}`);
   if (files.length > max) out.push(`- … ${files.length - max} more files`);
   if (files.length > 0 && opts.hint !== false) out.push(GET_FILE_HINT);
   return out;

@@ -113,9 +113,12 @@ export function fetchUserAttempts(api: MoodleApi, quizId: number): Promise<Attem
 }
 
 export async function loadQuiz(api: MoodleApi, cm: CourseModuleInfo, info: ActivityInfo): Promise<QuizDetail> {
-  const res = await api.call<{ quizzes?: RawQuiz[] | null }>('mod_quiz_get_quizzes_by_courses', {
-    courseids: [cm.courseId],
-  });
+  // the hint lets the web channel read only this quiz's page (the ws channel ignores it)
+  const res = await api.call<{ quizzes?: RawQuiz[] | null }>(
+    'mod_quiz_get_quizzes_by_courses',
+    { courseids: [cm.courseId] },
+    { cmid: cm.cmid },
+  );
   const raw = (res?.quizzes ?? []).find((q) => q.coursemodule === cm.cmid);
   if (!raw) throw new NotFound(`Quiz ${cm.cmid} was not found or is not visible.`);
 

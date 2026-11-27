@@ -39,7 +39,7 @@ export interface AssignDetail {
   maxFileBytes: number | null;
   acceptedTypes: string[]; // e.g. [".pdf", ".docx"]; [] = any
   wordLimit: number | null;
-  draftsEnabled: boolean; // submissiondrafts
+  draftsEnabled: boolean | null; // submissiondrafts; null = not shown (web channel, new attempt)
   requiresStatement: boolean;
   statement: string | null;
   teamSubmission: boolean;

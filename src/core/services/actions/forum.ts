@@ -39,6 +39,8 @@ const MAX_POST_CHARS = 20_000;
 /** Moodle FORMAT_HTML: every body this service sends is HTML (markdownToSimpleHtml). */
 const FORMAT_HTML = 1;
 const NO_REPLY = "You can't reply to that post (for example, in announcement forums only teachers post).";
+/** Advanced Forum posts go through Open LMS web services only; the web channel has no verified form flow for them. */
+const HSU_NO_WEB = 'Posting to this forum type is not available through the Moodle web session.';
 const UNCHECKED_DATES = "The forum's due and cut-off dates were not checked; Moodle still enforces them.";
 
 export interface PrepareForumPostInput {
@@ -168,7 +170,9 @@ async function replyForum(api: MoodleApi, req: ForumRequest, discussionId: numbe
     if (req.hasFiles) throw new InvalidInput('Pass forum_cmid (from list_discussions) to attach files to a reply.');
     return { settings: null, canAttach: null, warnings: [`${UNCHECKED_DATES} Pass forum_cmid to see them.`] };
   }
-  const forum = await resolveForum(api, positiveInt(req.forumCmid, 'forum_cmid'), req.type);
+  const forum = await resolveForum(api, positiveInt(req.forumCmid, 'forum_cmid'), req.type, {
+    attachments: req.hasFiles,
+  });
   if (req.type === 'forum') await requireDiscussion(api, forum, discussionId);
   const canAttach = req.hasFiles && req.type === 'forum' ? await readCanAttach(api, forum.forumId) : null;
   return { settings: forum.settings, canAttach, warnings: [] };
@@ -247,14 +251,29 @@ const fileLines = (files: FileInfo[]) =>
 
 const subscribeLine = (v: boolean | null) => (v === null ? [] : [`Subscribe to this discussion: ${v ? 'yes' : 'no'}`]);
 
+/**
+ * Advanced Forums are refused on the web channel. A fresh client only predicts its channel until the first call
+ * settles it (a dead token falls back to the session): check before and again after the target's reads, failed or not.
+ */
+async function webGuarded<T>(api: MoodleApi, req: ForumRequest, read: () => Promise<T>): Promise<T> {
+  const offWeb = () => req.type === 'hsuforum' && api.channel === 'web';
+  if (offWeb()) throw new InvalidInput(HSU_NO_WEB);
+  const out = await read().catch((e: unknown) => {
+    throw offWeb() ? new InvalidInput(HSU_NO_WEB) : e;
+  });
+  if (offWeb()) throw new InvalidInput(HSU_NO_WEB);
+  return out;
+}
+
 export async function prepareForumPost(ctx: ServiceContext, input: PrepareForumPostInput): Promise<ActionPreview> {
   assertWriteAllowed(ctx);
   const req = parseRequest(input);
   const api = await ctx.moodle();
-  const target =
+  const target = await webGuarded(api, req, () =>
     req.replyTo !== null
-      ? await replyTarget(api, req, positiveInt(req.replyTo, 'reply_to_post_id'))
-      : await discussionTarget(api, req, positiveInt(req.forumId, 'forum_id'));
+      ? replyTarget(api, req, positiveInt(req.replyTo, 'reply_to_post_id'))
+      : discussionTarget(api, req, positiveInt(req.forumId, 'forum_id')),
+  );
   if (target.subject.length > 255) throw new InvalidInput('The subject is too long (max 255 characters).');
   const dates = postingWindow(target.settings, nowMs());
   const attachments = await stageAttachments(ctx, api, req, target);

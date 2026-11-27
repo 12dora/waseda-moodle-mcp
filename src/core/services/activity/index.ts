@@ -22,7 +22,7 @@ async function loadForum(
   forumType: ForumType,
   info: ActivityInfo,
 ): Promise<ForumDetail> {
-  const refs = await fetchForums(api, forumType, [cm.courseId]);
+  const refs = await fetchForums(api, forumType, [cm.courseId], { cmid: cm.cmid });
   const ref = refs.find((r) => r.cmid === cm.cmid || r.forumId === cm.instance);
   if (!ref) throw new NotFound(`Forum ${cm.cmid} was not found or is not visible.`);
   let discussions: DiscussionSummary[] = [];

@@ -1,11 +1,17 @@
-/** Page, url, label, book and every other module (resource, folder, …) as generic content. */
+/**
+ * Page, url, label, book and every other module (resource, folder, …) as generic content. Every read names the cmid
+ * (call hint), so the web channel reads that activity's page only. On the web channel the course contents carry no
+ * files: resource and folder files come from their activity pages; a book's chapters cannot be read there.
+ */
 
 import type { MoodleApi } from '../../context';
-import { NotFound } from '../../errors';
+import { MoodleError, NotFound } from '../../errors';
 import { decodeEntities, htmlToMarkdown } from '../../html';
 import type { RawDate } from '../../moodle/raw-course';
+import { folderFiles, resourceFiles } from '../../moodle/web/adapters/content';
 import type { ContentDetail, FileRef } from '../../types';
 import { type ActivityInfo, type CourseModuleInfo, mapFile, mapFiles, pickLang, type RawFile } from '../shared';
+import { webSessionOf } from './web';
 
 const md = (html: string | null | undefined, lang?: string | null): string =>
   htmlToMarkdown(pickLang(html, lang), { maxChars: 20_000 });
@@ -128,13 +134,14 @@ function mapUrl(raw: RawUrl, cm: CourseModuleInfo, info: ContentInfo): ContentDe
 
 async function fromTypedModule(api: MoodleApi, cm: CourseModuleInfo, info: ContentInfo): Promise<ContentDetail | null> {
   const args = { courseids: [cm.courseId] };
+  const hint = { cmid: cm.cmid };
   if (cm.modname === 'page') {
-    const res = await api.call<{ pages?: RawPage[] | null }>('mod_page_get_pages_by_courses', args);
+    const res = await api.call<{ pages?: RawPage[] | null }>('mod_page_get_pages_by_courses', args, hint);
     const raw = (res?.pages ?? []).find((p) => p.coursemodule === cm.cmid);
     return raw ? mapPage(raw, cm, info) : null;
   }
   if (cm.modname === 'url') {
-    const res = await api.call<{ urls?: RawUrl[] | null }>('mod_url_get_urls_by_courses', args);
+    const res = await api.call<{ urls?: RawUrl[] | null }>('mod_url_get_urls_by_courses', args, hint);
     const raw = (res?.urls ?? []).find((u) => u.coursemodule === cm.cmid);
     return raw ? mapUrl(raw, cm, info) : null;
   }
@@ -143,18 +150,41 @@ async function fromTypedModule(api: MoodleApi, cm: CourseModuleInfo, info: Conte
 
 /** The module's row of `core_course_get_contents` (name, description, dates, files). */
 export async function fetchModuleRow(api: MoodleApi, cm: CourseModuleInfo): Promise<RawModule> {
-  const sections = await api.call<Array<{ modules?: RawModule[] | null }>>('core_course_get_contents', {
-    courseid: cm.courseId,
-    options: [{ name: 'cmid', value: cm.cmid }],
-  });
+  const sections = await api.call<Array<{ modules?: RawModule[] | null }>>(
+    'core_course_get_contents',
+    { courseid: cm.courseId, options: [{ name: 'cmid', value: cm.cmid }] },
+    { cmid: cm.cmid },
+  );
   const mod = (Array.isArray(sections) ? sections : []).flatMap((s) => s.modules ?? []).find((m) => m.id === cm.cmid);
   if (!mod) throw new NotFound(`Activity ${cm.cmid} was not found or is not visible.`);
   return mod;
+}
+
+const WEB_FILES: Record<string, typeof resourceFiles> = { resource: resourceFiles, folder: folderFiles };
+const WEB_BOOK_NOTE = '_The chapters of this book cannot be read through the Moodle web session; open it in Moodle._';
+
+/**
+ * The web channel's course contents list no files and no book structure: resource and folder files are read from
+ * the activity page (a failure leaves the list empty, the rest is still worth showing); a book says it is unreadable.
+ */
+async function completeOnWeb(api: MoodleApi, raw: RawModule, cm: CourseModuleInfo): Promise<RawModule | string> {
+  if (cm.modname === 'book') return WEB_BOOK_NOTE;
+  const read = WEB_FILES[cm.modname];
+  if (!read || (raw.contents ?? []).some((c) => c.type === 'file')) return raw;
+  const contents = await read(webSessionOf(api), cm.cmid).catch((e: unknown) => {
+    if (e instanceof MoodleError) return [];
+    throw e;
+  });
+  return { ...raw, contents };
 }
 
 export async function loadContent(api: MoodleApi, cm: CourseModuleInfo, info: ContentInfo): Promise<ContentDetail> {
   const typed = await fromTypedModule(api, cm, info);
   if (typed) return typed;
   // label, book, resource, folder and everything else (also the fallback when a page/url row is missing)
-  return mapModuleContent(await fetchModuleRow(api, cm), cm, info);
+  const raw = await fetchModuleRow(api, cm);
+  if (api.channel !== 'web') return mapModuleContent(raw, cm, info);
+  const done = await completeOnWeb(api, raw, cm);
+  if (typeof done !== 'string') return mapModuleContent(done, cm, info);
+  return { ...mapModuleContent(raw, cm, info), body: done };
 }

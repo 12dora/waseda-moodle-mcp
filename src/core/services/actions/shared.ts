@@ -5,6 +5,7 @@ import { randomId } from '../../crypto';
 import { Forbidden, InvalidInput, MoodleError } from '../../errors';
 import { isoJst, nowMs } from '../../time';
 import type { ActionKind, ActionPreview } from '../../types';
+import { isMailKind } from './mail';
 import { actionTarget } from './target';
 
 const ACTION_TTL_MS = 30 * 60_000;
@@ -101,10 +102,20 @@ async function rivalWarning(ctx: ServiceContext, target: string | null, now: num
   return rival ? [`Another pending action has the same target (${rival.id}); only one of them can run.`] : [];
 }
 
+/**
+ * Moodle actions record the channel they were prepared on (`payload.channel`): their ids are channel-specific (on the
+ * web channel an assignment's instance id is its cmid), so confirm runs them only on the same channel.
+ */
+async function stampChannel(ctx: ServiceContext, kind: ActionKind, payload: Raw): Promise<Raw> {
+  if (isMailKind(kind)) return payload;
+  return { ...payload, channel: (await ctx.moodle()).channel };
+}
+
 export async function savePreview(ctx: ServiceContext, parts: PreviewParts): Promise<ActionPreview> {
   const now = nowMs();
   const approval = ctx.user.settings.writeMode === 'console' && canApproveInConsole(ctx) ? 'console' : 'chat';
-  const { kind, title, details, payload } = parts;
+  const { kind, title, details } = parts;
+  const payload = await stampChannel(ctx, kind, parts.payload);
   const target = actionTarget(kind, payload);
   const warnings = [
     ...parts.warnings,

@@ -34,6 +34,7 @@ export interface DayStats {
   icsFeeds: number;
   renewed: number;
   renewKept: number;
+  renewEnded: number;
   renewFailed: number;
   connects: number;
 }
@@ -77,10 +78,12 @@ export interface UsageStats {
     /** Live snapshot at report time. */
     active: number;
     invalid: number;
-    autoRenew: number;
-    /** Range totals. */
+    /** Credentials with a stored web session (kept alive by the cron). */
+    sessions: number;
+    /** Range totals of the keepalive and token renewals: new token, session kept, session ended, attempt failed. */
     renewed: number;
     kept: number;
+    ended: number;
     failed: number;
     failures: { reason: string; count: number }[];
     connects: { via: string; count: number }[];

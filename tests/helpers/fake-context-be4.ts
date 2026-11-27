@@ -401,6 +401,7 @@ export function createFakeMoodle(opts: { moodleUserId?: number; handlers?: FakeM
   const api: FakeMoodle = {
     baseUrl: BASE_URL,
     moodleUserId: opts.moodleUserId ?? 1001,
+    channel: 'ws',
     callsMade: 0,
     handlers: { ...(opts.handlers ?? {}) },
     calls: [],

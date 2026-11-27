@@ -60,7 +60,12 @@ describe('parseQuestionnaireIndex', () => {
       notice: null,
     });
     expect(parseQuestionnaireIndex(draftIndex)).toMatchObject({ canAnswer: true, draft: true, draftRid: 9003 });
-    expect(parseQuestionnaireIndex(savedListed)).toMatchObject({ draft: true, draftRid: null, submissionIds: [9001] });
+    expect(parseQuestionnaireIndex(savedListed)).toMatchObject({
+      draft: true,
+      draftRid: null,
+      submissionIds: [9001],
+      responses: 0,
+    });
   });
 
   it("keeps Moodle's notice when the questionnaire is closed or not open yet", () => {
@@ -85,6 +90,9 @@ describe('parseQuestionnaireIndex', () => {
       draft: false,
       draftRid: null,
       submissionIds: [],
+      responses: 0,
+      exact: true,
+      reviewPath: null,
       notice: null,
     });
   });

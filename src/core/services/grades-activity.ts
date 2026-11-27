@@ -38,7 +38,7 @@ interface RawQuiz {
   id?: number;
   coursemodule?: number;
   name?: string;
-  grade?: number;
+  grade?: number | null; // max grade; a course-wide list on the web channel does not know it
   timeopen?: number;
   timeclose?: number;
 }
@@ -51,7 +51,7 @@ interface RawBestGrade {
 const stripTags = (s: string) => s.replace(/<[^>]*>/g, '');
 const num2 = (n: number) => n.toFixed(2);
 const percent = (grade: number, max: number) => `${num2((grade / max) * 100)} %`;
-const maxGrade = (g: number | undefined) => (typeof g === 'number' && g > 0 ? g : null);
+const maxGrade = (g: number | null | undefined) => (typeof g === 'number' && g > 0 ? g : null);
 
 /** Raw numeric grade; Moodle stores -1 for "not graded". */
 function rawGrade(v: string | number | null | undefined): number | null {
@@ -156,6 +156,20 @@ async function orSkip<T>(p: Promise<T>): Promise<T | null> {
 const present = (i: GradeItem | null): i is GradeItem => i !== null;
 
 /**
+ * A graded quiz as an item. When the course list lacks its maximum grade, the list narrowed to this quiz has it (web
+ * channel: the quiz page the best grade was just read from, so no further request).
+ */
+async function quizItem(api: MoodleApi, courseId: number, q: RawQuiz): Promise<GradeItem | null> {
+  const best = await orSkip(api.call<RawBestGrade>(BEST_GRADE_FN, { quizid: q.id }));
+  if (!best?.hasgrade || typeof q.grade === 'number') return mapQuizGrade(q, best);
+  const narrowed = await orSkip(
+    api.call<{ quizzes?: RawQuiz[] }>(QUIZZES_FN, { courseids: [courseId] }, { cmid: q.coursemodule }),
+  );
+  const own = narrowed?.quizzes?.find((x) => x.coursemodule === q.coursemodule);
+  return mapQuizGrade({ ...q, grade: own?.grade }, best);
+}
+
+/**
  * At most 2 list calls + 25 per-activity calls. `unchecked` counts activities left out by the caps.
  * Assignments: deadline-passed first; quizzes: newest first.
  */
@@ -181,12 +195,7 @@ export async function collectActivityGrades(
         return mapAssignGrade(a, status);
       }),
     ),
-    Promise.all(
-      quizzes.slice(0, take.quizzes).map(async (q) => {
-        const best = await orSkip(api.call<RawBestGrade>(BEST_GRADE_FN, { quizid: q.id }));
-        return mapQuizGrade(q, best);
-      }),
-    ),
+    Promise.all(quizzes.slice(0, take.quizzes).map((q) => quizItem(api, courseId, q))),
   ]);
   return {
     items: [...assignItems, ...quizItems].filter(present),

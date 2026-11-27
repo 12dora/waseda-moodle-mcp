@@ -8,12 +8,15 @@ import type { DiscussionSummary, IsoJst } from '../types';
 import { listCourses } from './courses';
 import {
   type ForumRef,
-  fetchForumsOfTypes,
   fetchRawDiscussions,
+  forumReadCap,
   mapDiscussion,
+  nonEmptyForums,
   type RawDiscussion,
   readEach,
+  webCallsLeft,
 } from './forums';
+import { forumsInScope } from './forums-list';
 import { clampInt, courseNameMap } from './shared';
 
 /** Discussions read per forum: one Moodle call per forum whatever the page size. */
@@ -51,6 +54,8 @@ export interface ForumSearchResult {
   /** Discussions read per forum (the newest ones). */
   perForum: number;
   skippedForums: number;
+  /** Web channel: some forums were searched by subject only (why, and how many); absent = first posts too. */
+  bodyNote?: string;
   /** null = messages were not requested. */
   messages: MessageHit[] | null;
   messagesNote: string | null;
@@ -103,7 +108,8 @@ function matchDiscussion(
   const body = fold(plainText(raw.message, scan.bodyChars));
   if (!terms.every((t) => subject.lower.includes(t) || body.lower.includes(t))) return null;
   const inSubject = terms.every((t) => subject.lower.includes(t));
-  return { ...summary, snippet: snippetOf(body.flat, terms), inSubject };
+  // Without a first post (web channel, subjects only) the snippet is the subject.
+  return { ...summary, snippet: snippetOf(body.flat || subject.flat, terms), inSubject };
 }
 
 const modifiedMs = (d: DiscussionSummary) => (d.modifiedAt ? toMs(d.modifiedAt) : 0);
@@ -114,47 +120,86 @@ function rank(a: ForumSearchHit, b: ForumSearchHit): number {
 
 // ------------------------------------------------------------------ forums
 
-/** Announcement forums first, so the per-call forum cap never drops them. */
-const newsFirst = (refs: ForumRef[]) => [...refs].sort((a, b) => Number(b.kind === 'news') - Number(a.kind === 'news'));
+/** Announcement forums first (on the web channel: likely ones), so the per-call forum cap never drops them. */
+const newsFirst = (refs: ForumRef[], likely: Set<number>) => {
+  const news = (r: ForumRef) => r.kind === 'news' || (r.cmid !== null && likely.has(r.cmid));
+  return [...refs].sort((a, b) => Number(news(b)) - Number(news(a)));
+};
+
+/**
+ * Web channel: the forums whose first posts are read too, one more request each, within the budget left after the
+ * `read` forums' lists. Only untracked forums: reading first posts marks them read on tracked ones.
+ */
+function quietBodies(api: MoodleApi, read: ForumRef[]): Set<ForumRef> {
+  if (api.channel !== 'web') return new Set(read);
+  const spare = Math.max(0, webCallsLeft(api) - read.length);
+  return new Set(read.filter((r) => r.forumType === 'forum' && r.tracked === false).slice(0, spare));
+}
+
+interface ScanResult<T> {
+  items: T[];
+  skipped: number;
+  /** Forums read whose first posts were not (web channel). */
+  subjectOnly: number;
+}
 
 /**
  * The shared forum scan: the newest PER_FORUM discussions of every forum of the course (or of the courses in scope),
- * announcements first, within readEach's forum cap. `visit` maps one discussion to a result or null to drop it; it
- * is told how many characters of a first post to look at (fewer when many forums are scanned).
+ * announcements first, within readEach's forum cap and the call budget. `visit` maps one discussion to a result or
+ * null to drop it; it is told how many characters of a first post to look at (fewer when many forums are scanned).
+ * `bodies`: the caller reads `message`; on the web channel only some forums can give it (quietBodies).
  */
 export async function scanDiscussions<T>(
   ctx: ServiceContext,
   api: MoodleApi,
   req: {
     courseId?: number;
+    bodies?: boolean;
     visit: (raw: RawDiscussion, ref: ForumRef, courseName: string, bodyChars: number) => T | null;
   },
-): Promise<{ items: T[]; skipped: number }> {
+): Promise<ScanResult<T>> {
   const courseIds = req.courseId != null ? [req.courseId] : (await listCourses(ctx)).map((c) => c.id);
-  const [refs, names] = await Promise.all([
-    fetchForumsOfTypes(api, ['forum', 'hsuforum'], courseIds),
-    courseNameMap(ctx),
-  ]);
-  const many = refs.filter((r) => r.numDiscussions !== 0).length > MANY_FORUMS;
-  const bodyChars = many ? BODY_MAX_HTML_CHARS_MANY : BODY_MAX_HTML_CHARS;
-  return readEach(newsFirst(refs), async (ref) => {
-    const name = names.get(ref.courseId) ?? `Course ${ref.courseId}`;
-    const found = (await fetchRawDiscussions(api, ref, PER_FORUM)).map((raw) => req.visit(raw, ref, name, bodyChars));
-    return found.filter((x): x is Exclude<T, null> => x !== null);
-  });
+  const [scope, names] = await Promise.all([forumsInScope(api, courseIds), courseNameMap(ctx)]);
+  const order = newsFirst(scope.refs, scope.likelyNews);
+  const cap = forumReadCap(api);
+  const read = nonEmptyForums(order).slice(0, cap);
+  const bodies = req.bodies ? quietBodies(api, read) : new Set<ForumRef>();
+  const bodyChars = read.length > MANY_FORUMS ? BODY_MAX_HTML_CHARS_MANY : BODY_MAX_HTML_CHARS;
+  const found = await readEach(
+    order,
+    async (ref) => {
+      const name = names.get(ref.courseId) ?? `Course ${ref.courseId}`;
+      const list = await fetchRawDiscussions(api, ref, { limit: PER_FORUM, messages: bodies.has(ref) });
+      return list.map((raw) => req.visit(raw, ref, name, bodyChars)).filter((x): x is Exclude<T, null> => x !== null);
+    },
+    cap,
+  );
+  const subjectOnly = req.bodies ? read.length - bodies.size : 0;
+  return { items: found.items, skipped: found.skipped + scope.skipped, subjectOnly };
 }
 
 async function searchDiscussions(
   ctx: ServiceContext,
   api: MoodleApi,
   req: { terms: string[]; courseId?: number },
-): Promise<{ hits: ForumSearchHit[]; skipped: number }> {
-  const { items, skipped } = await scanDiscussions(ctx, api, {
+): Promise<{ hits: ForumSearchHit[]; skipped: number; subjectOnly: number }> {
+  const { items, skipped, subjectOnly } = await scanDiscussions(ctx, api, {
     courseId: req.courseId,
+    bodies: true,
     visit: (raw, ref, courseName, bodyChars) => matchDiscussion(raw, ref, req.terms, { courseName, bodyChars }),
   });
-  return { hits: items, skipped };
+  return { hits: items, skipped, subjectOnly };
 }
+
+/** The note for `n` forums searched by subject only; nothing when there are none. */
+const bodyNoteOf = (n: number): { bodyNote?: string } =>
+  n > 0
+    ? {
+        bodyNote:
+          `${n} forum${n === 1 ? ' was' : 's were'} searched by subject only: through the Moodle web session first ` +
+          'posts are read only where that marks nothing read (untracked forums) and the call budget allows.',
+      }
+    : {};
 
 // ------------------------------------------------------------------ messages
 
@@ -226,6 +271,7 @@ export async function searchForums(ctx: ServiceContext, opts: SearchOptions): Pr
     hits: found.hits.sort(rank).slice(0, limit),
     perForum: PER_FORUM,
     skippedForums: found.skipped,
+    ...bodyNoteOf(found.subjectOnly),
     messages: messages?.messages ?? null,
     messagesNote: messages?.note ?? null,
   };
