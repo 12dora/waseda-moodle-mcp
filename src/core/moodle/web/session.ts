@@ -29,8 +29,8 @@ export interface MoodleWebSessionOptions {
   onEnded?: () => void | Promise<void>;
 }
 
-/** Calls whose point is the request itself (keepalive): never answered from the memo. */
-const FRESH = new Set(['core_session_touch', 'core_session_time_remaining']);
+/** Calls whose point is the request itself (keepalive) or that consume what they read: never from the memo. */
+const FRESH = new Set(['core_session_touch', 'core_session_time_remaining', 'core_fetch_notifications']);
 
 const ENDED_MSG = 'The Moodle session has ended. Reconnect to continue.';
 const MAX_HOPS = 3;
@@ -239,15 +239,18 @@ export class MoodleWebSession implements WebSession {
   async page(path: string, req: WebRequest = {}): Promise<WebPage> {
     const target = this.relative(path);
     if (req.method === 'POST') {
+      // before and after: a read that overlapped the write must not survive it
       this.forgetPages();
-      return this.post(target, req.form ?? new URLSearchParams());
+      return this.post(target, req.form ?? new URLSearchParams()).finally(() => this.forgetPages());
     }
     if (req.follow === false) return this.get(target, false);
     const hit = this.pages.get(target);
     if (hit) return hit;
     const p = this.get(target, true);
     this.pages.set(target, p);
-    p.catch(() => this.pages.delete(target));
+    p.catch(() => {
+      if (this.pages.get(target) === p) this.pages.delete(target);
+    });
     return p;
   }
 
@@ -331,7 +334,7 @@ export class MoodleWebSession implements WebSession {
   ajax<T = unknown>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
     if (isWriteCall(fn, args)) {
       this.forgetPages();
-      return this.enqueue<T>(fn, args);
+      return this.enqueue<T>(fn, args).finally(() => this.forgetPages());
     }
     if (FRESH.has(fn)) return this.enqueue<T>(fn, args);
     const key = `${fn}:${JSON.stringify(args)}`;
@@ -339,7 +342,9 @@ export class MoodleWebSession implements WebSession {
     if (hit) return hit as Promise<T>;
     const p = this.enqueue<T>(fn, args);
     this.reads.set(key, p);
-    p.catch(() => this.reads.delete(key));
+    p.catch(() => {
+      if (this.reads.get(key) === p) this.reads.delete(key);
+    });
     return p;
   }
 

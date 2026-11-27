@@ -226,7 +226,7 @@ const SCOPE_RESPONSES = {
 const calls = (api: { calls: Array<{ fn: string }> }, fn: string) => api.calls.filter((c) => c.fn === fn);
 
 describe('getDueItems', () => {
-  it('never waits on a hanging syllabus site when the user confirmed their courses (it runs on)', async () => {
+  it('never contacts the syllabus site (cached terms only)', async () => {
     const fetchFn = vi.fn(() => new Promise<Response>(() => undefined)); // the public site never answers
     vi.stubGlobal('fetch', fetchFn);
     try {
@@ -242,8 +242,8 @@ describe('getDueItems', () => {
       });
       const list = await getDueItems(ctx);
       expect(list.scope.courseIds).toEqual([course.id]);
-      expect(fetchFn).toHaveBeenCalledTimes(1);
-      expect(deferred).toHaveLength(1); // the lookup runs on past the answer
+      expect(fetchFn).not.toHaveBeenCalled();
+      expect(deferred).toHaveLength(0);
     } finally {
       vi.unstubAllGlobals();
     }

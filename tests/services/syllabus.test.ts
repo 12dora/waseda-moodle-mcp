@@ -212,38 +212,6 @@ describe('lookupTerms', () => {
     expect(JSON.parse(t.state.syllabusCache.get(C1.idnumber)?.json ?? '')).toMatchObject({ term: '秋クォーター' });
   });
 
-  it('waitMs: answers from the cache when the site hangs; the fetch finishes past the response', async () => {
-    let release: (r: Response) => void = () => undefined;
-    const hanging = new Promise<Response>((resolve) => {
-      release = resolve;
-    });
-    const fetchFn = vi.fn(async () => hanging);
-    vi.stubGlobal('fetch', fetchFn);
-    const t = makeFakeContext();
-    const cached: SyllabusInfo = { pKey: PK1, year: 2026, term: '秋学期', dayPeriod: null, instructors: [], slots: [] };
-    t.state.syllabusCache.set(C1.idnumber, {
-      json: JSON.stringify({ ...cached, scheduleUnparsed: false }),
-      fetchedAt: NOW.getTime(),
-    });
-    const res = await lookupTerms(t.ctx, [C1, C2], { waitMs: 10 });
-    expect(res.get(1)?.term).toBe('秋学期');
-    expect(res.has(2)).toBe(false); // not known yet
-    expect(fetchFn).toHaveBeenCalledTimes(1);
-    expect(t.deferred).toHaveLength(1);
-    release(new Response(page('冬クォーター'), { status: 200 }));
-    await Promise.all(t.deferred);
-    expect(JSON.parse(t.state.syllabusCache.get(C2.idnumber)?.json ?? '')).toMatchObject({ term: '冬クォーター' });
-    expect(res.has(2)).toBe(false); // the answer already given is not changed afterwards
-  });
-
-  it('waitMs: a lookup that ends in time answers fully and defers nothing', async () => {
-    stubFetch({ [PK1]: page('秋クォーター') });
-    const t = makeFakeContext();
-    const res = await lookupTerms(t.ctx, [C1], { waitMs: 1000 });
-    expect(res.get(1)?.term).toBe('秋クォーター');
-    expect(t.deferred).toHaveLength(0);
-  });
-
   it('serves fresh cache rows without fetching, including cached "no syllabus"', async () => {
     const fetchFn = stubFetch({});
     const t = makeFakeContext();

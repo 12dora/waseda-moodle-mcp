@@ -22,3 +22,13 @@ describe('blog-like forum view', () => {
     ]);
   });
 });
+
+describe('blog-like forum: the discussion comes from the post itself', () => {
+  it('ignores a link to another discussion inside the post body', () => {
+    const withLink = html.replace(
+      '<p>第3回の議事録です。</p>',
+      '<p>第3回の議事録です。<a href="https://wsdmoodle.waseda.jp/mod/forum/discuss.php?d=4000">前回</a></p>',
+    );
+    expect(parseForumView(withLink).rows.map((r) => r.discussion)).toEqual([5101, 5102]);
+  });
+});

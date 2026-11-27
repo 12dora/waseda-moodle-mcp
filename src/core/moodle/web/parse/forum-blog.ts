@@ -18,16 +18,25 @@ function discussionOf(article: string): number | null {
   return null;
 }
 
+/** The post's own permalink (`discuss.php?d=<id>#p<postId>`): a link in the post body may name another discussion. */
+function permalinkDiscussion(article: string, postId: number): number | null {
+  const own = links(article).find((h) => h.includes('/mod/forum/discuss.php') && h.endsWith(`#p${postId}`));
+  return own ? queryInt(own, 'd') : null;
+}
+
 function blogRow(article: { attrs: string; outer: string }, tail: string): DiscussionRow | null {
-  const discussion = discussionOf(article.outer) ?? discussionOf(tail);
   const postId = Number(attr(article.attrs, 'data-post-id'));
-  if (!discussion || !Number.isSafeInteger(postId) || postId <= 0) return null;
+  if (!Number.isSafeInteger(postId) || postId <= 0) return null;
+  // the "discuss this topic" box right after the article holds the discussion link and the reply count
+  const box = findFirst(tail, { attr: 'class', value: 'link', word: true })?.outer ?? '';
+  const discussion = permalinkDiscussion(article.outer, postId) ?? discussionOf(box);
+  if (!discussion) return null;
   const subject = findFirst(article.outer, { attr: 'data-region-content', value: 'forum-post-core-subject' });
   const header = findFirst(article.outer, { attr: 'class', value: 'header', word: true, tag: 'header' })?.inner ?? '';
   const profile = findAll(header, { attr: 'href', tag: 'a' }).find((a) =>
     /\/user\/(?:view|profile)\.php\?/.test(attr(a.attrs, 'href')),
   );
-  const replies = REPLIES.exec(text(tail));
+  const replies = REPLIES.exec(text(box));
   const created = timesIn(header)[0] ?? null;
   return {
     discussion,
