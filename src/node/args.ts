@@ -5,7 +5,7 @@ import { InvalidInput } from '../core/errors';
 export type Command =
   | { kind: 'help' }
   | { kind: 'version' }
-  /** input null = read the launch link from stdin. */
+  /** input = a session cookie or launch link; null = read it from stdin. */
   | { kind: 'connect'; input: string | null }
   | { kind: 'serve'; readOnly: boolean };
 

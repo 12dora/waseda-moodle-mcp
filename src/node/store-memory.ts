@@ -183,6 +183,7 @@ export class MemoryStore extends WorkerOnlyMethods implements Store {
     this.credentials.set(row.userId, {
       ...clone(row),
       sessionEnc: prev?.sessionEnc ?? null,
+      sesskeyEnc: prev?.sesskeyEnc ?? null,
       sessionOkAt: prev?.sessionOkAt ?? null,
       sessionTriedAt: prev?.sessionTriedAt ?? null,
       renewedAt: prev?.renewedAt ?? null,
@@ -198,11 +199,8 @@ export class MemoryStore extends WorkerOnlyMethods implements Store {
 
   async updateCredentialIf(userId: number, expect: CredentialExpect, patch: CredentialPatch): Promise<boolean> {
     const c = this.credentials.get(userId);
-    const matches =
-      c !== undefined &&
-      c.tokenHash === expect.tokenHash &&
-      (expect.sessionEnc === undefined || (c.sessionEnc ?? null) === expect.sessionEnc) &&
-      (expect.autologinAt === undefined || (c.autologinAt ?? null) === expect.autologinAt);
+    const fields = Object.keys(expect) as Array<keyof CredentialExpect>;
+    const matches = c !== undefined && fields.every((f) => expect[f] === undefined || (c[f] ?? null) === expect[f]);
     if (matches) await this.updateCredentialStatus(userId, patch);
     return matches;
   }
@@ -210,19 +208,9 @@ export class MemoryStore extends WorkerOnlyMethods implements Store {
   /** Same filter and order as the D1 store. */
   async listRenewalCandidates(opts: Parameters<Store['listRenewalCandidates']>[0]): Promise<RenewalCandidate[]> {
     const visited = (c: CredentialRow) => Math.max(c.sessionOkAt ?? 0, c.sessionTriedAt ?? 0);
-    const due = (c: CredentialRow) => {
-      if (c.sessionEnc) return visited(c) <= opts.sessionBefore;
-      const tried = c.autologinAt ?? null;
-      const retry = tried === null || tried <= opts.autologinBefore || tried < c.connectedAt;
-      return c.status === 'active' && c.privateTokenEnc !== null && retry;
-    };
-    const must = (c: CredentialRow) =>
-      c.sessionEnc && visited(c) > opts.mustVisit.after && visited(c) <= opts.mustVisit.until ? 0 : 1;
-    const urgency = (c: CredentialRow) =>
-      c.sessionEnc ? visited(c) + opts.sessionIdleMs : (c.autologinAt ?? 0) + opts.autologinRetryMs;
     return [...this.credentials.values()]
-      .filter(due)
-      .sort((a, b) => must(a) - must(b) || urgency(a) - urgency(b) || a.userId - b.userId)
+      .filter((c) => Boolean(c.sessionEnc) && visited(c) <= opts.visitedBefore)
+      .sort((a, b) => visited(a) - visited(b) || a.userId - b.userId)
       .slice(0, Math.max(1, Math.floor(opts.limit)))
       .flatMap((c) => {
         const u = this.users.get(c.userId);

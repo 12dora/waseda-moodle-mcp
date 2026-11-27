@@ -102,29 +102,29 @@ describe('MemoryStore credential, sessions, keys', () => {
     const b = await s.upsertUser({ moodleUserId: 1002, fullname: 'B', lang: 'en' });
     const c = await s.upsertUser({ moodleUserId: 1003, fullname: 'C', lang: 'en' });
     await s.putCredential(credential(a.id));
-    await s.updateCredentialStatus(a.id, { sessionEnc: 'enc-cookie', sessionOkAt: 10 });
+    await s.updateCredentialStatus(a.id, { sessionEnc: 'enc-cookie', sesskeyEnc: 'enc-key', sessionOkAt: 10 });
     await s.putCredential({ ...credential(a.id), tokenEnc: 'enc-2' });
-    expect(await s.getCredential(a.id)).toMatchObject({ tokenEnc: 'enc-2', sessionEnc: 'enc-cookie', sessionOkAt: 10 });
-    await s.putCredential({ ...credential(b.id), privateTokenEnc: 'p' });
-    await s.putCredential({ ...credential(c.id), privateTokenEnc: 'p' });
+    expect(await s.getCredential(a.id)).toMatchObject({
+      tokenEnc: 'enc-2',
+      sessionEnc: 'enc-cookie',
+      sesskeyEnc: 'enc-key',
+      sessionOkAt: 10,
+    });
+    await s.putCredential({ ...credential(b.id), tokenEnc: null, tokenHash: null, tokenHint: null });
+    await s.updateCredentialStatus(b.id, { sessionEnc: 'enc-b', sessionOkAt: 5, sessionTriedAt: 8 });
+    await s.putCredential({ ...credential(c.id), privateTokenEnc: 'p' }); // no session: never a candidate
     await s.updateCredentialStatus(c.id, { autologinAt: 900 });
-    const opts = {
-      sessionBefore: 500,
-      autologinBefore: 500,
-      sessionIdleMs: 1000,
-      autologinRetryMs: 1000,
-      mustVisit: { after: 0, until: 0 },
-      limit: 5,
-    };
-    const ids = (await s.listRenewalCandidates(opts)).map((r) => r.user.id);
-    expect(ids).toEqual([b.id, a.id]); // b's retry came due (1000) before a's session idles out (1010)
-    const must = await s.listRenewalCandidates({ ...opts, mustVisit: { after: 0, until: 10 }, limit: 1 });
-    expect(must.map((r) => r.user.id)).toEqual([a.id]); // a idles out before the next run: it goes first
+    const ids = async (visitedBefore: number, limit = 5) =>
+      (await s.listRenewalCandidates({ visitedBefore, limit })).map((r) => r.user.id);
+    expect(await ids(100)).toEqual([b.id, a.id]); // most idle first (b last visited at 8, a at 10)
+    expect(await ids(100, 1)).toEqual([b.id]);
+    expect(await ids(9)).toEqual([b.id]);
 
     const drop = { sessionEnc: null };
     expect(await s.updateCredentialIf(a.id, { tokenHash: 'h', sessionEnc: 'other' }, drop)).toBe(false);
     expect(await s.updateCredentialIf(a.id, { tokenHash: 'h', sessionEnc: 'enc-cookie' }, drop)).toBe(true);
     expect((await s.getCredential(a.id))?.sessionEnc).toBeNull();
+    expect(await s.updateCredentialIf(b.id, { tokenHash: null, sessionEnc: 'enc-b' }, drop)).toBe(true);
     expect(await s.updateCredentialIf(c.id, { tokenHash: 'h', autologinAt: null }, { autologinAt: 1 })).toBe(false);
   });
 

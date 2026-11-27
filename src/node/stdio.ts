@@ -1,9 +1,9 @@
 /**
- * Local single-user entry: MCP over stdio, talking to Waseda Moodle with the user's own token.
+ * Local single-user entry: MCP over stdio, talking to Waseda Moodle with the user's own sign-in.
  *
- *   waseda-moodle-mcp                      serve (reads WMM_TOKEN or ~/.config/waseda-moodle-mcp/token)
- *   waseda-moodle-mcp --read-only          same, without the write tools (or WMM_READ_ONLY=1)
- *   waseda-moodle-mcp connect ["<link>"]   store the token from a Moodle launch link (argument or stdin)
+ *   waseda-moodle-mcp                        serve (reads WMM_SESSION / WMM_TOKEN or the saved sign-in)
+ *   waseda-moodle-mcp --read-only            same, without the write tools (or WMM_READ_ONLY=1)
+ *   waseda-moodle-mcp connect ["<value>"]    save a session cookie or launch link (argument or stdin)
  *
  * stdout belongs to the protocol while serving: everything we say goes to stderr.
  */
@@ -16,17 +16,19 @@ import { b64urlEncode, createSigner, importMasterKey } from '../core/crypto';
 import { InvalidInput, NeedsReconnect, WmmError } from '../core/errors';
 import { buildMcpServer, SERVER_VERSION } from '../core/mcp/server';
 import { RECONNECT_STDIO } from '../core/mcp/wording';
-import { MoodleClient } from '../core/moodle/client';
-import { launchUrl, MOODLE_URL, parseLaunch } from '../core/moodle/launch';
+import { MOODLE_URL } from '../core/moodle/launch';
 import type { Scope } from '../core/types';
 import { type Command, parseArgs } from './args';
-import { createMoodleProvider } from './moodle-session';
+import { connect } from './connect';
+import { loadCredential, readStdin } from './credential-file';
+import { LiveConnection } from './live-connection';
+import { createMoodleProvider, ReadCache } from './moodle-session';
 import { makeProxyFetch } from './proxy';
 import { MemoryStore } from './store-memory';
-import { readStdin, readToken, writeToken } from './token-file';
 
 const CONFIG_DIR = process.env.WMM_CONFIG_DIR || join(homedir(), '.config', 'waseda-moodle-mcp');
-const TOKEN_FILE = join(CONFIG_DIR, 'token');
+/** The name predates the web session; the file now holds the whole sign-in (credential-file.ts). */
+const CREDENTIAL_FILE = join(CONFIG_DIR, 'token');
 const STATE_FILE = join(CONFIG_DIR, 'state.json');
 
 const log = (msg: string) => console.error(`[waseda-moodle-mcp] ${msg}`);
@@ -34,85 +36,56 @@ const log = (msg: string) => console.error(`[waseda-moodle-mcp] ${msg}`);
 const USAGE = `waseda-moodle-mcp ${SERVER_VERSION}
 
 Usage:
-  waseda-moodle-mcp [--read-only]     Run the MCP server on stdio.
-  waseda-moodle-mcp connect ["<link>"] Save your Moodle token (mode 0600) in ${TOKEN_FILE}.
-                                      Without an argument (or with "-") the link is read from stdin.
+  waseda-moodle-mcp [--read-only]       Run the MCP server on stdio.
+  waseda-moodle-mcp connect ["<value>"] Save your Moodle sign-in (mode 0600) in ${CREDENTIAL_FILE}.
+                                        Without an argument (or with "-") the value is read from stdin.
 
-How to get the link:
-  1. Open ${launchUrl('wmm')} in a browser where you are signed in to Waseda Moodle.
-  2. Right-click the "Open in app" link on that page, choose "Copy link address".
-  3. Run: waseda-moodle-mcp connect "<pasted link>"
+How to copy the session cookie:
+  1. Sign in to Waseda Moodle (${MOODLE_URL}).
+  2. Open the developer tools (F12; Option+Command+I on a Mac), then Application
+     (Firefox and Safari: Storage) > Cookies > ${MOODLE_URL}.
+  3. Copy the value of MoodleSession, run "waseda-moodle-mcp connect", paste it and press Ctrl-D.
+Treat this value like a password. The running server keeps the session alive; signing out of Moodle ends it.
+A Moodle app launch link (ltgopenlmsapp://...) also works while Waseda's app service is on.
 
-Environment: WMM_TOKEN (token or link, overrides the file), WMM_READ_ONLY=1, WMM_CONFIG_DIR,
-HTTPS_PROXY / ALL_PROXY / NO_PROXY.`;
+Environment: WMM_SESSION (cookie) and WMM_TOKEN (token or link) replace the saved file, WMM_READ_ONLY=1,
+WMM_CONFIG_DIR, HTTPS_PROXY / ALL_PROXY / NO_PROXY.`;
 
 const out = (text: string): void => {
   process.stdout.write(`${text}\n`);
 };
 
-interface Identity {
-  userId: number;
-  fullname: string;
-  lang: string;
-}
-
-/** core_webservice_get_site_info: proves the token works and tells us whose it is. */
-async function identify(token: string, fetchImpl: typeof fetch | undefined): Promise<Identity> {
-  const client = new MoodleClient({ token, moodleUserId: 0, fetch: fetchImpl });
-  const info = await client.call<{ siteurl?: unknown; userid?: unknown; fullname?: unknown; lang?: unknown }>(
-    'core_webservice_get_site_info',
-  );
-  let siteOk = false;
-  try {
-    siteOk = typeof info.siteurl === 'string' && new URL(info.siteurl).origin === new URL(MOODLE_URL).origin;
-  } catch {
-    /* handled below */
-  }
-  if (!siteOk || typeof info.userid !== 'number' || info.userid <= 0) {
-    throw new InvalidInput('That token does not belong to Waseda Moodle.');
-  }
-  return {
-    userId: info.userid,
-    fullname: typeof info.fullname === 'string' && info.fullname ? info.fullname : `User ${info.userid}`,
-    lang: typeof info.lang === 'string' && info.lang ? info.lang : 'en',
-  };
-}
+const moodleFetch = (): typeof fetch => makeProxyFetch() ?? ((input, init) => globalThis.fetch(input, init));
 
 async function connectCommand(input: string | null): Promise<void> {
-  const link = input ?? (await readStdin());
-  if (!link) throw new InvalidInput('No launch link given. Pass it as an argument or pipe it in (see --help).');
-  const { token } = parseLaunch(link);
-  const who = await identify(token, makeProxyFetch()).catch((e: unknown) => {
-    if (e instanceof NeedsReconnect)
-      throw new InvalidInput('Moodle rejected that token. Get a fresh link (see --help).');
-    throw e;
-  });
-  await writeToken(TOKEN_FILE, token);
-  out(`Connected to Waseda Moodle as ${who.fullname}. Token saved to ${TOKEN_FILE}.`);
+  const value = input ?? (await readStdin());
+  if (!value) throw new InvalidInput('No value given. Pass the MoodleSession value or pipe it in (see --help).');
+  const { fullname, credential } = await connect(value, { file: CREDENTIAL_FILE, fetch: moodleFetch() });
+  const saved = [credential.session && 'Moodle session', credential.token && 'app token'].filter(Boolean);
+  out(`Connected to Waseda Moodle as ${fullname}. Saved the ${saved.join(' and ')} to ${CREDENTIAL_FILE}.`);
+  if (process.env.WMM_SESSION || process.env.WMM_TOKEN) {
+    out('Note: WMM_SESSION / WMM_TOKEN are set and replace the saved file; unset them to use it.');
+  }
 }
 
 async function serveCommand(readOnly: boolean): Promise<void> {
-  const token = await readToken(TOKEN_FILE);
-  const fetchImpl = makeProxyFetch();
-  const who = await identify(token, fetchImpl);
+  const loaded = await loadCredential(CREDENTIAL_FILE);
+  const cache = new ReadCache();
+  const connection = new LiveConnection({ ...loaded, fetch: moodleFetch(), log, onChange: () => cache.clear() });
+  const who = await connection.start();
 
   const store = new MemoryStore({
     persistPath: STATE_FILE,
     onPersistError: () => log(`Could not read or write ${STATE_FILE}; settings and pending actions are not persisted.`),
   });
-  const user = await store.upsertUser({ moodleUserId: who.userId, fullname: who.fullname, lang: who.lang });
+  const user = await store.upsertUser(who);
   const signer = createSigner(await importMasterKey(b64urlEncode(crypto.getRandomValues(new Uint8Array(32)))));
   const scopes: Scope[] = readOnly ? ['moodle:read'] : ['moodle:read', 'moodle:write'];
   const ctx: ServiceContext = {
     user,
     store,
     signer,
-    moodle: createMoodleProvider({
-      token,
-      moodleUserId: who.userId,
-      fetch: fetchImpl,
-      onTokenInvalid: async () => log(RECONNECT_STDIO),
-    }),
+    moodle: createMoodleProvider(() => connection.clientOptions(), cache),
     publicUrl: '',
     mode: 'stdio',
     scopes,
@@ -124,7 +97,9 @@ async function serveCommand(readOnly: boolean): Promise<void> {
   log(`serving ${who.fullname} (${readOnly ? 'read-only' : 'read + write'}).`);
 
   const stop = () => {
-    void handle.close().finally(() => store.flush().finally(() => process.exit(0)));
+    connection.stop();
+    const saved = () => Promise.all([store.flush(), connection.flush()]);
+    void handle.close().finally(() => saved().finally(() => process.exit(0)));
   };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
