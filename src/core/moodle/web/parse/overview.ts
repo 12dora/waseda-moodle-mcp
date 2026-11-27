@@ -9,6 +9,8 @@ import { attr, findAll, text } from '../html';
 import type { WebSession } from '../types';
 
 interface OverviewRow {
+  /** The activity type, from the row's link to its `/mod/<modname>/view.php` page; null when the row has none. */
+  modname: string | null;
   /** `data-mdl-overview-value` per item (only cells that carry one; '' is a value: "none"). */
   values: Record<string, string>;
   /** Visible text per item. */
@@ -22,9 +24,10 @@ interface OverviewRow {
 const GRADE_ITEMS = new Set(['grade', '評点']);
 
 const MODNAME = /^[a-z][a-z0-9_]*$/;
+const MOD_LINK = /\/mod\/([a-z][a-z0-9_]*)\/view\.php/;
 
 function readRow(rowHtml: string): OverviewRow {
-  const row: OverviewRow = { values: {}, text: {} };
+  const row: OverviewRow = { modname: MOD_LINK.exec(rowHtml)?.[1] ?? null, values: {}, text: {} };
   for (const td of findAll(rowHtml, { attr: 'data-mdl-overview-item' })) {
     const raw = attr(td.attrs, 'data-mdl-overview-item');
     if (!raw) continue;

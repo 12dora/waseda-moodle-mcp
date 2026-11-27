@@ -323,11 +323,14 @@ function fetchOrder(ctx: ServiceContext, courses: LookupCourse[], at: number): L
  * Syllabus info per course id (`null` = unknown). Never throws: the scope must not depend on a third-party site.
  * `syllabusLookup: false` (kill switch, and the scheduled sweep) serves cached rows only and fetches nothing.
  * At most 12 fetches (3 at a time) and 5 s in total per call; `sharedBudget` makes them cover the whole request.
+ * `waitMs`: answer after at most this long with what is known by then (cached rows + fetches done); the fetches still
+ * running finish past the response (ctx.defer) and fill the cache for the next call, so a hanging site never holds
+ * up a caller that does not need the terms right away (get_due_items).
  */
 export async function lookupTerms(
   ctx: ServiceContext,
   courses: LookupCourse[],
-  opts: { syllabusLookup?: boolean; sharedBudget?: boolean } = {},
+  opts: { syllabusLookup?: boolean; sharedBudget?: boolean; waitMs?: number } = {},
 ): Promise<Map<number, SyllabusInfo | null>> {
   const at = nowMs();
   const state = requestState(ctx);
@@ -360,9 +363,33 @@ export async function lookupTerms(
       await persist(ctx, course.idnumber, rowJson(found, cache.get(course.idnumber)?.info ?? null), at);
     }
   };
-  await Promise.all(Array.from({ length: FETCH_CONCURRENCY }, worker)); // highest-priority courses go first
-  state.spent += allowed - budget.left;
-  return result;
+  // highest-priority courses go first
+  const work = Promise.all(Array.from({ length: FETCH_CONCURRENCY }, worker)).then(() => {
+    state.spent += allowed - budget.left;
+  });
+  if (opts.waitMs === undefined) {
+    await work;
+    return result;
+  }
+  return waitBounded(ctx, work, result, opts.waitMs);
+}
+
+/** `result` as it stands when `work` ends or `waitMs` passes (a snapshot then: the work keeps filling the cache). */
+async function waitBounded<T>(
+  ctx: ServiceContext,
+  work: Promise<void>,
+  result: Map<number, T>,
+  waitMs: number,
+): Promise<Map<number, T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<'late'>((resolve) => {
+    timer = setTimeout(() => resolve('late'), Math.max(0, waitMs));
+  });
+  const outcome = await Promise.race([work.then(() => 'done' as const), late]);
+  clearTimeout(timer);
+  if (outcome === 'done') return result;
+  ctx.defer(work.catch(() => undefined));
+  return new Map(result);
 }
 
 /**

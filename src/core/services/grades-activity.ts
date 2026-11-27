@@ -1,10 +1,16 @@
-/** Grades for courses whose gradebook is hidden: collected from assignment feedback and quiz results. */
+/**
+ * Grades for courses whose gradebook is hidden. Web-service channel: assignment feedback and quiz results (2 list
+ * calls + up to 25 per-activity calls). Web channel: every activity read is a page and Moodle serialises them, so the
+ * course's activity overview (ONE page) gives the user's grade of every assignment and quiz instead.
+ */
 
 import type { MoodleApi } from '../context';
 import { MoodleError, MoodleUnavailable } from '../errors';
 import { decodeEntities, htmlToMarkdown } from '../html';
+import { readOverview } from '../moodle/web/parse/overview';
 import { fromTs, nowSec } from '../time';
 import type { GradeItem } from '../types';
+import { webSessionOf } from './activity/web';
 import { cleanDisplay } from './grade-format';
 
 const ASSIGNMENTS_FN = 'mod_assign_get_assignments';
@@ -169,14 +175,60 @@ async function quizItem(api: MoodleApi, courseId: number, q: RawQuiz): Promise<G
   return mapQuizGrade({ ...q, grade: own?.grade }, best);
 }
 
+/** What the activity grades came from; `unchecked` counts activities left out by the caps. */
+export interface ActivityGrades {
+  items: GradeItem[];
+  unchecked: number;
+  source: 'activities' | 'overview';
+}
+
+const GRADED_MODULES = ['assign', 'quiz'] as const;
+
+interface OverviewGradeRow {
+  modname: string | null;
+  values: Record<string, string>;
+  text: Record<string, string>;
+}
+
 /**
- * At most 2 list calls + 25 per-activity calls. `unchecked` counts activities left out by the caps.
- * Assignments: deadline-passed first; quizzes: newest first.
+ * An overview row as an item; null when the user has no grade ('' / '-') or the row is not an assignment or quiz.
+ * The overview shows the user's grade only: no maximum (so no range or percentage), no feedback, no grading date.
  */
-export async function collectActivityGrades(
-  api: MoodleApi,
-  courseId: number,
-): Promise<{ items: GradeItem[]; unchecked: number }> {
+export function overviewGradeItem(cmid: number, row: OverviewGradeRow): GradeItem | null {
+  const modname = GRADED_MODULES.find((m) => m === row.modname);
+  const value = row.values.grade ?? '';
+  if (!modname || !/\d/.test(value)) return null;
+  const n = Number(value);
+  return {
+    name: decodeEntities(row.values.name || row.text.name || '') || '(unnamed)',
+    itemType: 'mod',
+    modname,
+    cmid,
+    grade: cleanDisplay(row.text.grade) ?? (Number.isFinite(n) ? num2(n) : value),
+    range: null,
+    percentage: null,
+    feedback: null,
+    weight: null,
+    gradedAt: null,
+  };
+}
+
+/** Web channel: one overview page for all assignments and quizzes of the course (a failing page: no items). */
+async function overviewGrades(api: MoodleApi, courseId: number): Promise<ActivityGrades> {
+  const rows = await orSkip(readOverview(webSessionOf(api), courseId, GRADED_MODULES));
+  const items = [...(rows ?? [])].map(([cmid, row]) => overviewGradeItem(cmid, row)).filter(present);
+  return { items, unchecked: 0, source: 'overview' };
+}
+
+/**
+ * Web channel: the course's activity overview (one page). Otherwise at most 2 list calls + 25 per-activity calls;
+ * assignments deadline-passed first, quizzes newest first.
+ */
+export function collectActivityGrades(api: MoodleApi, courseId: number): Promise<ActivityGrades> {
+  return api.channel === 'web' ? overviewGrades(api, courseId) : activityGrades(api, courseId);
+}
+
+async function activityGrades(api: MoodleApi, courseId: number): Promise<ActivityGrades> {
   const [assignRes, quizRes] = await Promise.all([
     orSkip(api.call<{ courses?: Array<{ assignments?: RawAssignment[] }> }>(ASSIGNMENTS_FN, { courseids: [courseId] })),
     orSkip(api.call<{ quizzes?: RawQuiz[] }>(QUIZZES_FN, { courseids: [courseId] })),
@@ -200,5 +252,6 @@ export async function collectActivityGrades(
   return {
     items: [...assignItems, ...quizItems].filter(present),
     unchecked: assignments.length - take.assigns + (quizzes.length - take.quizzes),
+    source: 'activities',
   };
 }

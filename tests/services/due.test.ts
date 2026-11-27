@@ -70,10 +70,14 @@ function event(id: number, inst: number, extra: Partial<RawActionEvent> = {}): R
 }
 
 /** A paged feed: page n returns `sizes[n]` events with consecutive ids; lastid mirrors Moodle. */
+/** Pages like Moodle: by `aftereventid` (the last id of the previous page), not by call order. */
 function pagedFeed(sizes: number[]) {
-  return (_params: Record<string, unknown>, callIndex: number) => {
-    const size = sizes[callIndex] ?? 0;
-    const start = sizes.slice(0, callIndex).reduce((a, b) => a + b, 0);
+  return (params: Record<string, unknown>) => {
+    const after = typeof params.aftereventid === 'number' ? params.aftereventid : null;
+    const ends = sizes.map((_, k) => 1000 + sizes.slice(0, k + 1).reduce((a, b) => a + b, 0) - 1);
+    const page = after === null ? 0 : ends.indexOf(after) + 1;
+    const size = page > 0 || after === null ? (sizes[page] ?? 0) : 0;
+    const start = sizes.slice(0, page).reduce((a, b) => a + b, 0);
     const events = Array.from({ length: size }, (_, i) => event(1000 + start + i, 1 + start + i));
     return { events, firstid: events[0]?.id ?? 0, lastid: events[events.length - 1]?.id ?? 0 };
   };
@@ -222,6 +226,29 @@ const SCOPE_RESPONSES = {
 const calls = (api: { calls: Array<{ fn: string }> }, fn: string) => api.calls.filter((c) => c.fn === fn);
 
 describe('getDueItems', () => {
+  it('never waits on a hanging syllabus site when the user confirmed their courses (it runs on)', async () => {
+    const fetchFn = vi.fn(() => new Promise<Response>(() => undefined)); // the public site never answers
+    vi.stubGlobal('fetch', fetchFn);
+    try {
+      const first = timeline.courses[0] as { id: number };
+      const course = { ...first, idnumber: '2026570010006202' }; // a class course: looked up
+      const { ctx, deferred } = makeFakeContext({
+        responses: {
+          [GLOBAL]: eventsFixture,
+          [TIMELINE]: { courses: [course] },
+          [ENROL]: [{ id: course.id, lastaccess: NOW_SEC - DAY }],
+        },
+        user: { settings: { myCourseIds: [course.id] } },
+      });
+      const list = await getDueItems(ctx);
+      expect(list.scope.courseIds).toEqual([course.id]);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(deferred).toHaveLength(1); // the lookup runs on past the answer
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('queries the default window and returns the merged list with scope and sweep info', async () => {
     const { ctx, api } = makeFakeContext({ responses: { [GLOBAL]: eventsFixture, ...SCOPE_RESPONSES } });
     const list = await getDueItems(ctx);

@@ -8,12 +8,18 @@ import {
   mapGradeItem,
   mapGradeItems,
 } from '../../src/core/services/grades';
-import { mapAssignGrade, mapQuizGrade } from '../../src/core/services/grades-activity';
+import {
+  collectActivityGrades,
+  mapAssignGrade,
+  mapQuizGrade,
+  overviewGradeItem,
+} from '../../src/core/services/grades-activity';
 import fallback from '../fixtures/be2/grade_fallback.json';
 import gradeItems from '../fixtures/be2/grade_items.json';
 import overview from '../fixtures/be2/grades_overview.json';
 import timeline from '../fixtures/be2/timeline_courses.json';
 import { makeFakeContext } from '../helpers/fake-context';
+import { makeWebApi } from './web-channel';
 
 const TIMELINE = 'core_course_get_enrolled_courses_by_timeline_classification';
 const OVERVIEW = 'gradereport_overview_get_course_grades';
@@ -390,6 +396,84 @@ describe('getGrades activity fallback (gradebook hidden)', () => {
       grade: '3.00',
       range: null,
       percentage: null,
+    });
+  });
+});
+
+describe('activity grades on the web channel (gradebook hidden)', () => {
+  // invented rows in the shape of course/overview.php (Moodle 5): name, duedate, submissionstatus, localized grade
+  const row = (mod: string, cmid: number, name: string, value: string, shown: string) => `
+<tr data-mdl-overview-cmid="${cmid}">
+<td data-mdl-overview-item="name" data-mdl-overview-value="${name}">
+<a href="https://wsdmoodle.waseda.jp/mod/${mod}/view.php?id=${cmid}" class="activityname">${name}</a></td>
+<td data-mdl-overview-item="duedate" data-mdl-overview-value="1791471540">2026年 10月 8日, 23:59</td>
+<td data-mdl-overview-item="評点" data-mdl-overview-value="${value}"> ${shown} </td>
+</tr>`;
+  const page = `<div id="region-main">
+<table><tbody>${row('assign', 8101, 'レポート &amp; 感想', '85.00000', '85.00')}
+${row('assign', 8102, '未採点の課題', '-', '-')}</tbody></table>
+<table><tbody>${row('quiz', 8201, '小テスト 1', '23.83333', '23.83')}
+${row('quiz', 8202, '小テスト 2', '', '')}</tbody></table></div>`;
+  const OVERVIEW_BOTH = '/course/overview.php?id=99101&expand[]=assign&expand[]=quiz';
+
+  it('reads every assignment and quiz grade from ONE overview page, opening no activity page', async () => {
+    const api = makeWebApi({ pages: { [OVERVIEW_BOTH]: page } });
+    const res = await collectActivityGrades(api, 99101);
+    expect(res.source).toBe('overview');
+    expect(res.unchecked).toBe(0);
+    expect(res.items).toEqual([
+      {
+        name: 'レポート & 感想',
+        itemType: 'mod',
+        modname: 'assign',
+        cmid: 8101,
+        grade: '85.00',
+        range: null,
+        percentage: null,
+        feedback: null,
+        weight: null,
+        gradedAt: null,
+      },
+      expect.objectContaining({ modname: 'quiz', cmid: 8201, grade: '23.83', range: null }),
+    ]);
+    expect(api.pageCalls).toEqual([`GET ${OVERVIEW_BOTH}`]); // before: 2 overview pages + one page per activity
+    expect(api.calls).toEqual([]);
+  });
+
+  it('getGrades notes the overview source; a failing overview page gives no items, not an error', async () => {
+    const hidden = new MoodleError('You cannot view grades', 'nopermissiontoviewgrades');
+    const handlers = {
+      [ITEMS]: () => {
+        throw hidden;
+      },
+      [TIMELINE]: timeline,
+    };
+    const variants: Array<Record<string, string>> = [{ [OVERVIEW_BOTH]: page }, {}];
+    for (const pages of variants) {
+      const api = makeWebApi({ pages, handlers });
+      const { ctx } = makeFakeContext({});
+      const res = await getGrades({ ...ctx, moodle: async () => api }, { courseId: 99101 });
+      if (!('course' in res)) throw new Error('expected a course result');
+      expect(res.note).toContain("course's activity overview");
+      expect(res.note).not.toContain('not checked');
+      expect(res.course.items).toHaveLength(Object.keys(pages).length ? 2 : 0);
+      expect(api.pageCalls).toEqual([`GET ${OVERVIEW_BOTH}`]);
+    }
+  });
+
+  it('overviewGradeItem skips rows without a grade or of another activity type', () => {
+    const r = (modname: string | null, grade: string) => ({
+      modname,
+      values: { name: 'X', grade },
+      text: { name: 'X', grade },
+    });
+    expect(overviewGradeItem(1, r('assign', '-'))).toBeNull();
+    expect(overviewGradeItem(1, r('quiz', ''))).toBeNull();
+    expect(overviewGradeItem(1, r('forum', '3'))).toBeNull();
+    expect(overviewGradeItem(1, r(null, '3'))).toBeNull();
+    expect(overviewGradeItem(1, { modname: 'quiz', values: { grade: '7.5' }, text: {} })).toMatchObject({
+      name: '(unnamed)',
+      grade: '7.50',
     });
   });
 });

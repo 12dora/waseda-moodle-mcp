@@ -47,8 +47,9 @@ const row = (cmid: number, status: string, grade = '') => `<tr data-mdl-overview
 const overview = (rows: string[]) =>
   `<div id="region-main"><table class="course-overview-table"><tbody>${rows.join('\n')}</tbody></table></div>`;
 
-const OVERVIEW_A = '/course/overview.php?id=99101&expand[]=assign';
-const OVERVIEW_B = '/course/overview.php?id=99102&expand[]=assign';
+// one overview page per course answers its assignments and quizzes
+const OVERVIEW_A = '/course/overview.php?id=99101&expand[]=assign&expand[]=quiz';
+const OVERVIEW_B = '/course/overview.php?id=99102&expand[]=assign&expand[]=quiz';
 
 function setup(opts: WebApiOptions) {
   const api = makeWebApi(opts);
@@ -117,6 +118,39 @@ describe('attachSubmissions on the web channel', () => {
     expect(checked.map(([cmid]) => Number(cmid)).sort()).toEqual([7403, 7404, 7405, 7406]);
     expect(out[7401]).toBeNull();
     expect(out[7402]).toBeNull();
+  });
+
+  it('opens at most 6 quiz pages (nearest first); a later quiz joins an overview page read anyway', async () => {
+    const quizRow = (cmid: number, grade: string) => `<tr data-mdl-overview-cmid="${cmid}">
+<td data-mdl-overview-item="name" data-mdl-overview-value="小テスト ${cmid}">x</td>
+<td data-mdl-overview-item="評点" data-mdl-overview-value="${grade}"> ${grade || '-'} </td></tr>`;
+    const { api, ctx } = setup({
+      pages: { [OVERVIEW_A]: overview([row(7201, '提出なし'), quizRow(7309, '8.00000'), quizRow(7310, '-')]) },
+      handlers: {
+        mod_quiz_get_user_quiz_attempts: { attempts: [] },
+        mod_quiz_get_attempt_access_information: { preventnewattemptreasons: [] },
+      },
+    });
+    // quizzes 7301…7310 due 10-11 … 10-20; course 99102 has no overview page planned (no assignment there)
+    const quizzes = Array.from({ length: 10 }, (_, i) =>
+      item({
+        kind: 'quiz',
+        cmid: 7301 + i,
+        courseId: i === 7 ? 99102 : 99101,
+        dueAt: `2026-10-${String(11 + i).padStart(2, '0')}T23:59:00+09:00`,
+      }),
+    );
+    const items = [...quizzes, item({ cmid: 7201, dueAt: '2026-10-25T23:59:00+09:00' })];
+    const out = byCmid(await attachSubmissions(ctx, items));
+    const quizPages = new Set(api.calls.map((c) => c.hint?.cmid));
+    expect([...quizPages].sort()).toEqual([7301, 7302, 7303, 7304, 7305, 7306]);
+    expect(api.pageCalls).toEqual([`GET ${OVERVIEW_A}`]); // the fake answers the quiz reads through `calls`
+    for (const cmid of [7301, 7306]) expect(out[cmid]).toMatchObject({ status: 'none' });
+    expect(out[7309]).toEqual({ status: 'submitted', canContinue: false, submittedAt: null, graded: true, note: null });
+    expect(out[7310]).toBeNull(); // no grade: an attempt may still exist
+    expect(out[7307]).toBeNull(); // not on the page
+    expect(out[7308]).toBeNull(); // its course's overview is not read for it alone
+    expect(out[7201]).toMatchObject({ status: 'none' });
   });
 
   it('leaves the statuses unknown when an overview page fails', async () => {

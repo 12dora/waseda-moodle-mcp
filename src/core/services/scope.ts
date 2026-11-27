@@ -163,6 +163,8 @@ const needsEventSignal = (candidates: Candidate[], now: number) =>
 interface ScopeState {
   /** Kill switch for the public syllabus lookup (callers pass it from their env; the cron serves the cache only). */
   syllabusLookup: boolean;
+  /** How long the scope waits for syllabus fetches (undefined = until they end, at most their 5 s deadline). */
+  syllabusWaitMs: number | undefined;
   /** Whether the automatic suggestion may spend one calendar call on its event signal (not in the cron). */
   calendarSignal: boolean;
   scope: Promise<CourseScope> | null;
@@ -176,22 +178,32 @@ const states = new WeakMap<ServiceContext, ScopeState>();
 function stateOf(ctx: ServiceContext): ScopeState {
   let s = states.get(ctx);
   if (!s) {
-    s = { syllabusLookup: ctx.syllabusLookup ?? true, calendarSignal: true, scope: null, terms: null, events: null };
+    s = {
+      syllabusLookup: ctx.syllabusLookup ?? true,
+      syllabusWaitMs: undefined,
+      calendarSignal: true,
+      scope: null,
+      terms: null,
+      events: null,
+    };
     states.set(ctx, s);
   }
   return s;
 }
 
-async function lookupCourseTerms(ctx: ServiceContext, raw: RawCourse[], enabled: boolean) {
+async function lookupCourseTerms(ctx: ServiceContext, raw: RawCourse[], state: ScopeState) {
   const lookups = raw.map((c) => ({ id: Number(c.id ?? 0), idnumber: c.idnumber ?? '' }));
-  const infos = await lookupTerms(ctx, lookups, { syllabusLookup: enabled });
+  const infos = await lookupTerms(ctx, lookups, {
+    syllabusLookup: state.syllabusLookup,
+    waitMs: state.syllabusWaitMs,
+  });
   return new Map([...infos].map(([id, info]) => [id, info?.term ?? null]));
 }
 
 async function computeScope(ctx: ServiceContext, state: ScopeState): Promise<CourseScope> {
   const api = await ctx.moodle();
   const raw = await fetchRawCourses(api);
-  state.terms ??= lookupCourseTerms(ctx, raw, state.syllabusLookup);
+  state.terms ??= lookupCourseTerms(ctx, raw, state);
   const [access, terms] = await Promise.all([fetchLastAccess(api), state.terms]);
   const now = nowMs();
   const candidates = raw.map((r): Candidate => {
@@ -212,14 +224,17 @@ async function computeScope(ctx: ServiceContext, state: ScopeState): Promise<Cou
  * Memoised per ServiceContext (= per request); the options apply to the first resolution of a context.
  * `syllabusLookup: false` (env kill switch, scheduled sweep) stops the public syllabus fetches (cached rows still
  * answer); `calendarSignal: false` (scheduled sweep) skips the one 30-day events call of the automatic suggestion.
+ * `syllabusWaitMs` (get_due_items) bounds the wait for syllabus fetches: terms not known by then are served from the
+ * cache only, the fetches finish past the response (see lookupTerms).
  */
 export function resolveScope(
   ctx: ServiceContext,
-  opts: { syllabusLookup?: boolean; calendarSignal?: boolean } = {},
+  opts: { syllabusLookup?: boolean; calendarSignal?: boolean; syllabusWaitMs?: number } = {},
 ): Promise<CourseScope> {
   const state = stateOf(ctx);
   if (state.scope === null) {
     state.syllabusLookup = opts.syllabusLookup ?? state.syllabusLookup;
+    state.syllabusWaitMs = opts.syllabusWaitMs ?? state.syllabusWaitMs;
     state.calendarSignal = opts.calendarSignal ?? state.calendarSignal;
   }
   state.scope ??= computeScope(ctx, state);

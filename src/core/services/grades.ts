@@ -92,6 +92,13 @@ const NO_PERMISSION = /^nopermission/; // nopermissions, nopermission, nopermiss
 
 const GRADEBOOK_HIDDEN_COURSE_NOTE =
   'Waseda Moodle hides the gradebook; grades were collected from assignment feedback and quiz results.';
+/** Web channel: the course's activity overview (one page) shows the user's grade only. */
+const GRADEBOOK_HIDDEN_OVERVIEW_NOTE =
+  "Waseda Moodle hides the gradebook; grades were collected from the course's activity overview (assignments and " +
+  'quizzes: the grade only, without maximum, percentage or feedback; get_activity shows those for one activity).';
+
+const sourceNote = (source: 'activities' | 'overview') =>
+  source === 'overview' ? GRADEBOOK_HIDDEN_OVERVIEW_NOTE : GRADEBOOK_HIDDEN_COURSE_NOTE;
 
 export type GradesResult = { overview: CourseGrade[]; note?: string } | { course: CourseGrades; note?: string };
 
@@ -133,7 +140,7 @@ async function courseGrades(ctx: ServiceContext, api: MoodleApi, courseId: numbe
   const unchecked = collected.unchecked > 0 ? ` (${collected.unchecked} items not checked)` : '';
   return {
     course: { courseId, courseName, items: collected.items },
-    note: `${GRADEBOOK_HIDDEN_COURSE_NOTE}${unchecked}`,
+    note: `${sourceNote(collected.source)}${unchecked}`,
   };
 }
 

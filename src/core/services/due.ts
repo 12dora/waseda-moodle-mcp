@@ -15,6 +15,12 @@ const BY_COURSE_FN = 'core_calendar_get_action_events_by_course';
 const PAGE_SIZE = 50; // Moodle accepts 1..50
 const MAX_PAGES = 4;
 const DAY = 86_400;
+/**
+ * The due list does not need course terms when the user confirmed their courses (they only feed the suggestion), and
+ * the public syllabus site can hang for its whole 5 s deadline: the scope waits this long at most (cached terms answer
+ * the rest; the fetches finish past the response).
+ */
+const SYLLABUS_WAIT_MS = 1500;
 
 export interface RawActionEvent {
   id?: number;
@@ -256,8 +262,12 @@ export async function getDueItems(ctx: ServiceContext, opts: DueOptions = {}): P
   const to = now + clamp(opts.daysAhead, 1, 120, 14) * DAY;
   const api = await ctx.moodle();
 
-  const { events, truncated } = await collectEvents(pageFetcher(api, { from, to }, courseId));
-  const scope = await resolveScope(ctx);
+  // the scope (enrolled courses, last access, syllabus terms) is resolved while the calendar pages are read
+  const syllabusWaitMs = ctx.user.settings.myCourseIds ? 0 : SYLLABUS_WAIT_MS;
+  const [{ events, truncated }, scope] = await Promise.all([
+    collectEvents(pageFetcher(api, { from, to }, courseId)),
+    resolveScope(ctx, { syllabusWaitMs }),
+  ]);
   const scoped = courseId === undefined ? events : events.filter((e) => e.course?.id === courseId);
   // the calendar is authoritative: items of courses outside the scope are listed apart, never dropped
   const merged = mergeDueEvents(scoped, now);
