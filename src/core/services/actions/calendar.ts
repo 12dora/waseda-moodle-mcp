@@ -2,8 +2,9 @@
  * Personal Moodle calendar events (eventtype 'user', visible to the user only): create, edit, delete. Edit and
  * delete read the event first (core_calendar_get_calendar_event_by_id) and refuse every other event type (course,
  * group, category, site and activity events) and events of other users. Create and edit go through Moodle's own
- * event form (calendar-form.ts; ws create: core_calendar_create_calendar_events); delete is
- * core_calendar_delete_calendar_events (this occurrence only).
+ * event form (calendar-form.ts; ws create: core_calendar_create_calendar_events; edit is web-session only, the token
+ * service has no update function); delete is core_calendar_delete_calendar_events. Edit and delete change one
+ * occurrence of a repeated series, never the series.
  */
 
 import type { MoodleApi, ServiceContext } from '../../context';
@@ -12,8 +13,9 @@ import { htmlToText } from '../../html';
 import { settleChannel } from '../../moodle/web/channel';
 import { fmt, isoJst, nowSec } from '../../time';
 import type { ActionPreview } from '../../types';
+import { webSessionOf } from '../activity/web';
 import { PERSONAL, readCalendarEvent, type StoredEvent } from '../calendar';
-import { type EventFields, parseEventTime, submitEventForm } from './calendar-form';
+import { calendarUrl, type EventFields, parseEventTime, submitEventForm } from './calendar-form';
 import {
   type ActionOutcome,
   assertWriteAllowed,
@@ -101,6 +103,10 @@ function descriptionOf(input: PrepareCalendarEventInput, current: string): strin
 
 const pastWarning = (t: Timing): string[] => (t.timestart < nowSec() ? ['The start time is in the past.'] : []);
 
+/** One occurrence of a repeated series: the action leaves the other occurrences as they are. */
+const seriesWarning = (ev: StoredEvent, done: 'changed' | 'deleted'): string[] =>
+  ev.repeatId ? [`This event is one of a repeated series; only this occurrence is ${done}.`] : [];
+
 // ------------------------------------------------------------------ prepare
 
 async function prepareCreate(ctx: ServiceContext, api: MoodleApi, input: PrepareCalendarEventInput) {
@@ -143,26 +149,23 @@ async function prepareEdit(ctx: ServiceContext, api: MoodleApi, ev: StoredEvent,
     kind: 'calendar_event_edit',
     title: `Edit calendar event '${ev.name}'`,
     details: [`Now: ${ev.name} · ${when(current)}`, 'After the change:', ...eventLines(fields)],
-    warnings: [...pastWarning(timing), ...(same ? ['Nothing changes: the event already has these values.'] : [])],
+    warnings: [
+      ...pastWarning(timing),
+      ...seriesWarning(ev, 'changed'),
+      ...(same ? ['Nothing changes: the event already has these values.'] : []),
+    ],
     payload,
   });
 }
 
 async function prepareDelete(ctx: ServiceContext, api: MoodleApi, ev: StoredEvent) {
-  const payload: DeletePayload = {
-    eventId: ev.id,
-    name: ev.name,
-    url: `${api.baseUrl}/calendar/view.php?view=upcoming`,
-  };
+  const payload: DeletePayload = { eventId: ev.id, name: ev.name, url: calendarUrl(api) };
   const timing = { timestart: ev.timestart, timeend: ev.timestart + ev.timeduration };
   return savePreview(ctx, {
     kind: 'calendar_event_delete',
     title: `Delete calendar event '${ev.name}'`,
     details: [`Name: ${ev.name}`, `When: ${when(timing)}`],
-    warnings: [
-      'Deleting cannot be undone.',
-      ...(ev.repeatId ? ['This event is one of a repeated series; only this occurrence is deleted.'] : []),
-    ],
+    warnings: ['Deleting cannot be undone.', ...seriesWarning(ev, 'deleted')],
     payload,
   });
 }
@@ -194,6 +197,8 @@ export async function prepareCalendarEvent(
   const api = await ctx.moodle();
   await settleChannel(api);
   if (action === 'create') return prepareCreate(ctx, api, input);
+  // the event form is ajax-only and needs the session's sesskey (calendar-form.ts guards the executor the same way)
+  if (action === 'edit') webSessionOf(api, calendarUrl(api));
   const ev = await personalEvent(api, positiveInt(input.eventId, 'event_id'), action);
   return action === 'edit' ? prepareEdit(ctx, api, ev, input) : prepareDelete(ctx, api, ev);
 }

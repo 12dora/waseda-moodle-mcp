@@ -94,6 +94,15 @@ describe('createFileLink', () => {
     await expect(createFileLink(ctx, 'not a url')).rejects.toBeInstanceOf(InvalidInput);
   });
 
+  it('a URL the channel cannot fetch (folder ZIP on ws) fails get_file instead of minting a dead link', async () => {
+    const t = createTestContext();
+    const zip = `${BASE_URL}/mod/folder/download_folder.php?id=99101`;
+    const refusal = new InvalidInput('Folder ZIP downloads are only available through the Moodle web session.');
+    const probe = vi.spyOn(t.moodle, 'fetchFile').mockRejectedValue(refusal);
+    await expect(createFileLink(t.ctx, zip)).rejects.toBe(refusal);
+    expect(probe).toHaveBeenCalledWith(zip, { method: 'HEAD' });
+  });
+
   it('maps a missing or forbidden file', async () => {
     const t = createTestContext();
     await expect(createFileLink(t.ctx, FILE_URL)).rejects.toBeInstanceOf(NotFound); // fake serves 404

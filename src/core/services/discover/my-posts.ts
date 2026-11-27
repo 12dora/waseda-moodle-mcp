@@ -33,7 +33,7 @@ export async function listMyPosts(
   const page = clampInt(opts.page, 0, 0, MAX_PAGE);
   const api = await ctx.moodle();
   await settleChannel(api); // a fresh client may still fall back from the token channel to the session
-  const web = webSessionOf(api);
+  const web = webSessionOf(api, `${api.baseUrl}/mod/forum/user.php?id=${api.moodleUserId}`);
   const parsed = parsePostsPage((await web.page(pathOf(api, courseId, page))).html);
   return { posts: parsed.posts, page, nextPage: parsed.linkedPages.includes(page + 1) ? page + 1 : null };
 }

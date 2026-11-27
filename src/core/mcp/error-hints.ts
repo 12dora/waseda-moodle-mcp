@@ -64,7 +64,7 @@ const KIND_BY_CODE: Readonly<Record<string, Kind>> = {
 const WHAT: Readonly<Partial<Record<Kind, string>>> = {
   noPermission: 'Moodle refused access to this.',
   notFound: 'Moodle could not find this.',
-  webOnly: 'This is not available through the Moodle web session.',
+  webOnly: 'Moodle does not offer this through this connection.',
   maintenance: 'Waseda Moodle is under maintenance.',
 };
 
@@ -78,6 +78,9 @@ const RELIST: Readonly<Record<string, string>> = {
   search_forums: 'list_courses',
   set_course_schedule: 'list_courses',
   set_my_courses: 'list_courses',
+  list_incomplete: 'list_courses',
+  list_my_posts: 'list_courses',
+  download_course_files: 'list_courses or get_course',
   get_activity: 'get_course',
   list_discussions: 'get_course',
   prepare_completion: 'get_course',
@@ -93,6 +96,17 @@ const RELIST: Readonly<Record<string, string>> = {
   get_conversation: 'list_messages',
   prepare_message: 'list_messages',
   prepare_mark_read: 'list_messages or list_notifications',
+  prepare_calendar_event: 'list_calendar_events',
+};
+
+interface Key {
+  noun: string;
+  listed: string;
+}
+const ID: Key = { noun: 'id', listed: 'an id' };
+/** Failing tool -> what it takes instead of an id (the not-found step names it). */
+const KEY_OF: Readonly<Record<string, Key>> = {
+  get_file: { noun: 'file URL', listed: 'a file URL' },
 };
 
 const ACTION_TOOLS = new Set(['confirm_action', 'cancel_action']);
@@ -107,8 +121,9 @@ function notFoundStep(tool: string | undefined): string {
   if (tool && ACTION_TOOLS.has(tool)) return ACTION_STEP;
   // resources (moodle://course/{id}, moodle://syllabus/{id}) take course ids
   const relist = tool?.startsWith('resource:') ? 'list_courses' : tool && RELIST[tool];
-  const how = relist ? `call ${relist} again and use an id it lists` : 'look it up again';
-  return `It may have been deleted, or the id is wrong: ${how}.`;
+  const key = (tool && KEY_OF[tool]) || ID;
+  const how = relist ? `call ${relist} again and use ${key.listed} it lists` : 'look it up again';
+  return `It may have been deleted, or the ${key.noun} is wrong: ${how}.`;
 }
 
 const MAINTENANCE_STEP = 'Try again after the maintenance ends.';
@@ -130,11 +145,17 @@ function waitText(sec: number): string {
 }
 
 /** Null when the message already names the page to reconnect on. */
+function mailReconnectStep(e: MailNeedsReconnect, t: HintTarget): string | null {
+  if (!t.publicUrl) return 'Ask the user to reconnect mail in the console (Settings → Mail), then try again.';
+  const page = `${t.publicUrl}/settings/mail`;
+  return e.message.includes(page) ? null : `Ask the user to reconnect mail at ${page}, then try again.`;
+}
+
+/** Null when the message already names the page to reconnect on. */
 function reconnectStep(e: NeedsReconnect, t: HintTarget): string | null {
-  const mail = e instanceof MailNeedsReconnect;
-  const page = `${t.publicUrl}${mail ? '/settings/mail' : '/connect'}`;
+  if (e instanceof MailNeedsReconnect) return mailReconnectStep(e, t);
+  const page = `${t.publicUrl}/connect`;
   if (e.message.includes(page)) return null;
-  if (mail) return `Ask the user to reconnect mail at ${page}, then try again.`;
   return (
     'Ask the user to sign in to Waseda Moodle in their browser: with the browser extension the connection then ' +
     `renews itself. Without it, reconnect at ${page} (paste the MoodleSession cookie). Then try again.`
@@ -174,7 +195,8 @@ function moodleStep(e: MoodleError, t: HintTarget): { what: string; step: string
 /** The user-facing message of `e`: what happened plus what to do next. */
 export function explainError(e: WmmError, t: HintTarget): string {
   const stdio = t.mode === 'stdio' || !t.publicUrl;
-  if (e instanceof NeedsReconnect && stdio) return RECONNECT_STDIO;
+  // the Moodle connect command; mail is reconnected in the console (reconnectStep)
+  if (e instanceof NeedsReconnect && !(e instanceof MailNeedsReconnect) && stdio) return RECONNECT_STDIO;
   if (e.ownStep) return e.message;
   const moodle = e instanceof MoodleError ? moodleStep(e, t) : null;
   const what = moodle?.what ?? e.message;

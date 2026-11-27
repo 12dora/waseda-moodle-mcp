@@ -100,6 +100,39 @@ describe('downloadCourseFiles on the web-service channel', () => {
     expect(t.moodle.callsTo('mod_assign_get_assignments')).toEqual([{ courseids: [COURSE] }]);
   });
 
+  it("adds the assignment's activity instruction files to the description's, each file once", async () => {
+    const task = fileEntry('505/mod_assign/introattachment/0', 'task.pdf');
+    const rubric = fileEntry('505/mod_assign/activityattachment/0', 'rubric.pdf');
+    const form = fileEntry('505/mod_assign/activityattachment/0', 'form.docx');
+    const assign = { cmid: 7005, introattachments: [task, rubric], activityattachments: [rubric, form] };
+    const t = createTestContext({
+      handlers: {
+        core_course_get_contents: wsSections(),
+        mod_assign_get_assignments: { courses: [{ id: COURSE, assignments: [assign] }] },
+      },
+    });
+    const r = await downloadCourseFiles(t.ctx, COURSE, { kinds: ['assign'] });
+    expect(r.files.map((f) => f.path)).toEqual([
+      '01 第1回/レポート/task.pdf',
+      '01 第1回/レポート/rubric.pdf',
+      '01 第1回/レポート/form.docx',
+    ]);
+  });
+
+  it('decodes HTML entities in section and activity names before they become paths', async () => {
+    const folder = {
+      id: 7201,
+      name: 'Slides &amp; Notes',
+      modname: 'folder',
+      contents: [fileEntry('701/mod_folder/content/0', 'qa.pdf')],
+    };
+    const sections = [{ section: 3, name: 'Week 3 Q&amp;A', modules: [folder] }];
+    const t = createTestContext({ handlers: { core_course_get_contents: sections } });
+    const r = await downloadCourseFiles(t.ctx, COURSE);
+    const paths = r.files.map((f) => [f.activity, f.path]);
+    expect(paths).toEqual([['Slides & Notes', '03 Week 3 Q&A/Slides & Notes/qa.pdf']]);
+  });
+
   it('reads one section only and refuses an unknown section or cursor', async () => {
     const t = createTestContext({ handlers: { core_course_get_contents: wsSections() } });
     const r = await downloadCourseFiles(t.ctx, COURSE, { section: 0 });

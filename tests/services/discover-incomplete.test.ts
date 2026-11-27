@@ -196,6 +196,17 @@ describe('listIncomplete on the web-service channel', () => {
     expect(calls.map((c) => c.fn)).toEqual(['core_course_get_contents']);
     expect(r.courses[0]?.activities[0]).toMatchObject({ cmid: 7101, conditions: ['View'], completion: 'automatic' });
   });
+
+  it('is bounded by the request budget as well (one request per course): the rest are skipped, not fatal', async () => {
+    const { ctx, calls } = makeFakeContext({ core_course_get_contents: CONTENTS, core_session_touch: {} });
+    const api = await ctx.moodle();
+    for (let i = 0; i < 35; i++) await api.call('core_session_touch', { i });
+    // 36 - 35 = 1 request left: one course
+    const r = await listIncomplete(ctx);
+    expect(calls.filter((c) => c.fn === 'core_course_get_contents').map((c) => c.params.courseid)).toEqual([99101]);
+    expect(r.courses.map((c) => c.courseId)).toEqual([99101]);
+    expect(r.skippedCourses).toEqual([{ courseId: 99102, courseName: 'Example Course', reason: 'budget' }]);
+  });
 });
 
 describe('completion condition texts', () => {

@@ -96,8 +96,24 @@ async function pageFiles(api: MoodleApi, courseId: number, item: Item): Promise<
   return listed.length > 0 ? listed : pageContentFiles(page.content ?? '', api.baseUrl);
 }
 
+interface RawAssignment {
+  cmid?: number;
+  introattachments?: RawEntry[] | null;
+  /** Moodle 4+: the "Activity instructions" files, shown beside the description's. */
+  activityattachments?: RawEntry[] | null;
+}
+
 interface RawAssignments {
-  courses?: Array<{ assignments?: Array<{ cmid?: number; introattachments?: RawEntry[] | null }> | null }> | null;
+  courses?: Array<{ assignments?: RawAssignment[] | null }> | null;
+}
+
+/** The description's and the activity instructions' files, each file once. */
+function instructionFiles(assign: RawAssignment): Found[] {
+  const byUrl = new Map<string, RawEntry>();
+  for (const e of [...(assign.introattachments ?? []), ...(assign.activityattachments ?? [])]) {
+    if (e.fileurl && !byUrl.has(e.fileurl)) byUrl.set(e.fileurl, e);
+  }
+  return [...byUrl.values()].flatMap(foundOf);
 }
 
 /** The instructions' files; ws reads every assignment of the course in one call, web the one assignment's page. */
@@ -107,7 +123,7 @@ async function assignFiles(api: MoodleApi, courseId: number, item: Item): Promis
   const all = (res?.courses ?? []).flatMap((c) => c.assignments ?? []);
   const assign = all.find((a) => a.cmid === item.cmid);
   if (!assign) throw new NotFound('Moodle did not show this assignment.');
-  return (assign.introattachments ?? []).flatMap(foundOf);
+  return instructionFiles(assign);
 }
 
 type Resolver = (api: MoodleApi, courseId: number, item: Item) => Promise<Found[]>;

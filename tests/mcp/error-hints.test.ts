@@ -32,9 +32,11 @@ describe('explainError', () => {
     expect(mail).toBe(`Expired. Ask the user to reconnect mail at ${ORIGIN}/settings/mail, then try again.`);
   });
 
-  it('reconnect on stdio: the connect command', () => {
+  it('reconnect on stdio: the connect command, never for mail', () => {
     expect(explainError(new NeedsReconnect(), { mode: 'stdio', publicUrl: '' })).toBe(RECONNECT_STDIO);
     expect(RECONNECT_STDIO).toContain('waseda-moodle-mcp connect');
+    const mail = explainError(new MailNeedsReconnect('Expired.'), { mode: 'stdio', publicUrl: '' });
+    expect(mail).toBe('Expired. Ask the user to reconnect mail in the console (Settings → Mail), then try again.');
   });
 
   it('no permission: hidden by the teacher or not enrolled, with the page to check', () => {
@@ -59,9 +61,30 @@ describe('explainError', () => {
     expect(say(new NotFound('x'))).toContain('look it up again');
   });
 
-  it('web session only: do it on Moodle directly', () => {
-    const text = say(new MoodleError('Not available through the Moodle web session.', 'servicenotavailable'));
-    expect(text).toContain('session. Ask the user to do this on Moodle directly: https://wsdmoodle.waseda.jp/');
+  it.each([
+    ['download_course_files', 'list_courses or get_course'],
+    ['list_incomplete', 'list_courses'],
+    ['list_my_posts', 'list_courses'],
+    ['prepare_calendar_event', 'list_calendar_events'],
+  ])('not found in %s: call %s again', (tool, relist) => {
+    expect(say(new NotFound('x'), tool)).toContain(`call ${relist} again and use an id it lists.`);
+  });
+
+  it('not found in get_file: the file URL, not an id', () => {
+    const text = say(new MoodleError('x', 'invalidrecord'), 'get_file');
+    expect(text).toContain('It may have been deleted, or the file URL is wrong: call get_activity again');
+    expect(text).toMatch(/and use a file URL it lists\.$/);
+  });
+
+  it('web session only: do it on Moodle directly, on the page the error names', () => {
+    const only = 'Only available through the Moodle web session.';
+    const text = say(new MoodleError(only, 'servicenotavailable'));
+    expect(text).toBe(`${only} Ask the user to do this on Moodle directly: https://wsdmoodle.waseda.jp/`);
+    const page = 'https://wsdmoodle.waseda.jp/calendar/view.php?view=upcoming';
+    const named = new MoodleError(only, 'servicenotavailable', '', { url: page });
+    expect(say(named)).toContain(`on Moodle directly: ${page}`);
+    const ja = say(new MoodleError('このサービスは利用できません。', 'servicenotavailable'));
+    expect(ja).toMatch(/^Moodle does not offer this through this connection\. /);
   });
 
   it('unreachable vs maintenance', () => {

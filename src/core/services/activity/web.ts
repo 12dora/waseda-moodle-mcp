@@ -8,10 +8,13 @@ import { MoodleError } from '../../errors';
 import { findAll, text } from '../../moodle/web/html';
 import type { WebSession } from '../../moodle/web/types';
 
-/** The client's session on the web channel; refuses on the web-service channel (callers dispatch on `api.channel`). */
-export function webSessionOf(api: MoodleApi): WebSession {
+/**
+ * The client's session on the web channel; refuses on the web-service channel (callers dispatch on `api.channel`).
+ * `url`: the Moodle page where the user can do it instead (the error hint links it; default: Moodle's front page).
+ */
+export function webSessionOf(api: MoodleApi, url: string | null = null): WebSession {
   const web = api.web;
-  if (!web) throw new MoodleError('Not available through the Moodle web session.', 'servicenotavailable');
+  if (!web) throw new MoodleError('Only available through the Moodle web session.', 'servicenotavailable', '', { url });
   return web;
 }
 

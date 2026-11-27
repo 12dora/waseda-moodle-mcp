@@ -196,3 +196,9 @@ export function templateHtml(content: unknown): string {
   if (!isObj(content) || !Array.isArray(content.templates)) return '';
   return content.templates.map((t) => (isObj(t) && typeof t.html === 'string' ? t.html : '')).join('\n');
 }
+
+/** Moodle requests a listing or search may spend of the client's 40 (the rest stays a margin for the tool). */
+const CALL_ALLOWANCE = 36;
+
+/** Requests left of the allowance on either channel (each page, ajax POST or web-service call counts one). */
+export const callsLeft = (api: MoodleApi): number => Math.max(0, CALL_ALLOWANCE - api.callsMade);

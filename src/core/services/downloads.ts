@@ -12,6 +12,7 @@
 
 import type { MoodleApi, ServiceContext } from '../context';
 import { InvalidInput, NotFound } from '../errors';
+import { decodeEntities } from '../html';
 import { isoJst, nowMs } from '../time';
 import { sanitizeFileName } from './actions/filenames';
 import { auditSafe } from './actions/shared';
@@ -108,10 +109,12 @@ const isKind = (k: unknown, kinds: readonly DownloadKind[]): k is DownloadKind =
 function itemsOf(sec: RawSec, kinds: readonly DownloadKind[]): Item[] {
   if (sec.uservisible === false) return [];
   const section = sec.section ?? 0;
+  // Moodle sends names HTML-escaped (`Q&amp;A`); they become directory and file names
+  const sectionName = decodeEntities(sec.name ?? '');
   return (sec.modules ?? []).flatMap((m) => {
     if (!isKind(m.modname, kinds) || m.uservisible === false || !m.id) return [];
-    const name = m.name || `${m.modname} ${m.id}`;
-    return [{ cmid: m.id, kind: m.modname, name, section, sectionName: sec.name ?? '', contents: m.contents ?? [] }];
+    const name = decodeEntities(m.name ?? '') || `${m.modname} ${m.id}`;
+    return [{ cmid: m.id, kind: m.modname, name, section, sectionName, contents: m.contents ?? [] }];
   });
 }
 

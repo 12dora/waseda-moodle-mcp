@@ -6,7 +6,7 @@ import { decodeEntities, htmlToMarkdown } from '../html';
 import { fromTs } from '../time';
 import type { Discussion, DiscussionSummary, IsoJst } from '../types';
 import { loadPosts, type MappedPosts } from './forums-posts';
-import { courseNameMap, getCourseModule, pickLang } from './shared';
+import { callsLeft, courseNameMap, getCourseModule, pickLang } from './shared';
 
 export type { RawForumPosts, RawHsuPosts } from './forums-posts';
 
@@ -15,7 +15,6 @@ export type ForumType = 'forum' | 'hsuforum';
 /** Most forums read in one call (each costs one Moodle request). */
 export const MAX_FORUMS_PER_CALL = 15;
 /** Web channel: Moodle requests a forum listing or search may spend of the client's 40 (a page or ajax POST each). */
-const WEB_CALLS = 36;
 /** Moodle `mod_forum_get_forum_discussions` sortorder: last post, newest first. */
 const LASTPOST_DESC = 1;
 const INTRO_MAX_CHARS = 600;
@@ -238,12 +237,8 @@ export async function fetchDiscussions(
 /** Forums worth a Moodle call: those known to be empty cost nothing. */
 export const nonEmptyForums = (refs: ForumRef[]) => refs.filter((r) => r.numDiscussions !== 0);
 
-/** Web channel: requests left of WEB_CALLS for this listing or search; unbounded on the web service. */
-export const webCallsLeft = (api: MoodleApi) =>
-  api.channel === 'web' ? Math.max(0, WEB_CALLS - api.callsMade) : Number.POSITIVE_INFINITY;
-
 /** How many forums readEach may read now (one request each). */
-export const forumReadCap = (api: MoodleApi) => Math.min(MAX_FORUMS_PER_CALL, webCallsLeft(api));
+export const forumReadCap = (api: MoodleApi) => Math.min(MAX_FORUMS_PER_CALL, callsLeft(api));
 
 /**
  * Runs `read` for up to `cap` (≤ MAX_FORUMS_PER_CALL) forums in parallel (one Moodle call each); forums that cannot

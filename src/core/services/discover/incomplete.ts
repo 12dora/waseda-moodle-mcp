@@ -10,8 +10,8 @@ import { decodeEntities } from '../../html';
 import type { RawModule, RawSection } from '../../moodle/raw-course';
 import type { Course } from '../../types';
 import { mapCompleted } from '../courses';
-import { webCallsLeft } from '../forums';
 import { resolveScope } from '../scope';
+import { callsLeft } from '../shared';
 import { optionalPositiveInt } from '../validate';
 import { openConditions, pageConditions, type RawCondition } from './conditions';
 import type { IncompleteActivity, IncompleteCourse, IncompleteList, SkippedCourse } from './types';
@@ -115,12 +115,12 @@ async function readOrSkip(api: MoodleApi, course: Course, filter: Filter): Promi
   }
 }
 
-/** Which courses to read within the request budget (web: two requests each); the rest are skipped. */
+/** Which courses to read within the request budget (ws: one request each, web: two); the rest are skipped. */
 function planCourses(api: MoodleApi, courses: Course[]): { read: Course[]; skipped: SkippedCourse[] } {
   const cost = api.channel === 'web' ? WEB_COST_PER_COURSE : 1;
-  const room = Math.floor(webCallsLeft(api) / cost);
+  const room = Math.floor(callsLeft(api) / cost);
   const skipped = courses.slice(room).map((c) => ({ courseId: c.id, courseName: c.name, reason: 'budget' as const }));
-  return { read: courses.slice(0, Math.max(0, room)), skipped };
+  return { read: courses.slice(0, room), skipped };
 }
 
 async function selectCourses(ctx: ServiceContext, courseId: number | undefined): Promise<Course[]> {

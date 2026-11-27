@@ -10,7 +10,7 @@ import type { CallHint, DraftUploadResult, MoodleApi, MoodleChannel } from '../.
 import { MoodleError, NeedsReconnect } from '../../errors';
 import { MoodleClient, type MoodleClientOptions } from '../client';
 import { MOODLE_URL } from '../launch';
-import type { UploadFile } from '../wire';
+import { isFolderZipUrl, type UploadFile } from '../wire';
 import { WebMoodleClient, type WebMoodleClientOptions } from './client';
 import type { WebSession } from './types';
 
@@ -90,7 +90,9 @@ class ChannelClient implements MoodleApi {
     return this.run((api) => api.call<T>(fn, params, hint));
   }
 
+  /** A folder's ZIP exists only on the web session: it goes there whenever one is stored, whatever the channel. */
   fetchFile(fileUrl: string, init?: { method?: 'GET' | 'HEAD'; range?: string }): Promise<Response> {
+    if (this.opts.session && isFolderZipUrl(this.baseUrl, fileUrl)) return this.webApi().fetchFile(fileUrl, init);
     return this.run((api) => api.fetchFile(fileUrl, init));
   }
 

@@ -124,16 +124,33 @@ export class WebMoodleClient implements MoodleApi {
       discard(res);
       this.session.checkLocation(location);
       this.session.acceptCookie(res);
-      target = this.nextHop(location, target, hop);
+      const next = this.nextHop(location, target, hop);
+      if (!next) return this.notAFile();
+      target = next;
     }
   }
 
-  private nextHop(location: string, from: string, hop: number): string {
+  /**
+   * Every hop is checked as the first URL was (sessionFileUrl). A same-origin page that is not a file (a folder whose
+   * ZIP download is off sends the user to its view page) is not followed: that would spend a call and view the page.
+   */
+  private nextHop(location: string, from: string, hop: number): string | null {
     const next = URL.canParse(location, from) ? new URL(location, from) : null;
     if (hop >= MAX_HOPS || !next || next.origin !== new URL(this.baseUrl).origin) {
       throw new MoodleUnavailable(REDIRECT_MSG);
     }
-    return next.toString();
+    try {
+      return sessionFileUrl(this.baseUrl, next.toString());
+    } catch (e) {
+      if (e instanceof InvalidInput) return null;
+      throw e;
+    }
+  }
+
+  /** Moodle answered, but with something other than the file: a 404 as for a missing file. */
+  private notAFile(): Response {
+    this.markOk();
+    return new Response(null, { status: 404, statusText: 'Not Found' });
   }
 
   /**
@@ -143,8 +160,7 @@ export class WebMoodleClient implements MoodleApi {
   private async checkFile(res: Response): Promise<Response> {
     if (isErrorPage(res)) {
       this.session.checkSignedIn(await res.text().catch(() => ''));
-      this.markOk();
-      return new Response(null, { status: 404, statusText: 'Not Found' });
+      return this.notAFile();
     }
     if (res.ok) this.session.acceptCookie(res);
     this.markOk();

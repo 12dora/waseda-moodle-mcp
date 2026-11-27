@@ -4,8 +4,11 @@ import { MoodleError } from '../../errors';
 import { isObj } from '../wire';
 
 const MAX_BATCH = 25;
-/** Per-entry codes that concern the whole request (service.php checks login and sesskey for each call). */
-const ENTRY_BATCH_CODES = new Set(['servicerequireslogin', 'invalidsesskey']);
+/**
+ * Per-entry codes that concern the whole request (service.php checks login, sesskey and maintenance mode for each
+ * call).
+ */
+const ENTRY_BATCH_CODES = new Set(['servicerequireslogin', 'invalidsesskey', 'sitemaintenance']);
 
 export interface Pending {
   fn: string;
@@ -36,8 +39,8 @@ function entryCode(entry: unknown): string {
 }
 
 /**
- * The code of a failure of the whole request: an error object, or an entry refused for login/sesskey (any entry: one
- * that needs no login, such as core_get_string, answers even when the session is over).
+ * The code of a failure of the whole request: an error object, or an entry refused for login, sesskey or maintenance
+ * (any entry: one that needs no login, such as core_get_string, answers even when the session is over).
  */
 export function batchFailure(parsed: unknown): { code: string; message: string } | null {
   if (isObj(parsed)) {

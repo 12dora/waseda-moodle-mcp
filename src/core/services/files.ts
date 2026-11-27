@@ -247,9 +247,10 @@ export const browserUrl = (baseUrl: string, path: string) =>
 
 // ------------------------------------------------------------------ download link
 
-const FATAL_PROBE_ERRORS = [NeedsReconnect, NotFound, Forbidden, BudgetExceeded];
+/** InvalidInput: the channel cannot fetch this URL at all (a folder ZIP on the token channel); a link would fail. */
+const FATAL_PROBE_ERRORS = [NeedsReconnect, NotFound, Forbidden, BudgetExceeded, InvalidInput];
 
-/** HEAD for size / mime / name. Failures other than "gone", "forbidden" or "reconnect" just mean no metadata. */
+/** HEAD for size / mime / name. Failures other than these (Moodle slow or odd) just mean no metadata. */
 async function probeHeaders(api: MoodleApi, path: string): Promise<Headers> {
   try {
     const head = await api.fetchFile(`${api.baseUrl}${path}`, { method: 'HEAD' });

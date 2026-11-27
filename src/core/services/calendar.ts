@@ -9,6 +9,7 @@ import { MoodleError, NotFound, withOwnStep } from '../errors';
 import { htmlToText } from '../html';
 import { isoJst, nowSec } from '../time';
 import type { IsoJst } from '../types';
+import { fetchEnrolledCourses } from './scope';
 
 type Raw = Record<string, unknown>;
 
@@ -81,7 +82,20 @@ function toCalendarEvent(ev: Raw): CalendarEvent[] {
   ];
 }
 
-/** Upcoming events from now: personal ones only, or (includeCourseEvents) every event the user can see. One call. */
+/**
+ * The courses whose events to ask for. The web emulation reads [] as every course of the user; the web service reads
+ * [] as no course (user and site events only), so with course events on ws it gets the enrolled course ids (one call,
+ * which also settles a fresh client's channel; the ids hold on either channel).
+ */
+async function eventCourseIds(api: MoodleApi, include: boolean): Promise<number[]> {
+  if (!include || api.channel !== 'ws') return [];
+  return (await fetchEnrolledCourses(api)).map((c) => c.id);
+}
+
+/**
+ * Upcoming events from now: personal ones only, or (includeCourseEvents) every event the user can see. One call
+ * (two with course events on ws).
+ */
 export async function listCalendarEvents(
   ctx: ServiceContext,
   input: ListCalendarEventsInput = {},
@@ -91,9 +105,9 @@ export async function listCalendarEvents(
   const from = nowSec();
   const to = from + days * DAY_SEC;
   const api = await ctx.moodle();
-  // courseids [] = every course of the user (the web emulation and the web service agree on that)
+  const courseids = await eventCourseIds(api, include);
   const res = await api.call<unknown>('core_calendar_get_calendar_events', {
-    events: { courseids: [] },
+    events: { courseids },
     options: { userevents: 1, siteevents: include ? 1 : 0, timestart: from, timeend: to },
   });
   const events = list(isRec(res) ? res.events : null)

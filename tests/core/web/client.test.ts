@@ -153,6 +153,27 @@ describe('WebMoodleClient.fetchFile', () => {
     expect(away.fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('a redirect to a page that is not a file is not followed: a 404, one request, no page view', async () => {
+    const zipOff = { status: 303, headers: { Location: '/mod/folder/view.php?id=99101' } };
+    const { client, fetchMock, onSuccess } = setup(() => new Response(null, zipOff));
+    const res = await client.fetchFile(`${BASE}/mod/folder/download_folder.php?id=99101`);
+    expect(res.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+    const toCourse = { status: 302, headers: { Location: `${BASE}/course/view.php?id=99101` } };
+    const file = setup(() => new Response(null, toCourse));
+    expect((await file.client.fetchFile('/pluginfile.php/501/x/a.pdf')).status).toBe(404);
+    expect(file.fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a redirect hop to a file URL is re-validated and cleaned (token dropped) before it is followed', async () => {
+    const hop = { status: 303, headers: { Location: '/webservice/pluginfile.php/501/x/b.pdf?token=abc' } };
+    let n = 0;
+    const { client, fetchMock } = setup(() => (n++ === 0 ? new Response(null, hop) : file()));
+    await expect(client.fetchFile('/pluginfile.php/501/x/a.pdf')).resolves.toBeInstanceOf(Response);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`${BASE}/pluginfile.php/501/x/b.pdf`);
+  });
+
   it('a redirect to the login page -> NeedsReconnect', async () => {
     const login = { status: 303, headers: { Location: `${BASE}/login/index.php` } };
     const { client } = setup(() => new Response(null, login));

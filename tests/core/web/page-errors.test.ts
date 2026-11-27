@@ -27,6 +27,21 @@ describe('maintenanceEnd', () => {
     expect(maintenanceEnd('Back at 18:45')).toBe('18:45');
     expect(maintenanceEnd('Back soon.')).toBeNull();
   });
+
+  it('reads dates with a year in any notation and dates without one written with / or 月', () => {
+    expect(maintenanceEnd('2026-11-30 6:00 まで')).toBe('11/30 06:00');
+    expect(maintenanceEnd('Until 2026.11.30 06:00')).toBe('11/30 06:00');
+    expect(maintenanceEnd('12月1日 9:00まで')).toBe('12/1 09:00');
+  });
+
+  it('takes no version number, phone number or impossible value for a date or time', () => {
+    expect(maintenanceEnd('Moodle 5.1 maintenance until 06:00')).toBe('06:00');
+    expect(maintenanceEnd('お問い合わせ 03-5286-1234 / 6:00まで')).toBe('06:00');
+    expect(maintenanceEnd('Upgrade to 4.5.1 until 11/30 6:00')).toBe('11/30 06:00');
+    expect(maintenanceEnd('13/45 6:00')).toBe('06:00');
+    expect(maintenanceEnd('until 11/30 6:00 (ref 25:61)')).toBe('11/30 06:00');
+    expect(maintenanceEnd('ref 25:61 only')).toBeNull();
+  });
 });
 
 describe('maintenanceError', () => {
@@ -79,6 +94,15 @@ describe('MoodleWebSession and maintenance', () => {
     const e = await session(() => Response.json(answer))
       .ajax('core_session_touch')
       .catch((x: unknown) => x);
+    expect(e).toMatchObject({ maintenance: true });
+  });
+
+  it('maps a per-entry ajax errorcode sitemaintenance (service.php checks it for every call)', async () => {
+    const answer = [{ error: true, exception: { errorcode: 'sitemaintenance', message: 'メンテナンス中' } }];
+    const e = await session(() => Response.json(answer))
+      .ajax('core_session_touch')
+      .catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(MoodleUnavailable);
     expect(e).toMatchObject({ maintenance: true });
   });
 

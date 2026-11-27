@@ -136,6 +136,8 @@ export async function peekJson(res: Response): Promise<unknown> {
 const FILE_PREFIXES = ['/webservice/pluginfile.php/', '/pluginfile.php/'];
 /** The session may also read the user's own draft files (a post's current attachments); never with a token. */
 const SESSION_FILE_PREFIXES = [...FILE_PREFIXES, '/draftfile.php/'];
+const FOLDER_ZIP_WS_MSG =
+  'Folder ZIP downloads are only available through the Moodle web session; list the folder files with get_activity.';
 
 /** A file URL on baseUrl under one of `prefixes`, without credentials, fragment and `token`. */
 function cleanFileUrl(baseUrl: string, fileUrl: string, prefixes = FILE_PREFIXES): URL {
@@ -157,6 +159,7 @@ function cleanFileUrl(baseUrl: string, fileUrl: string, prefixes = FILE_PREFIXES
 
 /** Validates host/path, rewrites `/pluginfile.php/` to the webservice endpoint and sets the token. */
 export function fileDownloadUrl(base: { baseUrl: string; token: string }, fileUrl: string): string {
+  if (isFolderZipUrl(base.baseUrl, fileUrl)) throw new InvalidInput(FOLDER_ZIP_WS_MSG);
   const u = cleanFileUrl(base.baseUrl, fileUrl);
   if (!u.pathname.startsWith('/webservice/')) u.pathname = `/webservice${u.pathname}`;
   return `${u.origin}${u.pathname}${u.search}${u.search ? '&' : '?'}token=${encodeURIComponent(base.token)}`;
@@ -178,6 +181,11 @@ function folderZipUrl(baseUrl: string, fileUrl: string): string | null {
   const u = URL.canParse(fileUrl, `${baseUrl}/`) ? new URL(fileUrl, `${baseUrl}/`) : null;
   if (!u || u.origin !== new URL(baseUrl).origin || !isFolderZipPath(`${u.pathname}${u.search}`)) return null;
   return `${u.origin}${u.pathname}${u.search}`;
+}
+
+/** `fileUrl` is exactly a folder ZIP download on baseUrl (only the web session can fetch it). */
+export function isFolderZipUrl(baseUrl: string, fileUrl: string): boolean {
+  return folderZipUrl(baseUrl, fileUrl) !== null;
 }
 
 /**

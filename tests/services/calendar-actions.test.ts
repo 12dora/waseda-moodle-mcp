@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MoodleError, NotFound } from '../../src/core/errors';
 import { renderCalendarEvents } from '../../src/core/mcp/render/calendar';
 import { confirmAction, prepareCalendarEvent } from '../../src/core/services/actions';
+import { executeCalendarEventEdit } from '../../src/core/services/actions/calendar';
 import { parseEventTime } from '../../src/core/services/actions/calendar-form';
 import { listCalendarEvents } from '../../src/core/services/calendar';
 import { createTestContext } from '../helpers/fake-context-be4';
@@ -118,12 +119,36 @@ describe('prepare_calendar_event create (web channel)', () => {
     expect(result.message).toContain('Moodle stored the start as 2030-12-02 Mon 11:30 JST');
   });
 
-  it('fails the action when the form reports a validation error', async () => {
-    const { ctx } = webSetup({ ajax: { core_calendar_submit_create_update_form: { validationerror: true } } });
+  it('fails the action when the form reports a validation error (sent once: the sesskey did not change)', async () => {
+    const submit = recorder({ validationerror: true });
+    const { ctx } = webSetup({ ajax: { core_calendar_submit_create_update_form: submit.fn } });
     const preview = await prepareCalendarEvent(ctx, { action: 'create', name: 'x', start: '2030-12-02T10:30' });
     const result = await confirmAction(ctx, preview.actionId, 'mcp');
     expect(result.status).toBe('failed');
     expect(result.message).toContain('Moodle did not accept the event');
+    expect(submit.sent).toHaveLength(1);
+  });
+
+  it('rebuilds the form with the renewed sesskey when the session renewed a stale one while sending', async () => {
+    let key = 'fakesesskey01';
+    const sent: Args[] = [];
+    const { api, ctx } = webSetup({
+      ajax: {
+        core_calendar_submit_create_update_form: (args: Args) => {
+          sent.push(args);
+          // the session renewed the key on invalidsesskey; the form inside still carried the old one
+          if (sent.length > 1) return { event: { id: 5203, timestart: START }, validationerror: false };
+          key = 'fakesesskey02';
+          return { validationerror: true };
+        },
+      },
+    });
+    const web = api.web as { sesskey: () => Promise<string> };
+    web.sesskey = async () => key;
+    const preview = await prepareCalendarEvent(ctx, { action: 'create', name: 'x', start: '2030-12-02T10:30' });
+    const result = await confirmAction(ctx, preview.actionId, 'mcp');
+    expect(result).toMatchObject({ status: 'executed', message: "Created calendar event 'x' (event_id 5203)." });
+    expect(sent.map((a) => formOf(a).get('sesskey'))).toEqual(['fakesesskey01', 'fakesesskey02']);
   });
 
   it('warns about a start in the past', async () => {
@@ -172,6 +197,16 @@ describe('prepare_calendar_event edit / delete (web channel)', () => {
     expect(form.get('timedurationuntil[hour]')).toBe('11');
     expect(form.get('timedurationuntil[minute]')).toBe('30');
     expect(form.get('description[text]')).toBe('<p>研究室</p>');
+    // this occurrence only: the update form's default (1) would rewrite the whole series
+    expect(form.get('repeateditall')).toBe('0');
+    expect(form.has('repeat')).toBe(false);
+  });
+
+  it('warns that an edit of a repeated event changes this occurrence only', async () => {
+    const repeated = { event: personal({ repeatid: 77 }) };
+    const { ctx } = webSetup({ ajax: { core_calendar_get_calendar_event_by_id: repeated } });
+    const preview = await prepareCalendarEvent(ctx, { action: 'edit', eventId: 5101, name: '面談' });
+    expect(preview.warnings).toEqual(['This event is one of a repeated series; only this occurrence is changed.']);
   });
 
   it('clears the description with "" and warns when nothing changes', async () => {
@@ -270,6 +305,23 @@ describe('prepare_calendar_event on the ws channel', () => {
     ]);
   });
 
+  it('refuses an edit at prepare, before reading the event, and the executor refuses it too', async () => {
+    const { ctx, moodle } = createTestContext({
+      handlers: { core_calendar_get_calendar_event_by_id: { event: personal() } },
+    });
+    const attempt = prepareCalendarEvent(ctx, { action: 'edit', eventId: 5101, name: 'y' });
+    await expect(attempt).rejects.toMatchObject({
+      errorcode: 'servicenotavailable',
+      message: 'Only available through the Moodle web session.',
+      url: 'https://wsdmoodle.waseda.jp/calendar/view.php?view=upcoming',
+    });
+    expect(moodle.callsTo('core_calendar_get_calendar_event_by_id')).toEqual([]);
+    const payload = { eventId: 5101, name: 'y', timestart: START, timeend: START, descriptionHtml: '', location: '' };
+    const run = executeCalendarEventEdit(moodle, { ...payload, url: '' });
+    await expect(run).rejects.toMatchObject({ errorcode: 'servicenotavailable' });
+    expect(moodle.callsTo('core_calendar_submit_create_update_form')).toEqual([]);
+  });
+
   it('fails with Moodle’s warning when nothing was created', async () => {
     const { ctx } = createTestContext({
       handlers: {
@@ -336,6 +388,28 @@ describe('list_calendar_events', () => {
     const options = sent[0]?.options as Args;
     expect(Number(options.timeend) - Number(options.timestart)).toBe(90 * DAY);
     expect(renderCalendarEvents(r)).toContain('Quiz 2 closes (close quiz, event_id 3) · course_id 99101');
+  });
+
+  it('asks the web service for the enrolled courses with course events (its [] means no course)', async () => {
+    const { ctx, moodle } = createTestContext({
+      handlers: {
+        core_course_get_enrolled_courses_by_timeline_classification: { courses: [{ id: 99101 }, { id: 99102 }] },
+        core_calendar_get_calendar_events: { events, warnings: [] },
+      },
+    });
+    const r = await listCalendarEvents(ctx, { includeCourseEvents: true });
+    expect(r.events.map((e) => e.id)).toEqual([1, 2, 3]);
+    expect(moodle.callsTo('core_calendar_get_calendar_events')[0]?.events).toEqual({ courseids: [99101, 99102] });
+    await listCalendarEvents(ctx);
+    expect(moodle.callsTo('core_calendar_get_calendar_events')[1]?.events).toEqual({ courseids: [] });
+    expect(moodle.callsTo('core_course_get_enrolled_courses_by_timeline_classification')).toHaveLength(1);
+  });
+
+  it('asks the web emulation for every course ([]) without listing the courses', async () => {
+    const { api, ctx, sent } = listSetup();
+    await listCalendarEvents(ctx, { includeCourseEvents: true });
+    expect(sent[0]?.events).toEqual({ courseids: [] });
+    expect(api.calls.map((c) => c.fn)).toEqual(['core_calendar_get_calendar_events']);
   });
 
   it('says how to see more when there is no personal event', async () => {

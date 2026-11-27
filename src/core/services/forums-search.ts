@@ -21,10 +21,9 @@ import {
   nonEmptyForums,
   type RawDiscussion,
   readEach,
-  webCallsLeft,
 } from './forums';
 import { type CourseForums, courseStructures, forumsInScope } from './forums-list';
-import { clampInt, courseNameMap } from './shared';
+import { callsLeft, clampInt, courseNameMap } from './shared';
 
 /** Discussions read per forum: one Moodle call per forum whatever the page size. */
 const PER_FORUM = 20;
@@ -313,7 +312,7 @@ async function webSearch(
     query: req.query,
     perPage: SEARCH_PER_PAGE,
     maxPages: SEARCH_PAGES,
-    callsLeft: () => webCallsLeft(api),
+    callsLeft: () => callsLeft(api),
     enough: (pages) => discussionsIn(pages).size >= req.limit,
   });
   const hsu =

@@ -172,6 +172,23 @@ describe('createChannelClient', () => {
     expect(log).toEqual(['ws core_course_get_recent_courses', 'web core_course_get_recent_courses']);
   });
 
+  it('a folder ZIP goes to the stored web session even on ws (the token cannot fetch it)', async () => {
+    const { client, log } = setup({});
+    const res = await client.fetchFile(`${BASE}/mod/folder/download_folder.php?id=99101`);
+    expect(await res.text()).toBe('bytes');
+    expect(log).toEqual(['file /mod/folder/download_folder.php']);
+    await client.call('core_session_touch');
+    expect(client.channel).toBe('ws'); // the ZIP did not settle the channel
+  });
+
+  it('a folder ZIP without a web session is refused clearly, before any request', async () => {
+    const { client, log } = setup({ session: false });
+    await expect(client.fetchFile(`${BASE}/mod/folder/download_folder.php?id=99101`)).rejects.toThrow(
+      'Folder ZIP downloads are only available through the Moodle web session',
+    );
+    expect(log).toEqual([]);
+  });
+
   it('writesSent adds up both channels', async () => {
     const { client } = setup({ ws: [() => serviceOff] });
     expect(client.writesSent).toBe(0);

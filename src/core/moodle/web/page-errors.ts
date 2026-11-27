@@ -72,22 +72,41 @@ export function pageError(html: string, url: string | null = null): MoodleError 
 
 const MAINTENANCE_MARKERS = ['id="page-maintenance-message"', 'maintenance_message', 'climaintenance'];
 const MAINTENANCE_TEXT = /under maintenance|undergoing maintenance|メンテナンス中/i;
-/** Dates (2026/11/30, 11/30, 11月30日) and times (6:00) in the notice; linear, no nested quantifiers. */
-const DATE = /(?:\d{4}[/年.-])?(\d{1,2})[/月.-](\d{1,2})日?/g;
+/**
+ * Dates in the notice: 2026/11/30, 2026-11-30, 2026.11.30, 2026年11月30日 (with a year, any separator) or 11/30,
+ * 11月30日 (without one: '/' or 月 only, so version numbers "5.1" and phone numbers "03-5286-1234" are no dates), not
+ * inside a longer run of digits and separators. Times: 6:00, 18:45. Linear, no nested quantifiers.
+ */
+const DATE = /(?<![\d./-])(?:\d{4}[/年.-](\d{1,2})[/月.-](\d{1,2})|(\d{1,2})[/月](\d{1,2}))日?(?![\d./-])/g;
 const TIME = /(?<![\d:])(\d{1,2}):(\d{2})(?![\d:])/g;
+
+const inRange = (v: number, min: number, max: number) => v >= min && v <= max;
+
+/** A time of day that exists (24:00 is the end of a day). */
+function isTime(m: RegExpMatchArray): boolean {
+  const h = Number(m[1]);
+  const mi = Number(m[2]);
+  return inRange(mi, 0, 59) && (h < 24 || (h === 24 && mi === 0));
+}
+
+/** "11/30", or null when the match is no calendar date (month 1..12, day 1..31). */
+function dateOf(m: RegExpMatchArray): string | null {
+  const mo = Number(m[1] ?? m[3]);
+  const d = Number(m[2] ?? m[4]);
+  return inRange(mo, 1, 12) && inRange(d, 1, 31) ? `${mo}/${d}` : null;
+}
 
 /**
  * The end of the maintenance as the notice writes it ("11/30 06:00", "06:00"): its last time of day, with the last
  * date before it. Null when the notice has no time. Admin free text, so this is a best guess.
  */
 export function maintenanceEnd(notice: string): string | null {
-  const times = [...notice.matchAll(TIME)];
-  const last = times.at(-1);
+  const last = [...notice.matchAll(TIME)].filter(isTime).at(-1);
   if (!last || last.index === undefined) return null;
   const time = `${last[1]?.padStart(2, '0')}:${last[2]}`;
-  const dates = [...notice.slice(0, last.index).matchAll(DATE)];
+  const dates = [...notice.slice(0, last.index).matchAll(DATE)].map(dateOf).filter((d) => d !== null);
   const date = dates.at(-1);
-  return date ? `${Number(date[1])}/${Number(date[2])} ${time}` : time;
+  return date ? `${date} ${time}` : time;
 }
 
 /** The MoodleUnavailable a maintenance page stands for, or null when `html` is none. */

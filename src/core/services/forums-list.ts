@@ -15,9 +15,8 @@ import {
   MAX_FORUMS_PER_CALL,
   nonEmptyForums,
   readEach,
-  webCallsLeft,
 } from './forums';
-import { clampInt, courseNameMap, getCourseModule } from './shared';
+import { callsLeft, clampInt, courseNameMap, getCourseModule } from './shared';
 
 /** Discussions read per forum when several forums are listed together. */
 const PER_FORUM_WHEN_MANY = 10;
@@ -176,7 +175,7 @@ interface ScopeOptions {
 async function webScope(api: MoodleApi, courseIds: number[], opts: ScopeOptions): Promise<ForumScope> {
   const types = opts.types ?? ['forum', 'hsuforum'];
   const courses = (opts.structures ?? (await courseStructures(api, courseIds))).map((c) => onlyTypes(c, types));
-  const plan = planScope(courses, webCallsLeft(api));
+  const plan = planScope(courses, callsLeft(api));
   const [forums, hsuforums] = await Promise.all([
     fetchForums(api, 'forum', plan.forum),
     fetchForums(api, 'hsuforum', plan.hsuforum),
