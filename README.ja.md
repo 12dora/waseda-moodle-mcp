@@ -223,8 +223,13 @@ Cookie のコピー方法は [クイックスタート](#クイックスター�
 | `list_messages` | Moodle の会話 | read |
 | `get_conversation` | 1 会話のメッセージ | read |
 | `list_notifications` | 通知と未読数 | read |
-| `search_forums` | フォーラムのディスカッションをキーワード検索（メッセージも任意で対象） | read |
+| `search_forums` | Moodle のフォーラム検索で全投稿を全文検索（既読にしない。メッセージも任意で対象） | read |
 | `search_people` | コースのフォーラムや会話に登場した先生・クラスメートを検索 | read |
+| `download_course_files` | コース（またはセクション）の全ファイル：署名付きリンクと curl スクリプト、フォルダは ZIP（ローカルモードは保存） | read |
+| `list_incomplete` | コースごとの未完了の活動（未視聴のオンデマンド動画など） | read |
+| `list_my_posts` | 自分のフォーラム投稿をコース横断で新しい順に | read |
+| `search_courses` | Waseda Moodle のコースをキーワード検索（登録状況つき） | read |
+| `list_calendar_events` | 今後のカレンダーイベントと ID（既定は個人イベント） | read |
 | `search_mail` | Gmail の検索構文で Waseda メールを検索（メール接続後のみ） | read |
 | `get_mail` | メール 1 通またはスレッド全体を読む（添付ファイルのリンク付き） | read |
 | `create_upload_link` | 大きなファイル用の短時間有効なアップロード URL（ホスト型のみ） | write |
@@ -238,6 +243,7 @@ Cookie のコピー方法は [クイックスタート](#クイックスター�
 | `prepare_completion` | 活動の完了 / 未完了マークのプレビュー | write |
 | `prepare_forum_subscription` | フォーラム購読 / 購読解除のプレビュー | write |
 | `prepare_mark_read` | 通知・会話・フォーラムのスレッドを既読にする操作のプレビュー | write |
+| `prepare_calendar_event` | 個人のカレンダーイベントの作成・編集・削除のプレビュー | write |
 | `confirm_action` | 準備した操作を実行 | write |
 | `cancel_action` | 準備した操作を破棄 | write |
 

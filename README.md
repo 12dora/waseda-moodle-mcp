@@ -222,8 +222,13 @@ not support console approval of writes or `create_upload_link`.
 | `list_messages` | Moodle conversations | read |
 | `get_conversation` | Messages of one conversation | read |
 | `list_notifications` | Notifications and unread count | read |
-| `search_forums` | Keyword search over forum discussions (optionally messages) | read |
+| `search_forums` | Full-text search over every forum post through Moodle's own search (marks nothing read; optionally messages) | read |
 | `search_people` | Find teachers and classmates seen in your course forums or conversations | read |
+| `download_course_files` | Every file of a course or section: signed links plus a ready curl script, folders as ZIP (local mode saves them) | read |
+| `list_incomplete` | Activities not done yet per course (e.g. unwatched on-demand videos) | read |
+| `list_my_posts` | Your own forum posts across courses, newest first | read |
+| `search_courses` | Find courses on Waseda Moodle by keyword, with enrolment | read |
+| `list_calendar_events` | Upcoming calendar events with ids (personal by default) | read |
 | `search_mail` | Search the Waseda mailbox with Gmail search syntax (only after connecting mail) | read |
 | `get_mail` | Read a mail or a whole thread, with attachment links | read |
 | `create_upload_link` | Short-lived upload URL for large files: submissions and forum attachments (hosted only) | write |
@@ -237,6 +242,7 @@ not support console approval of writes or `create_upload_link`.
 | `prepare_completion` | Preview marking an activity done / not done | write |
 | `prepare_forum_subscription` | Preview subscribing to / unsubscribing from a forum | write |
 | `prepare_mark_read` | Preview marking notifications, a conversation or a forum discussion as read | write |
+| `prepare_calendar_event` | Preview creating, editing or deleting a personal Moodle calendar event | write |
 | `confirm_action` | Execute a prepared action | write |
 | `cancel_action` | Discard a prepared action | write |
 

@@ -206,8 +206,13 @@ Cookie 的复制方法见[快速开始](#快速开始)。本地服务器运行�
 | `list_messages` | Moodle 会话 | read |
 | `get_conversation` | 单个会话的消息 | read |
 | `list_notifications` | 通知和未读数 | read |
-| `search_forums` | 按关键词搜索论坛讨论（可选包括消息） | read |
+| `search_forums` | 通过 Moodle 自带的论坛搜索全文检索所有帖子（不标记已读；可选包括消息） | read |
 | `search_people` | 查找在你的课程论坛或会话中出现过的老师和同学 | read |
+| `download_course_files` | 课程（或某一节）的全部文件：签名链接和 curl 脚本，文件夹打包为 ZIP（本地模式直接保存） | read |
+| `list_incomplete` | 按课程列出未完成的活动（如未看的点播视频） | read |
+| `list_my_posts` | 跨课程列出自己的论坛帖子，按时间倒序 | read |
+| `search_courses` | 按关键词搜索 Waseda Moodle 的课程（含是否已选） | read |
+| `list_calendar_events` | 即将到来的日历事件及 ID（默认只列个人事件） | read |
 | `search_mail` | 用 Gmail 搜索语法搜索早大邮箱（连接邮箱后可用） | read |
 | `get_mail` | 阅读单封邮件或整个会话，附带附件链接 | read |
 | `create_upload_link` | 大文件的短时上传 URL（仅托管版） | write |
@@ -221,6 +226,7 @@ Cookie 的复制方法见[快速开始](#快速开始)。本地服务器运行�
 | `prepare_completion` | 预览将活动标记为完成 / 未完成 | write |
 | `prepare_forum_subscription` | 预览订阅 / 取消订阅论坛 | write |
 | `prepare_mark_read` | 预览将通知、会话或论坛话题标记为已读 | write |
+| `prepare_calendar_event` | 预览创建、编辑或删除个人 Moodle 日历事件 | write |
 | `confirm_action` | 执行已准备的操作 | write |
 | `cancel_action` | 放弃已准备的操作 | write |
 
