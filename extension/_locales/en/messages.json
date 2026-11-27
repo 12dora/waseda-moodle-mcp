@@ -6,7 +6,7 @@
     "message": "Moodle MCP Connector"
   },
   "extDescription": {
-    "message": "Keeps your Waseda Moodle session connected to your Waseda Moodle MCP service. Unofficial — not affiliated with Waseda University."
+    "message": "Keeps your Waseda Moodle session connected to your Waseda Moodle MCP service."
   },
   "badgeNotConfigured": {
     "message": "Service URL not set"

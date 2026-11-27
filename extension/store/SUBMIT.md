@@ -182,5 +182,5 @@ for the box (change `syncForm` in `options.js` to start unticked) and resubmit; 
 |---|---|
 | Cannot test the functionality | Resubmit with the note above. If asked again, attach a link to a short screen recording of a connect, made with demo data and without showing cookie values. |
 | Broad host permission | It is optional and never granted at install; one user-typed origin is requested on Save (`options.js`). |
-| Trademark or impersonation ("Waseda", "Moodle") | Point to the "Unofficial / not affiliated" statement in the summary and description. If the store still refuses, rename the extension in `_locales`, the icons and promo tile as needed, and upload a new version. |
+| Trademark or impersonation ("Waseda", "Moodle") | Point to the "Unofficial / not affiliated" statement in the full description. If the store still refuses, rename the extension in `_locales`, the icons and promo tile as needed, and upload a new version. |
 | Privacy policy | Check that the URL opens without sign-in and names the extension, the data, the destination and Limited Use. |

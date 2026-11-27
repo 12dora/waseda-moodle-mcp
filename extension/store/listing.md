@@ -27,9 +27,9 @@ dashboard. The limit is 132 characters. To change it, edit the locale file, rais
 
 | Locale | Text |
 |---|---|
-| en | Keeps your Waseda Moodle session connected to your Waseda Moodle MCP service. Unofficial — not affiliated with Waseda University. |
-| ja | 早稲田 Moodle のサインインを Moodle MCP サービスに連携し、接続を維持します。非公式 — 早稲田大学とは関係ありません。 |
-| zh-CN | 将早稻田 Moodle 的登录会话连接到 Moodle MCP 服务，并保持连接。非官方 — 与早稻田大学无关。 |
+| en | Keeps your Waseda Moodle session connected to your Waseda Moodle MCP service. |
+| ja | 早稲田 Moodle のサインインを Moodle MCP サービスに連携し、接続を維持します。 |
+| zh-CN | 将早稻田 Moodle 的登录会话连接到 Moodle MCP 服务，并保持连接。 |
 
 ## Full description
 

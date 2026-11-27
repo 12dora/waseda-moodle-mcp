@@ -6,7 +6,7 @@
     "message": "Moodle MCP Connector"
   },
   "extDescription": {
-    "message": "早稲田 Moodle のサインインを Moodle MCP サービスに連携し、接続を維持します。非公式 — 早稲田大学とは関係ありません。"
+    "message": "早稲田 Moodle のサインインを Moodle MCP サービスに連携し、接続を維持します。"
   },
   "badgeNotConfigured": {
     "message": "サービス URL が未設定です"
