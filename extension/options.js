@@ -2,6 +2,7 @@ import { applyI18n, t } from './i18n.js';
 import { hasConsentFor, makeConsent, privacyUrl } from './lib/consent.js';
 import { DEFAULT_SERVICE_URL } from './lib/defaults.js';
 import { normalizeServiceUrl } from './lib/moodle.js';
+import { connectMessageKey } from './lib/results.js';
 
 applyI18n();
 const input = document.getElementById('serviceUrl');
@@ -88,7 +89,11 @@ document.getElementById('form').addEventListener('submit', async (e) => {
   await chrome.storage.local.set(stored);
   input.value = origin;
   syncForm();
-  say('optionsSaved', 'ok');
+  // saving is the step before connecting: continue with it (opens the console, or Moodle's sign-in first)
+  say('statusConnecting');
+  const res = await chrome.runtime.sendMessage({ type: 'wmm:connect' }).catch(() => null);
+  const key = connectMessageKey(res);
+  say(key ?? 'optionsSavedConnected', key ? 'warn' : 'ok');
 });
 
 syncBtn.addEventListener('click', async () => {

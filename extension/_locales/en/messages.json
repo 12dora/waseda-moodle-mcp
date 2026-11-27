@@ -116,6 +116,9 @@
   "optionsSaved": {
     "message": "Saved."
   },
+  "optionsSavedConnected": {
+    "message": "Saved. The console opened in a new tab to finish connecting."
+  },
   "optionsCleared": {
     "message": "Service URL cleared."
   },

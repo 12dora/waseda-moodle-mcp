@@ -1,20 +1,9 @@
 import { applyI18n, t } from './i18n.js';
 import { hasConsentFor } from './lib/consent.js';
+import { connectMessageKey, RESULT_KEYS } from './lib/results.js';
 
 applyI18n();
 const $ = (id) => document.getElementById(id);
-const RESULT_KEYS = {
-  updated: 'resultUpdated',
-  unchanged: 'resultUnchanged',
-  connect_opened: 'resultConnectOpened',
-  signin_required: 'resultSigninRequired',
-  unknown_user: 'resultUnknownUser',
-  rate_limited: 'resultRateLimited',
-  server_error: 'resultServerError',
-  moodle_unavailable: 'resultMoodleUnavailable',
-  network_error: 'resultNetworkError',
-  permission_missing: 'resultPermissionMissing',
-};
 const BAD = new Set([
   'signin_required',
   'unknown_user',
@@ -65,13 +54,6 @@ async function checkMoodle() {
   }
   el.textContent = t(res.signedIn ? 'statusSignedIn' : 'statusSignedOut');
   el.className = res.signedIn ? 'ok' : 'warn';
-}
-
-function connectMessageKey(res) {
-  if (res?.ok) return null;
-  if (res?.error === 'consent_required') return 'hintConsent';
-  if (res?.error === 'signin_required') return 'hintSignIn';
-  return RESULT_KEYS[res?.error] || 'resultServerError';
 }
 
 $('connect').addEventListener('click', async () => {

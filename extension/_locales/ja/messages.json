@@ -116,6 +116,9 @@
   "optionsSaved": {
     "message": "保存しました。"
   },
+  "optionsSavedConnected": {
+    "message": "保存しました。新しいタブでコンソールを開き、連携を完了します。"
+  },
   "optionsCleared": {
     "message": "サービス URL を削除しました。"
   },

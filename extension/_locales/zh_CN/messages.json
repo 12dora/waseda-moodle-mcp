@@ -116,6 +116,9 @@
   "optionsSaved": {
     "message": "已保存。"
   },
+  "optionsSavedConnected": {
+    "message": "已保存。已在新标签页打开控制台完成连接。"
+  },
   "optionsCleared": {
     "message": "已清除服务 URL。"
   },
