@@ -6,10 +6,11 @@ import { Button } from '../../components/Button';
 import { Card } from '../../components/Card';
 import { EmptyState } from '../../components/EmptyState';
 import { useToast } from '../../components/Toast';
+import { UpdatingNote } from '../../components/UpdatingNote';
 import { useI18n } from '../../i18n';
 import { errorText } from '../../lib/errors';
 import { formatDate } from '../../lib/time';
-import { useAsync } from '../../lib/useAsync';
+import { useCachedQuery } from '../../lib/useCachedQuery';
 import { useSession } from '../../session';
 
 function CourseItem({ course, checked, onToggle }: { course: Course; checked: boolean; onToggle: () => void }) {
@@ -120,10 +121,11 @@ function CourseEditor({ data, onSaved }: { data: CoursesResponse; onSaved: () =>
 
 export function CourseSelectionTab() {
   const { t } = useI18n();
-  const courses = useAsync(getCourses);
+  const courses = useCachedQuery(getCourses);
   return (
     <>
       <p className="muted">{t('courses.desc')}</p>
+      <UpdatingNote show={courses.refreshing} />
       <AsyncBlock state={courses}>
         {(data) => <CourseEditor key={data.mode} data={data} onSaved={courses.reload} />}
       </AsyncBlock>

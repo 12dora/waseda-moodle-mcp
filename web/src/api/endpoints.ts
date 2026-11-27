@@ -7,12 +7,13 @@ import type {
   AppConfig,
   AppGrant,
   AuditEntry,
+  Cached,
   CalendarStatus,
   ConnectRequest,
   ConnectResult,
-  ConsoleDueList,
   CourseOverview,
   CoursesResponse,
+  DueList,
   MailAccess,
   MailRequestAction,
   MailRequestList,
@@ -41,17 +42,21 @@ export const deleteAccount = () => api.del<unknown>('/api/me');
 
 export const patchSettings = (patch: SettingsPatch) => api.patch<{ settings: UserSettings }>('/api/settings', patch);
 
-/** `refresh`: compute the list now (a background call after a stale answer, not counted as use). */
-export const getDue = (days = 14, refresh = false) =>
-  api.get<ConsoleDueList>('/api/due', { query: { days, refresh: refresh ? 1 : undefined }, background: refresh });
-export const getCourses = () => api.get<CoursesResponse>('/api/courses');
-export const getTimetable = (date: string, days: number) =>
-  api.get<Timetable>('/api/timetable', { query: { date, days } });
-export const getUpdates = (days = 7, courseId?: number) =>
-  api.get<UpdatesResponse>('/api/updates', { query: { days, course_id: courseId } });
-export const getCourseOverview = () => api.get<CourseOverview>('/api/courses/overview');
-export const getSyllabusSummary = (courseId: number) =>
-  api.get<SyllabusSummary>('/api/syllabus', { query: { course_id: courseId } });
+/**
+ * Console reads the server answers from its stored copy first (`Cached`): `refresh` asks for the current answer (a
+ * background call after a stale answer, not counted as use).
+ */
+const cached = <T>(path: string, query: Record<string, string | number | undefined>, refresh: boolean) =>
+  api.get<Cached<T>>(path, { query: { ...query, refresh: refresh ? 1 : undefined }, background: refresh });
+
+export const getDue = (days: number, refresh = false) => cached<DueList>('/api/due', { days }, refresh);
+export const getCourses = (refresh = false) => cached<CoursesResponse>('/api/courses', {}, refresh);
+export const getTimetable = (date: string, days: number, refresh = false) =>
+  cached<Timetable>('/api/timetable', { date, days }, refresh);
+export const getUpdates = (days: number, refresh = false) => cached<UpdatesResponse>('/api/updates', { days }, refresh);
+export const getCourseOverview = (refresh = false) => cached<CourseOverview>('/api/courses/overview', {}, refresh);
+export const getSyllabusSummary = (courseId: number, refresh = false) =>
+  cached<SyllabusSummary>('/api/syllabus', { course_id: courseId }, refresh);
 
 export const listKeys = () => api.get<ApiKey[]>('/api/keys');
 export const createKey = (name: string, scopes: Scope[]) =>

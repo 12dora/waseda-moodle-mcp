@@ -1,14 +1,16 @@
 /** Moodle data, write-action approval and the activity log. */
 
 import { type Context, Hono } from 'hono';
+import { InvalidInput } from '../../core/errors';
 import { cancelAction, confirmAction, listActionRecords } from '../../core/services/actions';
 import { getDueItems } from '../../core/services/due';
 import { resolveScope } from '../../core/services/scope';
 import { getCourseUpdates } from '../../core/services/sweep';
 import { getTimetable } from '../../core/services/timetable';
-import { isoJst } from '../../core/time';
+import { isoJst, nowMs } from '../../core/time';
 import type { ActionStatus } from '../../core/types';
-import { type AppEnv, deferOn } from '../auth';
+import type { AppEnv } from '../auth';
+import { cachedRoute, cacheKey } from './console-cache';
 import { consoleContext, intParam, MAX_COURSE_ID, oneOf, session, storeOf } from './shared';
 
 const ACTION_STATUSES: readonly ActionStatus[] = [
@@ -20,6 +22,9 @@ const ACTION_STATUSES: readonly ActionStatus[] = [
   'superseded',
 ];
 
+const DAY_MS = 86_400_000;
+const TIMETABLE_DATE = /^(today|tomorrow|\d{4}-\d{2}-\d{2})$/;
+
 /** The options of GET /api/due and the cache key they make (one stored answer per user and query). */
 function dueQuery(q: Record<string, string>) {
   const opts = {
@@ -27,28 +32,51 @@ function dueQuery(q: Record<string, string>) {
     overdueDays: intParam(q.overdue_days, 'overdue_days', { min: 0, max: 60 }),
     courseId: intParam(q.course_id, 'course_id', { min: 1, max: MAX_COURSE_ID }),
   };
-  const key = `days=${opts.daysAhead}&overdue_days=${opts.overdueDays ?? ''}&course_id=${opts.courseId ?? ''}`;
+  const key = cacheKey('/api/due', { days: opts.daysAhead, overdue_days: opts.overdueDays, course_id: opts.courseId });
   return { opts, key };
 }
 
 /**
- * Stale-while-revalidate for the console: the stored answer of the same query comes back at once (`stale: true`); the
- * console then asks again with `refresh=1`, which computes the list, stores it and answers it (`stale: false`), as does
- * a query without a stored answer. The sweep reads the course snapshots the hourly cron keeps (no live course pages):
- * one Moodle web session serialises its requests, so a live sweep made the answer take 20 s. MCP get_due_items stays
- * live.
+ * The timetable's first day as a date: 'today' / 'tomorrow' / none resolve to the JST date, so the cache key names the
+ * day the answer is for (a copy made yesterday for "today" is not today's). The year range is checked by the service.
+ */
+function timetableDate(raw: string | undefined): string {
+  if (raw && !TIMETABLE_DATE.test(raw)) throw new InvalidInput("date must be 'today', 'tomorrow' or YYYY-MM-DD.");
+  if (!raw || raw === 'today') return isoJst(nowMs()).slice(0, 10);
+  if (raw === 'tomorrow') return isoJst(nowMs() + DAY_MS).slice(0, 10);
+  return raw;
+}
+
+/**
+ * GET /api/due through the console cache (console-cache.ts). The sweep reads the course snapshots the hourly cron keeps
+ * (no live course pages), so even a refresh stays short. MCP get_due_items stays live.
  */
 async function dueRoute(c: Context<AppEnv>) {
-  const user = c.get('user');
-  const store = storeOf(c.env);
   const { opts, key } = dueQuery(c.req.query());
-  const cached = c.req.query('refresh') === '1' ? null : await store.getDueCache(user.id, key);
-  if (cached) return c.json({ ...cached.list, cachedAt: isoJst(cached.createdAt), stale: true });
+  return cachedRoute(c, key, async () =>
+    getDueItems(await consoleContext(c, c.get('user')), { ...opts, sweep: 'cached' }),
+  );
+}
 
-  const list = await getDueItems(await consoleContext(c, user), { ...opts, sweep: 'cached' });
-  const createdAt = Date.now();
-  deferOn(c, store.putDueCache(user.id, key, { list, createdAt }));
-  return c.json({ ...list, cachedAt: isoJst(createdAt), stale: false });
+async function updatesRoute(c: Context<AppEnv>) {
+  const q = c.req.query();
+  const courseId = intParam(q.course_id, 'course_id', { min: 1, max: MAX_COURSE_ID });
+  const sinceDays = intParam(q.days, 'days', { min: 1, max: 30 }) ?? 7;
+  return cachedRoute(c, cacheKey('/api/updates', { days: sinceDays, course_id: courseId }), async () =>
+    getCourseUpdates(await consoleContext(c, c.get('user')), {
+      sinceDays,
+      ...(courseId === undefined ? {} : { courseId }),
+    }),
+  );
+}
+
+async function timetableRoute(c: Context<AppEnv>) {
+  const q = c.req.query();
+  const date = timetableDate(q.date || undefined);
+  const days = intParam(q.days, 'days', { min: 1, max: 14 }) ?? 1;
+  return cachedRoute(c, cacheKey('/api/timetable', { date, days }), async () =>
+    getTimetable(await consoleContext(c, c.get('user')), { date, days }),
+  );
 }
 
 export function dataRoutes(): Hono<AppEnv> {
@@ -57,31 +85,15 @@ export function dataRoutes(): Hono<AppEnv> {
   app.get('/api/due', session, dueRoute);
 
   // every enrolled course with its kind / mine / suggested flags; Settings → This term's courses edits the scope
-  app.get('/api/courses', session, async (c) => {
-    const ctx = await consoleContext(c, c.get('user'));
-    const { mode, courses } = await resolveScope(ctx);
-    return c.json({ mode, courses });
-  });
+  app.get('/api/courses', session, (c) =>
+    cachedRoute(c, cacheKey('/api/courses'), async () => {
+      const { mode, courses } = await resolveScope(await consoleContext(c, c.get('user')));
+      return { mode, courses };
+    }),
+  );
 
-  app.get('/api/updates', session, async (c) => {
-    const ctx = await consoleContext(c, c.get('user'));
-    const q = c.req.query();
-    const courseId = intParam(q.course_id, 'course_id', { min: 1, max: MAX_COURSE_ID });
-    return c.json(
-      await getCourseUpdates(ctx, {
-        sinceDays: intParam(q.days, 'days', { min: 1, max: 30 }) ?? 7,
-        ...(courseId === undefined ? {} : { courseId }),
-      }),
-    );
-  });
-
-  app.get('/api/timetable', session, async (c) => {
-    const ctx = await consoleContext(c, c.get('user'));
-    const q = c.req.query();
-    return c.json(
-      await getTimetable(ctx, { date: q.date || undefined, days: intParam(q.days, 'days', { min: 1, max: 14 }) }),
-    );
-  });
+  app.get('/api/updates', session, updatesRoute);
+  app.get('/api/timetable', session, timetableRoute);
 
   app.get('/api/actions', session, async (c) => {
     const ctx = await consoleContext(c, c.get('user'));
@@ -92,8 +104,11 @@ export function dataRoutes(): Hono<AppEnv> {
   });
 
   app.post('/api/actions/:id/approve', session, async (c) => {
-    const ctx = await consoleContext(c, c.get('user'), { mail: true });
-    return c.json(await confirmAction(ctx, c.req.param('id'), 'console'));
+    const user = c.get('user');
+    const result = await confirmAction(await consoleContext(c, user, { mail: true }), c.req.param('id'), 'console');
+    // a submission, completion or post changes the due list and the updates: the next console read computes again
+    if (result.status === 'executed') await storeOf(c.env).clearConsoleCache(user.id);
+    return c.json(result);
   });
 
   app.post('/api/actions/:id/cancel', session, async (c) => {

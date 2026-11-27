@@ -10,6 +10,7 @@ export const ja: Dictionary = {
   'public.unofficial': '非公式ツール · 早稲田大学とは関係ありません',
 
   'common.loading': '読み込み中',
+  'common.updating': '更新中…',
   'common.retry': '再試行',
   'common.cancel': 'キャンセル',
   'common.close': '閉じる',
@@ -171,7 +172,6 @@ export const ja: Dictionary = {
   'due.manage': '今学期のコース',
   'due.empty': '今後 14 日間に期限はありません。',
   'due.truncated': '一部の項目が表示されていない可能性があります。',
-  'due.updating': '更新中…',
   'due.opens': '{time} 開始',
   'due.notOpen': '未開始',
   'due.source.calendar': 'カレンダー',

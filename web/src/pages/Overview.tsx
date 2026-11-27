@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router';
-import { getTimetable, getUpdates, listActions } from '../api/endpoints';
+import { getDue, getTimetable, getUpdates, listActions } from '../api/endpoints';
 import type { Me } from '../api/types';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -12,6 +12,7 @@ import { PageHeader } from '../components/Layout';
 import { MailRow } from '../components/MailRow';
 import { ScopeBanner } from '../components/ScopeBanner';
 import { Spinner } from '../components/Spinner';
+import { UpdatingNote } from '../components/UpdatingNote';
 import { useI18n, useT } from '../i18n';
 import { lastCheckedAt } from '../lib/connection';
 import { notesText } from '../lib/dayNotes';
@@ -20,7 +21,7 @@ import { PENDING_LIMIT, pendingCountText } from '../lib/pending';
 import { formatDateTime } from '../lib/time';
 import { todayJst } from '../lib/timetable';
 import { useAsync } from '../lib/useAsync';
-import { useDue } from '../lib/useDue';
+import { useCachedQuery } from '../lib/useCachedQuery';
 import { useConfig, useSession } from '../session';
 
 /** MCP URL at hand; the per-client setup lives in Settings → AI clients. */
@@ -77,9 +78,11 @@ function ConnectionCard({ me }: { me: Me }) {
   );
 }
 
+const loadDue = (refresh: boolean) => getDue(14, refresh);
+
 function UpcomingCard() {
   const t = useT();
-  const due = useDue(14);
+  const due = useCachedQuery(loadDue);
   const items = due.data ? outstandingItems(due.data.items) : [];
   return (
     <Card title={t('overview.due.title')} actions={<Link to="/due">{t('overview.due.viewAll')}</Link>}>
@@ -99,14 +102,14 @@ function UpcomingCard() {
           <Link to="/settings/courses">{t('due.manage')}</Link>
         </p>
       )}
-      {due.refreshing && <p className="muted small">{t('due.updating')}</p>}
+      <UpdatingNote show={due.refreshing} />
     </Card>
   );
 }
 
 function TodayCard() {
   const { t, lang } = useI18n();
-  const today = useAsync(() => getTimetable(todayJst(), 1));
+  const today = useCachedQuery((refresh) => getTimetable(todayJst(), 1, refresh));
   const day = today.data?.days[0];
   const note = day ? notesText(day.notes, { t, lang }) : '';
   return (
@@ -122,13 +125,14 @@ function TodayCard() {
           ))}
         </div>
       )}
+      <UpdatingNote show={today.refreshing} />
     </Card>
   );
 }
 
 function UpdatesCard() {
   const { t, lang } = useI18n();
-  const updates = useAsync(() => getUpdates(7));
+  const updates = useCachedQuery((refresh) => getUpdates(7, refresh));
   const items = updates.data?.updates.slice(0, 5) ?? [];
   return (
     <Card title={t('overview.updates.title')}>
@@ -155,6 +159,7 @@ function UpdatesCard() {
           ))}
         </ul>
       )}
+      <UpdatingNote show={updates.refreshing} />
     </Card>
   );
 }

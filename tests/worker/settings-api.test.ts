@@ -3,6 +3,7 @@ import { InvalidInput } from '../../src/core/errors';
 import { resolveScope, setMyCourses } from '../../src/core/services/scope';
 import { getCourseUpdates } from '../../src/core/services/sweep';
 import { getTimetable } from '../../src/core/services/timetable';
+import { isoJst } from '../../src/core/time';
 import { createApi } from '../../src/worker/api';
 import { SESSION_COOKIE, startSession } from '../../src/worker/auth';
 import type { Env } from '../../src/worker/env';
@@ -252,7 +253,7 @@ describe('GET /api/courses and /api/updates', () => {
     vi.mocked(resolveScope).mockResolvedValue({ mode: 'auto', mine: new Set([1]), courses } as never);
     const res = await call('/api/courses?classification=all');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ mode: 'auto', courses });
+    expect(await res.json()).toMatchObject({ mode: 'auto', courses, stale: false });
     expect(vi.mocked(resolveScope).mock.calls[0]?.[0]).toMatchObject({
       source: 'Console',
       user: { moodleUserId: 1001 },
@@ -263,7 +264,7 @@ describe('GET /api/courses and /api/updates', () => {
   it('passes sinceDays (default 7) to getCourseUpdates and validates it', async () => {
     const payload = { updates: [], stats: { checked: 2, stale: 0, checkedAt: null } };
     vi.mocked(getCourseUpdates).mockResolvedValue(payload);
-    expect(await (await call('/api/updates')).json()).toEqual(payload);
+    expect(await (await call('/api/updates')).json()).toMatchObject({ ...payload, stale: false });
     expect(vi.mocked(getCourseUpdates).mock.calls[0]?.[1]).toEqual({ sinceDays: 7 });
     expect((await call('/api/updates?days=3')).status).toBe(200);
     expect(vi.mocked(getCourseUpdates).mock.calls[1]?.[1]).toEqual({ sinceDays: 3 });
@@ -288,24 +289,30 @@ describe('GET /api/timetable', () => {
 
   it('passes date and days (validated) to getTimetable with a console context', async () => {
     vi.mocked(getTimetable).mockResolvedValue(payload as never);
-    expect(await (await call('/api/timetable')).json()).toEqual(payload);
+    expect(await (await call('/api/timetable')).json()).toMatchObject({ ...payload, stale: false });
     expect(vi.mocked(getTimetable).mock.calls[0]?.[0]).toMatchObject({
       source: 'Console',
       user: { moodleUserId: 1001 },
     });
-    expect(vi.mocked(getTimetable).mock.calls[0]?.[1]).toEqual({ date: undefined, days: undefined });
+    // no date / 'tomorrow' resolve to the JST date (the console cache keys the answer by its day)
+    const today = isoJst(Date.now()).slice(0, 10);
+    expect(vi.mocked(getTimetable).mock.calls[0]?.[1]).toEqual({ date: today, days: 1 });
     expect((await call('/api/timetable?date=2026-10-19&days=7')).status).toBe(200);
     expect(vi.mocked(getTimetable).mock.calls[1]?.[1]).toEqual({ date: '2026-10-19', days: 7 });
     expect((await call('/api/timetable?date=tomorrow')).status).toBe(200);
-    expect(vi.mocked(getTimetable).mock.calls[2]?.[1]).toEqual({ date: 'tomorrow', days: undefined });
+    expect(vi.mocked(getTimetable).mock.calls[2]?.[1]).toEqual({
+      date: isoJst(Date.now() + 86_400_000).slice(0, 10),
+      days: 1,
+    });
   });
 
-  it('rejects a bad days value, maps a bad date from the service to 400 and needs a session', async () => {
+  it('rejects a bad days value or date, maps a bad date from the service to 400 and needs a session', async () => {
     for (const days of ['0', '15', 'abc']) {
       expect((await call(`/api/timetable?days=${days}`)).status, days).toBe(400);
     }
-    vi.mocked(getTimetable).mockRejectedValueOnce(new InvalidInput('date must be today, tomorrow or YYYY-MM-DD.'));
     expect((await call('/api/timetable?date=nope')).status).toBe(400);
+    vi.mocked(getTimetable).mockRejectedValueOnce(new InvalidInput('date must be YYYY-MM-DD (years 2000-2100).'));
+    expect((await call('/api/timetable?date=1900-01-01')).status).toBe(400);
     expect((await call('/api/timetable', { signed: false })).status).toBe(401);
   });
 });

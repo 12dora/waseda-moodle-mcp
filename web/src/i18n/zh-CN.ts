@@ -10,6 +10,7 @@ export const zhCN: Dictionary = {
   'public.unofficial': '非官方工具 · 与早稻田大学无关',
 
   'common.loading': '加载中',
+  'common.updating': '正在更新…',
   'common.retry': '重试',
   'common.cancel': '取消',
   'common.close': '关闭',
@@ -163,7 +164,6 @@ export const zhCN: Dictionary = {
   'due.manage': '本学期课程',
   'due.empty': '未来 14 天内没有截止事项。',
   'due.truncated': '列表可能不完整。',
-  'due.updating': '正在更新…',
   'due.opens': '{time} 开放',
   'due.notOpen': '未开放',
   'due.source.calendar': '日历',

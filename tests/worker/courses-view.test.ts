@@ -59,7 +59,7 @@ describe('GET /api/courses/overview', () => {
     vi.mocked(getCourseOverview).mockResolvedValue(payload as never);
     const res = await call('/api/courses/overview');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(payload);
+    expect(await res.json()).toMatchObject({ ...payload, stale: false });
     expect(vi.mocked(getCourseOverview).mock.calls[0]?.[0]).toMatchObject({
       source: 'Console',
       user: { moodleUserId: 1001 },
@@ -80,7 +80,7 @@ describe('GET /api/syllabus', () => {
     vi.mocked(getSyllabusSummary).mockResolvedValue(payload as never);
     const res = await call('/api/syllabus?course_id=7');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(payload);
+    expect(await res.json()).toMatchObject({ ...payload, stale: false });
     expect(vi.mocked(getSyllabusSummary).mock.calls[0]?.[1]).toBe(7);
 
     expect((await call('/api/syllabus')).status).toBe(400);

@@ -10,13 +10,14 @@ import { ScheduleEditor } from '../components/ScheduleEditor';
 import { ScopeBanner } from '../components/ScopeBanner';
 import { TimetableDayList, TimetableGrid } from '../components/TimetableGrid';
 import { UnknownList, UnscheduledLists } from '../components/TimetableLists';
+import { UpdatingNote } from '../components/UpdatingNote';
 import { useI18n } from '../i18n';
 import { noteText, sharedBreaks } from '../lib/dayNotes';
 import { formatDay } from '../lib/time';
 import { addDays, todayJst, visibleDays, weekStart } from '../lib/timetable';
-import { useAsync } from '../lib/useAsync';
+import { useCachedQuery } from '../lib/useCachedQuery';
 
-const loadWeek = (start: string) => getTimetable(start, 7);
+const loadWeek = (refresh: boolean, start: string) => getTimetable(start, 7, refresh);
 
 function WeekView({ data, today, onEdit }: { data: Timetable; today: string; onEdit: (c: EditTarget) => void }) {
   const { t, lang } = useI18n();
@@ -61,7 +62,7 @@ export function TimetablePage() {
   const today = todayJst();
   const [week, setWeek] = useState(() => weekStart(today));
   const [editing, setEditing] = useState<EditTarget | null>(null);
-  const tt = useAsync(loadWeek, week);
+  const tt = useCachedQuery(loadWeek, week);
 
   return (
     <>
@@ -71,6 +72,7 @@ export function TimetablePage() {
         actions={<WeekNav week={week} today={today} onChange={setWeek} />}
       />
       <ScopeBanner />
+      <UpdatingNote show={tt.refreshing} />
       <AsyncBlock state={tt}>
         {(data) => (
           <>

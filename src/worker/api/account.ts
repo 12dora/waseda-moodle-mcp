@@ -111,6 +111,10 @@ async function patchSettings(c: Context<AppEnv>, user: UserRow, body: Record<str
   if (body.hiddenCourseIds !== undefined) throw new InvalidInput('hiddenCourseIds is retired: use myCourseIds.');
   applySettingsPatch(user.settings, body); // rejects a bad writeMode / uiLang before anything is written
   const settings = applySettingsPatch(await applyCourseSettings(c, user, body), body);
+  // the course scope and the schedules shape every cached console read (console-cache.ts): compute them again
+  if (body.myCourseIds !== undefined || body.scheduleOverrides !== undefined) {
+    await storeOf(c.env).clearConsoleCache(user.id);
+  }
   if (body.writeMode !== undefined || body.uiLang !== undefined) {
     await storeOf(c.env).updateSettings(user.id, settings);
     auditConsole(c, user, 'settings:update', { fields: ['writeMode', 'uiLang'].filter((k) => k in body) });
@@ -162,6 +166,8 @@ async function connect(c: Context<AppEnv>): Promise<Response> {
     return c.json({ error: { code: 'account_switch', message }, account: { fullname: result.user.fullname } }, 409);
   }
   if (request.code) await consumeHandoff(rt, request.code);
+  // a reconnect may be another Moodle session (or a renamed enrolment): the console's copies are read again
+  await rt.store.clearConsoleCache(result.user.id);
 
   const { setCookie } = await startSession(rt.store, result.user.id, c.req.header('User-Agent') ?? null);
   const old = readSessionCookie(c.req.raw);

@@ -36,7 +36,7 @@ Waseda Moodle MCP is unofficial and not affiliated with Waseda University.
 | Upload drafts | Large file uploads | File names and sizes only, not contents. |
 | Activity (audit) log | So you can see what was done in your name | Action names and non-content details such as ids and booleans. |
 | Course snapshots | Assignments & deadlines and "what's new" | Compact outline of your courses: activity names, dates, completion, file names and links, and short text snippets (up to about 2 KB) that mention deadlines. |
-| Cached due list | So the console shows your deadlines at once | A copy of your due list (assignments & deadlines with their submission status), refreshed when you open the console, deleted after 7 days or with your account. |
+| Cached console pages | So the console shows your pages at once | Copies of console pages read from Moodle (assignments with their submission status, courses, timetable, updates, syllabus), refreshed when you open them, deleted after 7 days or with your account. |
 | Syllabus cache | Timetable | Parsed public Waseda syllabus pages (times, rooms, instructors). Public data, shared across users, not tied to you. |
 | Class times from Moodle | Timetable | Weekly class times derived from the attendance sessions of your courses in Moodle, when the syllabus gives none. Kept per user and refreshed weekly. |
 | Calendar subscription | Calendar apps (only if you turn it on) | A hash of your private calendar link (the link itself is not stored), the time of the last fetch, and the generated calendar (assignments & deadlines and classes) for up to 30 minutes. |
@@ -63,7 +63,7 @@ Expired data is purged daily.
 | Pending actions | Expire after 30 minutes |
 | Revoked API keys | 90 days after revocation |
 | Course snapshots | 30 days after last check |
-| Cached due list | 7 days |
+| Cached console pages | 7 days |
 | Class times from Moodle | 30 days after last check |
 | Calendar subscription | Until you turn it off or delete your account |
 | Waseda mail connection | Until you disconnect it, an administrator revokes your access, or you delete your account; revoked automatically after 90 days without use (the instance may set another period) and when your access is no longer approved |
@@ -92,7 +92,7 @@ In the console:
 - **Settings → Authorized apps**: revoke an MCP client's OAuth access.
 - **Settings → API keys**: revoke a key.
 - **Settings → Mail**: disconnect Waseda mail — revokes the Google authorization and deletes it. You can also remove access at https://myaccount.google.com/permissions.
-- **Settings → Account**: delete account — revokes all OAuth grants and the Google mail authorization, and permanently deletes your user record, encrypted Moodle sign-in session and app token, Waseda mail connection and mail access request, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, cached due list, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
+- **Settings → Account**: delete account — revokes all OAuth grants and the Google mail authorization, and permanently deletes your user record, encrypted Moodle sign-in session and app token, Waseda mail connection and mail access request, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, cached console pages, class times from Moodle and your calendar subscription. Your Moodle account is not affected.
 
 Signing out of Moodle in your browser ends the session the service holds. If the extension is set up, it
 reconnects at your next sign-in; remove the extension to stop that.

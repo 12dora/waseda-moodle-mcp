@@ -79,9 +79,9 @@ export const en: PrivacyDoc = {
                 'Compact outline of your courses: activity names, dates, completion, file names and links, and short text snippets (up to about 2 KB) that mention deadlines.',
               ],
               [
-                'Cached due list',
-                'So the console shows your deadlines at once',
-                'A copy of your due list (assignments and deadlines with their submission status), refreshed when you open the console, deleted after 7 days or with your account.',
+                'Cached console pages',
+                'So the console shows your pages at once',
+                'Copies of console pages read from Moodle (assignments with their submission status, courses, timetable, updates, syllabus), refreshed when you open them, deleted after 7 days or with your account.',
               ],
               [
                 'Syllabus cache',
@@ -159,7 +159,7 @@ export const en: PrivacyDoc = {
               ['Pending actions', 'Expire after 30 minutes'],
               ['Revoked API keys', '90 days after revocation'],
               ['Course snapshots', '30 days after last check'],
-              ['Cached due list', '7 days'],
+              ['Cached console pages', '7 days'],
               ['Class times from Moodle', '30 days after last check'],
               ['Calendar subscription', 'Until you turn it off or delete your account'],
               [
@@ -206,7 +206,7 @@ export const en: PrivacyDoc = {
             'Apps: revoke an MCP client’s OAuth access.',
             'API keys: revoke a key.',
             'Settings → Mail: disconnect your Waseda mail.',
-            'Settings → Delete account: revokes all OAuth grants and permanently deletes your user record, encrypted Moodle sign-in session and app token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, cached due list, class times from Moodle, your calendar subscription, your Waseda mail connection and your mail access request. Your Moodle account is not affected.',
+            'Settings → Delete account: revokes all OAuth grants and permanently deletes your user record, encrypted Moodle sign-in session and app token, settings, sessions, API keys, actions, upload drafts, activity log, course snapshots, cached console pages, class times from Moodle, your calendar subscription, your Waseda mail connection and your mail access request. Your Moodle account is not affected.',
           ],
         },
         {

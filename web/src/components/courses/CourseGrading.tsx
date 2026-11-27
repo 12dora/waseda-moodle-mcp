@@ -1,7 +1,7 @@
 import { getSyllabusSummary } from '../../api/endpoints';
-import type { CourseOverviewItem, GradingRow, SyllabusSummary } from '../../api/types';
+import type { Cached, CourseOverviewItem, GradingRow, SyllabusSummary } from '../../api/types';
 import { useI18n } from '../../i18n';
-import { type AsyncState, useAsync } from '../../lib/useAsync';
+import { type CachedState, useCachedQuery } from '../../lib/useCachedQuery';
 import { Card } from '../Card';
 import { Spinner } from '../Spinner';
 
@@ -51,17 +51,17 @@ interface CourseSyllabus {
   grading: Grading | 'loading' | 'error';
 }
 
-const fetchSyllabus = (courseId: number | null) =>
-  courseId === null ? Promise.resolve(null) : getSyllabusSummary(courseId);
+const fetchSyllabus = (refresh: boolean, courseId: number | null): Promise<Cached<SyllabusSummary> | null> =>
+  courseId === null ? Promise.resolve(null) : getSyllabusSummary(courseId, refresh);
 
-function lazyGrading(state: AsyncState<SyllabusSummary | null>): CourseSyllabus['grading'] {
+function lazyGrading(state: CachedState<Cached<SyllabusSummary> | null>): CourseSyllabus['grading'] {
   if (state.error != null || state.data?.status === 'error') return 'error';
   return state.data ?? 'loading';
 }
 
 export function useCourseSyllabus(course: CourseOverviewItem): CourseSyllabus {
   const lazy = course.syllabusStatus === 'unknown';
-  const state = useAsync(fetchSyllabus, lazy ? course.id : null);
+  const state = useCachedQuery(fetchSyllabus, lazy ? course.id : null);
   if (!lazy) return { url: course.syllabusUrl, grading: course };
   return { url: state.data?.url ?? course.syllabusUrl, grading: lazyGrading(state) };
 }
