@@ -1,12 +1,14 @@
 /**
- * Manual activity completion toggles. Both channels: the state from core_completion_get_activities_completion_status
- * (emulated from the course page on the web channel; the cmid hint lets it read the activity alone), the change through
- * core_completion_update_activity_completion_status_manually (ajax-enabled).
+ * Manual activity completion toggles. The state: ws core_completion_get_activities_completion_status; web the
+ * activity's course-page snippet (no page view). The change: core_completion_update_activity_completion_status_manually
+ * (ajax-enabled, both channels).
  */
 
 import type { MoodleApi, ServiceContext } from '../../context';
 import { InvalidInput, NeedsReconnect, NotFound } from '../../errors';
 import { decodeEntities } from '../../html';
+import { parseCmItem } from '../../moodle/web/parse/course-page';
+import type { WebSession } from '../../moodle/web/types';
 import type { ActionPreview } from '../../types';
 import { listAllCourses } from '../courses';
 import {
@@ -31,6 +33,8 @@ type CompletionPayload = {
   completed: boolean;
   url: string;
 };
+
+const AUTOMATIC = 'Completion of this activity is tracked automatically; it cannot be set by hand.';
 
 /** Activities that count once handed in: a manual mark does not hand anything in. */
 const HANDED_IN: Record<string, string> = {
@@ -72,7 +76,7 @@ async function manualCompletionState(api: MoodleApi, courseId: number, cmid: num
     throw new InvalidInput('This activity has no completion tracking.');
   }
   if (tracking === 2) {
-    throw new InvalidInput('Completion of this activity is tracked automatically; it cannot be set by hand.');
+    throw new InvalidInput(AUTOMATIC);
   }
   return (num(entry.state) ?? 0) > 0;
 }
@@ -88,14 +92,39 @@ async function courseNameOf(ctx: ServiceContext, courseId: number): Promise<stri
   }
 }
 
+interface CurrentState {
+  cm: Pick<CourseModule, 'name' | 'modname'>;
+  wasDone: boolean;
+  /** ` (course name)` when known. */
+  where: string;
+}
+
+/**
+ * Web channel: the activity's own course-page snippet (ajax core_course_get_module) carries its name and manual
+ * toggle. Opening the activity page instead would count as a view, which on Waseda marks a resource done by itself.
+ */
+async function webState(web: WebSession, cmid: number): Promise<CurrentState> {
+  const html = await web.ajax<unknown>('core_course_get_module', { id: cmid });
+  const cm = typeof html === 'string' ? parseCmItem(html) : null;
+  if (!cm) throw new NotFound('Activity not found.');
+  if (cm.tracking === 0) throw new InvalidInput('This activity has no completion tracking.');
+  if (cm.tracking === 2) throw new InvalidInput(AUTOMATIC);
+  return { cm: { name: cm.name || `activity ${cmid}`, modname: cm.modname }, wasDone: cm.done, where: '' };
+}
+
+async function currentState(ctx: ServiceContext, api: MoodleApi, cmid: number): Promise<CurrentState> {
+  if (api.web) return webState(api.web, cmid);
+  const cm = await loadModule(api, cmid);
+  const wasDone = await manualCompletionState(api, cm.courseId, cmid);
+  return { cm, wasDone, where: ` (${await courseNameOf(ctx, cm.courseId)})` };
+}
+
 export async function prepareCompletion(ctx: ServiceContext, input: PrepareCompletionInput): Promise<ActionPreview> {
   assertWriteAllowed(ctx);
   const cmid = positiveInt(input.cmid, 'cmid');
   if (typeof input.completed !== 'boolean') throw new InvalidInput('completed must be true or false.');
   const api = await ctx.moodle();
-  const cm = await loadModule(api, cmid);
-  const wasDone = await manualCompletionState(api, cm.courseId, cmid);
-  const courseName = await courseNameOf(ctx, cm.courseId);
+  const { cm, wasDone, where } = await currentState(ctx, api, cmid);
   const state = input.completed ? 'complete' : 'incomplete';
   const handedIn = input.completed ? HANDED_IN[cm.modname] : undefined;
   const payload: CompletionPayload = {
@@ -106,7 +135,7 @@ export async function prepareCompletion(ctx: ServiceContext, input: PrepareCompl
   return savePreview(ctx, {
     kind: 'completion',
     title: `Mark '${cm.name}' ${state}`,
-    details: [`Activity: ${cm.name} (${courseName})`, `Mark as: ${input.completed ? 'complete' : 'not complete'}`],
+    details: [`Activity: ${cm.name}${where}`, `Mark as: ${input.completed ? 'complete' : 'not complete'}`],
     warnings: [
       ...(wasDone === input.completed ? [`It is already marked ${state}.`] : []),
       ...(handedIn ? [`Marking it done does not submit ${handedIn}.`] : []),

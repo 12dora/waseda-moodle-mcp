@@ -19,6 +19,8 @@ type PageEntry = string | ((req: WebRequest) => WebPage | Promise<WebPage>);
 
 export interface WebApiOptions {
   pages?: Record<string, PageEntry>;
+  /** Answers of the session's ajax functions (web.ajax). */
+  ajax?: Record<string, unknown>;
   handlers?: Record<string, Handler>;
   /** Calls already spent before the code under test runs. */
   spent?: number;
@@ -30,7 +32,7 @@ export type WebApi = MoodleApi & {
 };
 
 export function makeWebApi(opts: WebApiOptions = {}): WebApi {
-  const web = makeFakeWebSession({ pages: opts.pages });
+  const web = makeFakeWebSession({ pages: opts.pages, ajax: opts.ajax });
   const calls: WebApi['calls'] = [];
   const handlers = opts.handlers ?? {};
   return {
