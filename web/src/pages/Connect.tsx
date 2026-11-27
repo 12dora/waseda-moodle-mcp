@@ -26,6 +26,47 @@ function switchTarget(e: unknown): string | null {
   return typeof name === 'string' ? name : '';
 }
 
+/** `connectedAt` of a working connection, or null. */
+const activeSince = (me: Me | null): string | null =>
+  me?.credential?.status === 'active' ? me.credential.connectedAt : null;
+
+/**
+ * Calls `onConnected` when the page regains focus and the account is connected now but was not when the page opened
+ * (or was connected again since): the sign-in completed in another tab or through the extension.
+ */
+function useConnectedElsewhere(onConnected: () => void): void {
+  const latest = useRef(onConnected);
+  latest.current = onConnected;
+  useEffect(() => {
+    // the baseline: how the account stood when this page opened (undefined until known)
+    let seen: string | null | undefined;
+    getMe(false).then(
+      (me) => {
+        seen = activeSince(me);
+      },
+      () => {
+        seen = null;
+      },
+    );
+    const check = () => {
+      if (seen === undefined || document.visibilityState !== 'visible') return;
+      getMe(false).then(
+        (now) => {
+          const since = activeSince(now);
+          if (since !== null && since !== seen) latest.current();
+        },
+        () => {},
+      );
+    };
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, []);
+}
+
 interface PendingSwitch {
   body: ConnectRequest;
   name: string;
@@ -81,6 +122,13 @@ export function ConnectPage() {
       .catch((e: unknown) => setCodeError(e))
       .finally(() => setCodeBusy(false));
   }, [connectOrAsk, returnParam]);
+
+  // Connecting usually finishes in another tab (the extension opens the console there): when this page comes back
+  // into view, an account that is now connected (or connected anew) leaves the connect page.
+  useConnectedElsewhere(() => {
+    toast.show(t('connect.connected'));
+    navigate(takeReturn(returnParam), { replace: true });
+  });
 
   if (codeBusy) {
     return (

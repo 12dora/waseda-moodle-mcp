@@ -133,6 +133,10 @@ const attemptConnect = singleFlight(async () => {
   }
   await openInTab(buildConnectUrl(serviceUrl, code), pending?.tabId);
   await setResult('connect_opened');
+  // sync once right away: an account the service already knows is updated even before the console page finishes;
+  // a new account is created by that page, so its "unknown" answer here is not a failure
+  const synced = await refresh.runFresh();
+  if (synced?.result === 'unknown_user') await setResult('connect_opened');
   return { ok: true };
 });
 
