@@ -85,6 +85,8 @@ describe('gradereport_user_get_grade_items (web)', () => {
       iteminstance: 7001,
       gradeformatted: '-',
       rangeformatted: '0–100',
+      grademin: 0,
+      grademax: 100,
       percentageformatted: '-',
       weightformatted: '20.00 % ( 空白 )',
       lettergradeformatted: '-',
@@ -121,11 +123,45 @@ describe('gradereport_user_get_grade_items (web)', () => {
         iteminstance: 7011,
         gradeformatted: '8.00',
         rangeformatted: '0–10',
+        grademin: 0,
+        grademax: 10,
         feedback: '<div class="text_to_html">Good work.</div>',
       },
-      { itemname: null, itemtype: 'course', gradeformatted: '8.00', rangeformatted: '0–10', feedback: '' },
+      {
+        itemname: null,
+        itemtype: 'course',
+        gradeformatted: '8.00',
+        rangeformatted: '0–10',
+        grademin: 0,
+        grademax: 10,
+        feedback: '',
+      },
     ]);
   });
+
+  it.each([
+    ['0.00&ndash;100.00', { grademin: 0, grademax: 100 }],
+    ['0&ndash;4', { grademin: 0, grademax: 4 }],
+    ['-5.50&ndash;5.50', { grademin: -5.5, grademax: 5.5 }],
+  ])('reads the item minimum and maximum from the range %s', async (range, bounds) => {
+    const page = fixture('grades-user-en.html').replaceAll('0&ndash;10', range);
+    const web = makeFakeWebSession({ moodleUserId: 4242, pages: { [userPath(99102)]: page } });
+    const res = await call<Items>(web, 'gradereport_user_get_grade_items', { courseid: 99102 });
+    expect(res.usergrades[0]?.gradeitems[0]).toMatchObject(bounds);
+  });
+
+  it.each(['F&ndash;A+', '0.00 %&ndash;100.00 %', '-'])(
+    'gives no minimum and maximum for the range %s',
+    async (range) => {
+      const page = fixture('grades-user-en.html').replaceAll('0&ndash;10', range);
+      const web = makeFakeWebSession({ moodleUserId: 4242, pages: { [userPath(99102)]: page } });
+      const res = await call<Items>(web, 'gradereport_user_get_grade_items', { courseid: 99102 });
+      const item = res.usergrades[0]?.gradeitems[0];
+      expect(item?.rangeformatted).toBeDefined();
+      expect(item).not.toHaveProperty('grademin');
+      expect(item).not.toHaveProperty('grademax');
+    },
+  );
 
   it('passes on the no-permission error of a hidden report', async () => {
     const web = makeFakeWebSession({

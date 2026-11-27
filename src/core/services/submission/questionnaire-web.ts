@@ -7,10 +7,12 @@
  *   (questionnaire-web-inputs.ts), the hidden fields (sesskey, `a` = instance, `sid` = survey, `rid` = response,
  *   `sec` = page), the buttons by name (`next`, `prev`, `submit`, `resume`) and Moodle's notices; after the last
  *   page the same URL shows the thank-you page;
- * - the user's responses page `myreport.php`: the submitted response, read-only (no inputs, own markup).
+ * - the user's responses page `myreport.php`: the submitted response, read-only (no inputs, own markup), headed by
+ *   who handed it in and when (`.respondentinfo`).
  */
 
 import { htmlToMarkdown } from '../../html';
+import { parseMoodleDate } from '../../moodle/web/dates';
 import {
   attr,
   type FormFields,
@@ -24,7 +26,8 @@ import {
   queryInt,
   text,
 } from '../../moodle/web/html';
-import type { DueSubmission, QuestionnaireQuestion, QuestionnaireQuestionType } from '../../types';
+import { fromTs } from '../../time';
+import type { DueSubmission, IsoJst, QuestionnaireQuestion, QuestionnaireQuestionType } from '../../types';
 import { noticesIn, pathOf } from '../activity/web';
 import type { QuestionnaireIndex } from './questionnaire';
 import { questionHead, type WebQuestion, webQuestion } from './questionnaire-web-inputs';
@@ -248,6 +251,17 @@ function responseQuestion(c: HtmlElement): QuestionnaireQuestion | null {
     .find((k) => k && k !== 'response');
   const type = (kind && RESPONSE_TYPES[kind]) || 'other';
   return { ...questionHead(c.outer, id, 1), type, answer: responseAnswer(type, box.inner) };
+}
+
+/** The plugin's `submitted` string (ja / en), which heads the time of a response. */
+const SUBMIT_LABEL = /(?:提出完了|Submitted on)\s*[:：]/;
+
+/** When the response on the responses page was handed in; null when the page does not say it in ja or en. */
+export function parseWebSubmitTime(html: string): IsoJst | null {
+  const info = findFirst(mainRegion(html), { attr: 'class', value: 'respondentinfo', word: true });
+  const line = info ? text(info.inner) : '';
+  const label = SUBMIT_LABEL.exec(line);
+  return label ? fromTs(parseMoodleDate(line.slice(label.index + label[0].length))) : null;
 }
 
 /**

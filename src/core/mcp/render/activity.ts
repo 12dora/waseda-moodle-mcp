@@ -56,7 +56,8 @@ function sessionStatus(s: AttendanceSession): string {
 
 function sessionLine(s: AttendanceSession): string {
   const when = s.at ? fmt(s.at) : oneLine(s.time, 48) || '-';
-  const bits = [when, s.group, sessionStatus(s), s.remarks ? oneLine(s.remarks, 80) : null].filter(Boolean);
+  const points = s.points ? `${oneLine(s.points, 24)} pts` : null;
+  const bits = [when, s.group, sessionStatus(s), points, s.remarks ? oneLine(s.remarks, 80) : null].filter(Boolean);
   return `- ${bits.join(' · ')}`;
 }
 
@@ -74,7 +75,7 @@ function attendanceText(a: AttendanceDetail): string {
     head.push(`Maximum possible: ${s.maxPossiblePoints ?? '-'} (${s.maxPossiblePercentage ?? '-'})`);
   }
   if (a.description.trim()) head.push(clip(a.description, 600));
-  head.push(a.sessions.length ? 'Recent sessions:' : 'No session details.');
+  head.push(a.sessions.length ? 'Sessions (newest first):' : 'No session details.');
   const footer = ['Attendance is read only; this server cannot record it.'];
   if (!a.complete) footer.push('Some attendance data could not be read; the complete record is in Moodle.');
   return assemble({

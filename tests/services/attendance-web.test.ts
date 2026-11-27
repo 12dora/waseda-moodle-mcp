@@ -28,7 +28,7 @@ describe('parseAttendancePage', () => {
       type: 'attendance',
       cmid: 7012,
       courseId: 99101,
-      complete: true,
+      complete: false, // one month only
       summary: {
         takenSessions: 2,
         points: '3 / 4',
@@ -46,6 +46,7 @@ describe('parseAttendancePage', () => {
       ['2026-10-02T08:50:00+09:00', '出席', null],
     ]);
     expect(a.sessions[0]).toMatchObject({ time: '2026/10/16 (金) 10:40AM - 12:20PM', group: '対面授業' });
+    expect(a.sessions.map((s) => s.points)).toEqual(['? / 2', '2 / 2', '2 / 2']);
   });
 
   it('reads the English page with the "all sessions" summary rows and status acronyms', () => {
@@ -64,30 +65,88 @@ describe('parseAttendancePage', () => {
       ['P', 'Present'],
     ]);
     expect(a.sessions[2]?.at).toBe('2026-10-02T08:50:00+09:00');
+    expect(a.complete).toBe(true);
   });
 
   it('gives an empty summary and no sessions for a page without the tables', () => {
     const a = parseAttendancePage('<div id="region-main"><p>Nothing yet.</p></div>', cm, info);
     expect(a.sessions).toEqual([]);
     expect(a.summary.takenSessions).toBeNull();
+    expect(a.complete).toBe(false);
   });
 });
 
-describe('getActivity attendance on the web channel', () => {
-  it('reads the activity page instead of the mobile template', async () => {
-    const api = makeWebApi({
-      pages: { '/mod/attendance/view.php?id=7012': fixture('attendance-view-en.html') },
-      handlers: {
-        core_course_get_course_module: {
-          cm: { id: 7012, course: 99101, modname: 'attendance', instance: 7012, name: 'Attendance' },
-        },
+const VIEW = '/mod/attendance/view.php?id=7012';
+const ALL = `${VIEW}&view=5`;
+const MONTHS = `${VIEW}&view=3`;
+const monthPage = fixture('attendance-view-ja.html');
+const allPage = fixture('attendance-view-en.html');
+
+async function read(pages: Record<string, string>) {
+  const api = makeWebApi({
+    pages,
+    handlers: {
+      core_course_get_course_module: {
+        cm: { id: 7012, course: 99101, modname: 'attendance', instance: 7012, name: 'Attendance' },
       },
-    });
-    const { ctx } = makeFakeContext({});
-    const a = (await getActivity({ ...ctx, moodle: async () => api }, 7012)) as AttendanceDetail;
+    },
+  });
+  const { ctx } = makeFakeContext({});
+  const a = (await getActivity({ ...ctx, moodle: async () => api }, 7012)) as AttendanceDetail;
+  return { a, api };
+}
+
+describe('getActivity attendance on the web channel', () => {
+  it('reads all sessions of the term, then restores the view the user had (two further requests)', async () => {
+    const { a, api } = await read({ [VIEW]: monthPage, [ALL]: allPage, [MONTHS]: monthPage });
     expect(a.type).toBe('attendance');
-    expect(a.summary.totalSessions).toBe(15);
+    expect(a.summary).toMatchObject({ takenSessions: 2, totalSessions: 15, percentage: '75.0%' });
+    expect(a.sessions[2]).toMatchObject({ status: 'Present', points: '2 / 2' });
+    expect(a.complete).toBe(true);
     expect(api.calls.map((c) => c.fn)).not.toContain('tool_mobile_get_content');
-    expect(api.pageCalls).toEqual(['GET /mod/attendance/view.php?id=7012']);
+    expect(api.pageCalls).toEqual([`GET ${VIEW}`, `GET ${ALL}`, `GET ${MONTHS}`]);
+  });
+
+  it('restores whichever view was active: the one the page does not link to', async () => {
+    const weeks = monthPage
+      .replace('<span class="attcurbtn">月</span>', `<span class="attbtn"><a href="${MONTHS}">月</a></span>`)
+      .replace(/<span class="attbtn"><a href="[^"]*view=2">週<\/a><\/span>/, '<span class="attcurbtn">週</span>');
+    const { api } = await read({ [VIEW]: weeks, [ALL]: allPage, [`${VIEW}&view=2`]: weeks });
+    expect(api.pageCalls).toEqual([`GET ${VIEW}`, `GET ${ALL}`, `GET ${VIEW}&view=2`]);
+  });
+
+  it('needs one request when the user already views all sessions', async () => {
+    const { a, api } = await read({ [VIEW]: allPage });
+    expect(a.complete).toBe(true);
+    expect(api.pageCalls).toEqual([`GET ${VIEW}`]);
+  });
+
+  it('keeps the whole term when the view cannot be restored', async () => {
+    const { a, api } = await read({ [VIEW]: monthPage, [ALL]: allPage });
+    expect(a.summary.totalSessions).toBe(15);
+    expect(a.complete).toBe(true);
+    expect(api.pageCalls).toEqual([`GET ${VIEW}`, `GET ${ALL}`, `GET ${MONTHS}`]);
+  });
+
+  it('shows the current period as incomplete when all sessions cannot be read, and still restores', async () => {
+    const { a, api } = await read({ [VIEW]: monthPage, [MONTHS]: monthPage });
+    expect(a.summary).toMatchObject({ takenSessions: 2, totalSessions: null });
+    expect(a.sessions).toHaveLength(3);
+    expect(a.complete).toBe(false);
+    expect(api.pageCalls).toEqual([`GET ${VIEW}`, `GET ${ALL}`, `GET ${MONTHS}`]);
+  });
+
+  it('leaves the view alone when the page does not tell which one is active', async () => {
+    const bare = monthPage.replace(/class="viewcontrols /, 'class="');
+    const { a, api } = await read({ [VIEW]: bare, [ALL]: allPage });
+    expect(a.complete).toBe(false);
+    expect(api.pageCalls).toEqual([`GET ${VIEW}`]);
+  });
+
+  it('lists every session of a long term, not only the newest twenty', async () => {
+    const row = /<tr class="lastrow">[\s\S]*?<\/tr>/.exec(allPage)?.[0] ?? '';
+    const { a } = await read({ [VIEW]: allPage.replace(row, row.repeat(28)) });
+    expect(a.sessions).toHaveLength(30);
+    expect(a.sessions.at(-1)?.at).toBe('2026-10-02T08:50:00+09:00');
   });
 });

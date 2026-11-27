@@ -1,7 +1,7 @@
 /**
  * Reading a questionnaire on the web channel (one page each): the index `view.php`, the form `complete.php` (page 1;
  * `&resume=1` continues the saved draft), the latest submitted response (the user's responses page `myreport.php`
- * shows it read-only: the answers in words, no choice ids).
+ * shows it read-only: the answers in words, no choice ids, and when it was handed in, which the index does not say).
  * Later form pages cannot be opened without saving page 1 (Moodle moves on only by "next"), so a multi-page form is
  * read from its printable blank copy (`print.php?…&rid=0`, linked from the form), which heads every page with its
  * marker; a saved draft's answers on the later pages are not shown there.
@@ -10,10 +10,12 @@
 import type { MoodleApi } from '../../context';
 import { MoodleError } from '../../errors';
 import type { QuestionnaireQuestion } from '../../types';
+import type { QuestionnaireIndex } from '../submission/questionnaire';
 import {
   parseWebQuestionnaireIndex,
   parseWebQuestionnairePage,
   parseWebQuestionnaireResponse,
+  parseWebSubmitTime,
   type WebFormPage,
 } from '../submission/questionnaire-web';
 import type { FormRead, QuestionnaireReader } from './questionnaire';
@@ -31,6 +33,18 @@ const optionalHtml = (api: MoodleApi, path: string): Promise<string | null> =>
     if (e instanceof MoodleError) return null;
     throw e;
   });
+
+/**
+ * The index page; for a submitted questionnaire also the submit time from the responses page (the session memoises it,
+ * so reading the answers from it afterwards costs no further request).
+ */
+async function readIndex(api: MoodleApi, cmid: number): Promise<QuestionnaireIndex> {
+  const index = parseWebQuestionnaireIndex(await html(api, `/mod/questionnaire/view.php?id=${cmid}`), api.baseUrl);
+  const { state, reviewPath } = index;
+  if (state?.status !== 'submitted' || !reviewPath) return index;
+  const report = await optionalHtml(api, reviewPath);
+  return { ...index, state: { ...state, submittedAt: report ? parseWebSubmitTime(report) : null } };
+}
 
 async function review(api: MoodleApi, _cmid: number, index: { reviewPath: string | null }) {
   const report = index.reviewPath ? await optionalHtml(api, index.reviewPath) : null;
@@ -81,9 +95,4 @@ async function form(api: MoodleApi, cmid: number, index: { draft: boolean }): Pr
   };
 }
 
-export const webReader: QuestionnaireReader = {
-  index: async (api, cmid) =>
-    parseWebQuestionnaireIndex(await html(api, `/mod/questionnaire/view.php?id=${cmid}`), api.baseUrl),
-  review,
-  form,
-};
+export const webReader: QuestionnaireReader = { index: readIndex, review, form };

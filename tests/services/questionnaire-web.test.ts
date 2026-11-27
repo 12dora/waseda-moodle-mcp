@@ -4,6 +4,7 @@ import {
   parseWebQuestionnaireIndex,
   parseWebQuestionnairePage,
   parseWebQuestionnaireResponse,
+  parseWebSubmitTime,
 } from '../../src/core/services/submission/questionnaire-web';
 import type { QuestionnaireDetail } from '../../src/core/types';
 import { makeFakeContext } from '../helpers/fake-context-be3';
@@ -173,6 +174,23 @@ describe('parseWebQuestionnairePage', () => {
   });
 });
 
+describe('parseWebSubmitTime', () => {
+  const report = fixture('questionnaire-myreport-ja.html');
+  const line = '提出完了: 2026年 10月 2日(金曜日) 17:08';
+
+  it('reads the submit time the responses page prints, in Japanese and English', () => {
+    expect(parseWebSubmitTime(report)).toBe('2026-10-02T17:08:00+09:00');
+    const en = report.replace(line, 'Submitted on: Friday, 2 October 2026, 5:08 PM');
+    expect(parseWebSubmitTime(en)).toBe('2026-10-02T17:08:00+09:00');
+  });
+
+  it('is null when the page does not say it, or says it in another language', () => {
+    expect(parseWebSubmitTime(report.replace(line, ''))).toBeNull();
+    expect(parseWebSubmitTime(report.replace(line, '提交于: 2026年 10月 2日 17:08'))).toBeNull();
+    expect(parseWebSubmitTime(fixture('questionnaire-view-ja.html'))).toBeNull();
+  });
+});
+
 function setup(pages: Record<string, string>) {
   const api = makeWebApi({
     pages,
@@ -188,7 +206,7 @@ function setup(pages: Record<string, string>) {
 }
 
 describe('getActivity questionnaire on the web channel', () => {
-  it('shows a submitted response read from the responses page itself (no further page)', async () => {
+  it('shows a submitted response and its submit time, both read from the responses page', async () => {
     const { api, ctx } = setup({
       [VIEW]: fixture('questionnaire-view-ja.html'),
       [REPORT]: fixture('questionnaire-myreport-ja.html'),
@@ -196,7 +214,9 @@ describe('getActivity questionnaire on the web channel', () => {
     const q = (await getActivity(ctx, 7101)) as QuestionnaireDetail;
     expect(q).toMatchObject({ status: 'submitted', submissions: 1, canAnswer: true, answers: 'submitted' });
     expect(q.questions).toHaveLength(6);
-    expect(api.pageCalls).toEqual([`GET ${VIEW}`, `GET ${REPORT}`]);
+    expect(q.submittedAt).toBe('2026-10-02T17:08:00+09:00');
+    // the fake session logs every read; the real one serves the second read of the responses page from its memo
+    expect(api.pageCalls).toEqual([`GET ${VIEW}`, `GET ${REPORT}`, `GET ${REPORT}`]);
     expect(api.calls.find((c) => c.fn === 'core_course_get_contents')?.hint).toEqual({ cmid: 7101 });
   });
 
@@ -225,6 +245,15 @@ describe('getActivity questionnaire on the web channel', () => {
     const q = (await getActivity(ctx, 7101)) as QuestionnaireDetail;
     expect(q.complete).toBe(false);
     expect(q.questions.map((x) => x.id)).toEqual([5011, 5012]);
+  });
+
+  it('keeps the submit time null when the responses page cannot be read', async () => {
+    const { ctx } = setup({
+      [VIEW]: fixture('questionnaire-view-ja.html'),
+      '/mod/questionnaire/complete.php?id=7101': fixture('questionnaire-form-ja.html'),
+    });
+    const q = (await getActivity(ctx, 7101)) as QuestionnaireDetail;
+    expect(q).toMatchObject({ status: 'submitted', submittedAt: null });
   });
 
   it('shows no questions for a closed questionnaire', async () => {

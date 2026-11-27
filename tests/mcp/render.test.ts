@@ -360,7 +360,7 @@ describe('renderActivity', () => {
     expect(c).toContain('pass a url to get_file');
   });
 
-  it('renders an attendance summary and recent sessions', () => {
+  it('renders an attendance summary and the sessions with their points', () => {
     const a: AttendanceDetail = {
       type: 'attendance',
       cmid: 7012,
@@ -385,6 +385,7 @@ describe('renderActivity', () => {
           group: null,
           acronym: null,
           status: 'Late',
+          points: null,
           remarks: null,
         },
         {
@@ -393,6 +394,7 @@ describe('renderActivity', () => {
           group: 'Group A',
           acronym: 'P',
           status: 'Present',
+          points: '2 / 2',
           remarks: 'on time',
         },
       ],
@@ -402,7 +404,7 @@ describe('renderActivity', () => {
     expect(t).toContain('# Class attendance — attendance (cmid 7012)');
     expect(t).toContain('Taken: 6 of 15 sessions · 12 / 18 (66.7%)');
     expect(t).toContain('Maximum possible: 24 / 30 (80.0%)');
-    expect(t).toContain('P Present');
+    expect(t).toContain('P Present · 2 / 2 pts');
     expect(t).toContain('Late');
     expect(t).toContain('cannot record it');
     expect(t).not.toContain('could not be read');

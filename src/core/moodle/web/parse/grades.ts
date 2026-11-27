@@ -1,7 +1,8 @@
 /**
  * Parsers for the two grade pages of the web channel: the overview report (`grade/report/overview/index.php`, one row
  * per course) and the user report (`course/user.php?mode=grade`, `table.user-grade`). Everything is located by class
- * names, ids and link targets, so the interface language does not matter; values are the cell texts as shown.
+ * names, ids and link targets, so the interface language does not matter; values are the cell texts as shown (a
+ * numeric range also as the item's minimum and maximum).
  */
 
 import {
@@ -130,11 +131,25 @@ function valueCells(row: string): ValueCells {
   return out;
 }
 
+/** `0–100`, `0.00–100.00`. Letter, scale and percentage ranges do not give the item's points. */
+const NUMERIC_RANGE = /^(-?\d+(?:\.\d+)?)\s*–\s*(-?\d+(?:\.\d+)?)$/;
+
+function rangeBounds(range: string | undefined): { grademin?: number; grademax?: number } {
+  const m = NUMERIC_RANGE.exec(range ?? '');
+  return m ? { grademin: Number(m[1]), grademax: Number(m[2]) } : {};
+}
+
 function reportRow(row: HtmlElement) {
   const header = findFirst(row.inner, byClass('column-itemname', 'th'));
   const kind = header ? rowKind(header.inner) : null;
   if (!header || !kind) return null;
-  return { ...itemIdentity(kind, header.inner), ...valueCells(row.inner), feedback: feedbackHtml(row.inner) };
+  const values = valueCells(row.inner);
+  return {
+    ...itemIdentity(kind, header.inner),
+    ...values,
+    ...rangeBounds(values.rangeformatted),
+    feedback: feedbackHtml(row.inner),
+  };
 }
 
 /** The grade items of the user report in page order; null when the page holds no user report table. */

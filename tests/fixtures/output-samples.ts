@@ -187,6 +187,7 @@ const activities: ActivityDetail[] = [
         group: null,
         acronym: 'P',
         status: 'Present',
+        points: '2 / 2',
         remarks: null,
       },
     ],

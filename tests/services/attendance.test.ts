@@ -81,6 +81,7 @@ describe('mapAttendance', () => {
       at: '2026-10-16T13:00:00+09:00',
       status: 'Late',
       acronym: null,
+      points: null,
       remarks: null,
     });
     expect(a.sessions[1]).toMatchObject({

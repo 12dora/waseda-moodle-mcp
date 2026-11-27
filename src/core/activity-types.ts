@@ -101,7 +101,7 @@ export interface ForumDetail {
   discussions: DiscussionSummary[]; // most recent first, max 10
 }
 
-/** Student view of an attendance activity (mobile summary; this site has no self check-in). */
+/** Student view of an attendance activity (this site has no self check-in). */
 export interface AttendanceSummary {
   takenSessions: number | null;
   points: string | null; // of taken sessions, e.g. "12 / 18"
@@ -117,6 +117,7 @@ export interface AttendanceSession {
   group: string | null;
   acronym: string | null; // P, A, L, … when the status text is a short code
   status: string | null; // description ("Present", …)
+  points: string | null; // of this session as printed, e.g. "2 / 2" or "? / 2" (not taken); null if not shown
   remarks: string | null;
 }
 
@@ -130,8 +131,8 @@ export interface AttendanceDetail {
   url: string;
   description: string;
   summary: AttendanceSummary;
-  sessions: AttendanceSession[]; // most recent first, max 20
-  complete: boolean; // false when the HTML was too large to read in full
+  sessions: AttendanceSession[]; // newest first; web: the whole term (max 60), web service: the nearby ones (max 20)
+  complete: boolean; // false when not everything could be read (ws: HTML too large; web: only one period shown)
 }
 
 export type QuestionnaireQuestionType =

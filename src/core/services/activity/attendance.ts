@@ -1,7 +1,7 @@
 /**
  * Attendance detail. Web-service channel: the mobile view (tool_mobile_get_content / mobile_view_activity); web
  * channel: the activity page (attendance-web.ts). This site has no mod_attendance_* WS and no self check-in control:
- * read-only summary + nearby sessions.
+ * read-only summary + sessions (ws: the nearby ones; web: the whole term).
  */
 
 import type { MoodleApi } from '../../context';
@@ -96,6 +96,7 @@ function parseSession(inner: string): AttendanceSession | null {
     group,
     acronym,
     status,
+    points: null, // the mobile view shows no points per session
     remarks: textOrNull(h3s[2] ?? ''),
   };
 }
