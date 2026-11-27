@@ -6,7 +6,7 @@
     "message": "Moodle MCP Connector"
   },
   "extDescription": {
-    "message": "早稲田 Moodle のサインインを Moodle MCP サービスに連携し、接続を維持します。"
+    "message": "Claude などの AI アシスタントから早稲田 Moodle の課題・締切・時間割を確認できるよう、サインインを MCP サービスに連携し、接続を保ちます。"
   },
   "badgeNotConfigured": {
     "message": "サービス URL が未設定です"

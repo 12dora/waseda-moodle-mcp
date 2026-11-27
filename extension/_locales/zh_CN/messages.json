@@ -6,7 +6,7 @@
     "message": "Moodle MCP Connector"
   },
   "extDescription": {
-    "message": "将早稻田 Moodle 的登录会话连接到 Moodle MCP 服务，并保持连接。"
+    "message": "让 Claude 等 AI 助手查看你的早稻田 Moodle 作业、截止时间和课程表：将登录连接到 MCP 服务并保持连接。"
   },
   "badgeNotConfigured": {
     "message": "未设置服务 URL"

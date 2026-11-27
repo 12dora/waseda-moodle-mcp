@@ -6,7 +6,7 @@
     "message": "Moodle MCP Connector"
   },
   "extDescription": {
-    "message": "Keeps your Waseda Moodle session connected to your Waseda Moodle MCP service."
+    "message": "Lets AI assistants like Claude check your Waseda Moodle deadlines and timetable by keeping your sign-in linked to an MCP service."
   },
   "badgeNotConfigured": {
     "message": "Service URL not set"
