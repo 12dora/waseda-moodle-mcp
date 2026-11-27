@@ -170,18 +170,16 @@ describe('runRenewal', () => {
     expect(await tick()).toMatchObject({ ended: 0, calls: 0 });
   });
 
-  it('renews the token through launch.php while the service is on and a private token is stored', async () => {
+  it('while the service is on, every session goes through launch.php: renewed tokens, and session-only users get one', async () => {
     moodle.state.mobileService = true;
     app.state.token = 'c'.repeat(32);
     const withToken = await addUser(1001, { privateToken: 'Priv4teTok3n' });
-    await addUser(1002);
-    expect(await tick()).toMatchObject({ renewed: 1, kept: 1, calls: 2 });
-    expect(app.requests.map((r) => r.path)).toEqual(['/admin/tool/mobile/launch.php']);
+    const sessionOnly = await addUser(1002);
+    expect(await tick()).toMatchObject({ renewed: 2, calls: 2 });
+    expect(app.requests.map((r) => r.path)).toEqual(['/admin/tool/mobile/launch.php', '/admin/tool/mobile/launch.php']);
     expect((await credentialOf(withToken)).tokenHint).toBe('cccc');
-    expect(await counters()).toEqual([
-      { metric: 'renew_kept', dim: '', value: 1 },
-      { metric: 'renew_renewed', dim: '', value: 1 },
-    ]);
+    expect((await credentialOf(sessionOnly)).tokenHint).toBe('cccc');
+    expect(await counters()).toEqual([{ metric: 'renew_renewed', dim: '', value: 2 }]);
   });
 
   it('only touches a session with a private token while the service is off', async () => {

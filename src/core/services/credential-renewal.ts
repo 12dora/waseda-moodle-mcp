@@ -328,8 +328,9 @@ interface KeepOptions {
 }
 
 /**
- * The keepalive's visit of one stored session: with the mobile web service on and a private token through the token
- * renewal (launch.php), otherwise one `core_session_touch`. Never throws.
+ * The keepalive's visit of one stored session: with the mobile web service on through launch.php, which touches the
+ * session AND hands out the current app token (so a session-only user gets a token back once Waseda turns the service
+ * on again: requests then use the token channel); otherwise one `core_session_touch`. Never throws.
  */
 export function keepSession(
   deps: RenewalDeps,
@@ -337,7 +338,7 @@ export function keepSession(
   cred: CredentialRow,
   opts: KeepOptions,
 ): Promise<RenewalOutcome> {
-  if (opts.mobileService && cred.privateTokenEnc) {
+  if (opts.mobileService) {
     return refreshCredential(deps, user, cred, { autologin: true, room: opts.room });
   }
   return visit(deps, (metered) => touch(metered, user, cred, opts));

@@ -107,7 +107,9 @@ describe('keepSession by touching', () => {
     expect(await cred()).toMatchObject({ status: 'invalid', lastError: SESSION_ENDED });
     expect((await cred()).tokenEnc).not.toBeNull(); // kept for when the service returns
 
-    await keepSession(deps(web), user, await seed({ token: TOKEN, sesskey: SESSKEY }), { mobileService: true });
+    // service on: the visit goes through launch.php (fakeMoodleWeb), which finds the session ended
+    const app = fakeMoodleWeb({ token: NEW, live: new Set() });
+    await keepSession(deps(app), user, await seed({ token: TOKEN, sesskey: SESSKEY }), { mobileService: true });
     expect(await cred()).toMatchObject({ sessionEnc: null, status: 'active' });
   });
 
@@ -144,6 +146,16 @@ describe('keepSession with the mobile web service on', () => {
     expect(await keepSession(deps(web), user, c, { mobileService: true })).toMatchObject({ status: 'renewed' });
     expect(web.requests.map((r) => r.path)).toEqual(['/admin/tool/mobile/launch.php']);
     expect(await plain((await cred()).tokenEnc)).toBe(NEW);
+  });
+
+  it('gets an app token for a session-only credential once the service is back on (the token channel returns)', async () => {
+    const web = fakeMoodleWeb({ token: NEW, live: new Set([LIVE]) });
+    const c = await seed({ sesskey: SESSKEY });
+    expect(c.tokenEnc).toBeNull();
+    expect(await keepSession(deps(web), user, c, { mobileService: true })).toMatchObject({ status: 'renewed' });
+    expect(web.requests.map((r) => r.path)).toEqual(['/admin/tool/mobile/launch.php']);
+    expect(await plain((await cred()).tokenEnc)).toBe(NEW);
+    expect(await cred()).toMatchObject({ status: 'active', tokenHint: NEW.slice(-4) });
   });
 
   it('fetches a new token for a credential whose dead token was dropped', async () => {
