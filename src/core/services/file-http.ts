@@ -18,6 +18,7 @@ import {
 } from '../errors';
 import { formatBytes } from '../format';
 import { bytesOfBase64Url } from '../mail/gmail';
+import { isFolderZipPath } from '../moodle/wire';
 import { nowMs } from '../time';
 import { guessMime, sanitizeFileName } from './actions/filenames';
 import { DEFAULT_MAX_FILES, MAX_DRAFT_TOTAL_BYTES, MAX_FILE_BYTES } from './actions/shared';
@@ -112,6 +113,10 @@ const BAD_UPLOAD = 'This upload link is invalid or has expired. Create a new one
 // ------------------------------------------------------------------ download
 
 type DownloadTicket = { k?: string; u?: number; p?: string; n?: string };
+
+/** What a download ticket may name (services/files.ts moodleFilePath): a pluginfile path or a folder's ZIP. */
+const isTicketPath = (p: unknown): p is string =>
+  typeof p === 'string' && (p.startsWith('/webservice/pluginfile.php/') || isFolderZipPath(p));
 type MailTicket = { u: number; m: string; a: string; n: string; t: string; s: number };
 
 function mailTicketOf(t: Record<string, unknown>): MailTicket | null {
@@ -253,7 +258,7 @@ export async function streamDownload(env: FileRouteEnv, ticket: string, request:
       if (!mail) return fail(404, 'not_found', BAD_TICKET);
       return await proxyMailDownload(env, mail, request);
     }
-    if (t?.k !== 'dl' || typeof t.u !== 'number' || typeof t.p !== 'string') {
+    if (t?.k !== 'dl' || typeof t.u !== 'number' || !isTicketPath(t.p)) {
       return fail(404, 'not_found', BAD_TICKET);
     }
     return await proxyDownload(env, { k: 'dl', u: t.u, p: t.p, n: t.n ?? '' }, request);

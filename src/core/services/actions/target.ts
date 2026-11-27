@@ -49,7 +49,11 @@ export function actionTarget(kind: ActionKind, payload: Raw): string | null {
     case 'mail_reply':
       return keyOf(kind, gmailId(payload.messageId));
     case 'mail_send':
-      return null; // independent mails never conflict
+    case 'calendar_event_create':
+      return null; // independent mails / new events never conflict
+    case 'calendar_event_edit':
+    case 'calendar_event_delete':
+      return keyOf(kind, id(payload.eventId));
     default:
       return null; // mark_read is idempotent
   }

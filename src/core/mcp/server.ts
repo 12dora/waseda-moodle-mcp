@@ -1,5 +1,5 @@
 /**
- * MCP surface: 31 tools + 4 mail tools when connected, 3 prompts and 2 resource templates over the service layer.
+ * MCP surface: 37 tools + 4 mail tools when connected, 3 prompts and 2 resource templates over the service layer.
  * One McpServer per request (Worker) or per connection (stdio); tool definitions live in ./tools.
  */
 
@@ -7,8 +7,11 @@ import { McpServer } from '@modelcontextprotocol/server';
 import type { ServiceContext } from '../context';
 import { registerPrompts } from './prompts';
 import { registerResources } from './resources';
+import { calendarReadTools, calendarWriteTools } from './tools/calendar';
 import { courseTools } from './tools/courses';
 import type { ToolDef } from './tools/define';
+import { discoverTools } from './tools/discover';
+import { downloadCourseFilesTool } from './tools/downloads';
 import { createUploadLinkTool, getFileTool } from './tools/files';
 import { mailReadTools } from './tools/mail';
 import { mailWriteTools } from './tools/mail-write';
@@ -43,11 +46,12 @@ function toolsFor({ canRead, canWrite, stdio, mail }: ReturnType<typeof access>)
     tools.push(...courseTools, ...myCoursesTools, ...timetableTools, ...scheduleTools);
     tools.push(...syllabusTools, ...quizReviewTools);
     tools.push(getFileTool(stdio), ...socialTools, ...searchTools);
+    tools.push(downloadCourseFilesTool(stdio), ...discoverTools, ...calendarReadTools);
     if (mail) tools.push(...mailReadTools);
   }
   if (canWrite) {
     if (!stdio) tools.push(createUploadLinkTool);
-    tools.push(...writeTools(stdio), ...markReadTools);
+    tools.push(...writeTools(stdio), ...markReadTools, ...calendarWriteTools);
     if (mail) tools.push(...mailWriteTools);
   }
   return tools;

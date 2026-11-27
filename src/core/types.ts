@@ -360,7 +360,10 @@ export type ActionKind =
   | 'forum_post_delete' // delete one's own forum post (and its replies)
   | 'questionnaire_submit' // answer a questionnaire (submit, or save as a draft)
   | 'mail_send' // send a new mail from the Waseda mailbox
-  | 'mail_reply'; // reply to a mail in the Waseda mailbox
+  | 'mail_reply' // reply to a mail in the Waseda mailbox
+  | 'calendar_event_create' // create a personal Moodle calendar event
+  | 'calendar_event_edit' // edit one of the user's personal calendar events
+  | 'calendar_event_delete'; // delete one of the user's personal calendar events
 export type ActionStatus = 'pending' | 'executing' | 'executed' | 'cancelled' | 'expired' | 'failed' | 'superseded'; // final: another action for the same target ran while it was pending
 /**
  * The one status Store.updateAction may move an action FROM, per target status (pending -> executing is claimAction;

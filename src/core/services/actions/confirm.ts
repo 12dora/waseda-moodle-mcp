@@ -16,6 +16,7 @@ import { MOODLE_URL } from '../../moodle/launch';
 import { settleChannel } from '../../moodle/web/channel';
 import { isoJst, nowMs } from '../../time';
 import type { ActionKind, ActionRecord, ActionResult, ActionStatus } from '../../types';
+import { executeCalendarEventCreate, executeCalendarEventDelete, executeCalendarEventEdit } from './calendar';
 import { executeCompletion } from './completion';
 import { executeForumDiscussion, executeForumReply } from './forum';
 import { executeForumPostDelete, executeForumPostEdit } from './forum-edit';
@@ -49,6 +50,9 @@ const MOODLE_EXECUTORS: Record<
   forum_post_edit: executeForumPostEdit,
   forum_post_delete: executeForumPostDelete,
   questionnaire_submit: executeQuestionnaire,
+  calendar_event_create: executeCalendarEventCreate,
+  calendar_event_edit: executeCalendarEventEdit,
+  calendar_event_delete: executeCalendarEventDelete,
 };
 
 const MAIL_EXECUTORS: Record<MailKind, (api: MailApi, p: Raw) => Promise<ActionOutcome>> = {

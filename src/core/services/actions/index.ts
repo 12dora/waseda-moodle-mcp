@@ -1,5 +1,6 @@
 /** Public surface of the write-action services (split by kind; see the sibling modules). */
 
+export { prepareCalendarEvent } from './calendar';
 export { prepareCompletion } from './completion';
 export { cancelAction, confirmAction, listActionRecords } from './confirm';
 export { fileTypeAccepted, sanitizeFileName, unverifiableTypes } from './filenames';

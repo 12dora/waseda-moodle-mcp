@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CallHint, MoodleApi } from '../../src/core/context';
 import { MoodleError } from '../../src/core/errors';
+import { AJAX_FUNCTIONS } from '../../src/core/moodle/web/ajax-functions';
 import type { WebPage, WebRequest } from '../../src/core/moodle/web/types';
 import { makeFakeWebSession } from '../helpers/fake-web-session';
 
@@ -47,6 +48,10 @@ export function makeWebApi(opts: WebApiOptions = {}): WebApi {
     },
     async call<T>(fn: string, params: Record<string, unknown> = {}, hint?: CallHint): Promise<T> {
       calls.push({ fn, params, hint });
+      // like WebMoodleClient: ajax-enabled functions go to the session (when the test gave the session an answer)
+      if (!Object.hasOwn(handlers, fn) && AJAX_FUNCTIONS.has(fn) && Object.hasOwn(opts.ajax ?? {}, fn)) {
+        return web.ajax<T>(fn, params);
+      }
       if (!Object.hasOwn(handlers, fn)) throw new MoodleError(`fake: no handler for ${fn}`, 'nohandler');
       const h = handlers[fn];
       return (typeof h === 'function' ? await (h as HandlerFn)(params, hint) : h) as T;

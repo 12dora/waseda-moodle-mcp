@@ -78,6 +78,11 @@ const READ_TOOLS = [
   'get_syllabus',
   'get_quiz_review',
   'search_forums',
+  'download_course_files',
+  'list_incomplete',
+  'list_my_posts',
+  'search_courses',
+  'list_calendar_events',
 ];
 const WRITE_TOOLS = [
   'prepare_submission',
@@ -90,6 +95,7 @@ const WRITE_TOOLS = [
   'confirm_action',
   'cancel_action',
   'prepare_mark_read',
+  'prepare_calendar_event',
 ];
 
 const open: Array<{ client: Client; server: McpServer }> = [];
@@ -140,18 +146,18 @@ describe('tool registration', () => {
     expect(names).toEqual([...READ_TOOLS].sort());
   });
 
-  it('adds write tools and create_upload_link for write scope in worker mode (31 tools)', async () => {
+  it('adds write tools and create_upload_link for write scope in worker mode (37 tools)', async () => {
     const client = await connect(fake({ scopes: WRITE }).ctx);
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(names).toEqual([...READ_TOOLS, ...WRITE_TOOLS, 'create_upload_link'].sort());
-    expect(names).toHaveLength(31);
+    expect(names).toHaveLength(37);
   });
 
   it('drops create_upload_link in stdio mode and offers local paths instead of upload ids', async () => {
     const client = await connect(fake({ scopes: WRITE, mode: 'stdio', publicUrl: '' }).ctx);
     const tools = (await client.listTools()).tools;
     expect(tools.map((t) => t.name)).not.toContain('create_upload_link');
-    expect(tools).toHaveLength(30);
+    expect(tools).toHaveLength(36);
     const props = submissionProps(tools);
     expect(props.upload_id).toBeUndefined();
     expect(props.files?.items?.properties?.path).toBeDefined();
@@ -167,7 +173,7 @@ describe('tool registration', () => {
 
     const write = await connect(fake({ scopes: WRITE, mail }).ctx);
     const writeNames = (await write.listTools()).tools.map((t) => t.name);
-    expect(writeNames).toHaveLength(31 + 4);
+    expect(writeNames).toHaveLength(37 + 4);
     expect(writeNames).toEqual(
       expect.arrayContaining(['search_mail', 'get_mail', 'prepare_mail_send', 'prepare_mail_reply']),
     );
@@ -175,10 +181,10 @@ describe('tool registration', () => {
 
   it('does not add mail tools without ctx.mail, including stdio', async () => {
     const worker = await connect(fake({ scopes: WRITE }).ctx);
-    expect((await worker.listTools()).tools).toHaveLength(31);
+    expect((await worker.listTools()).tools).toHaveLength(37);
     const local = await connect(fake({ scopes: WRITE, mode: 'stdio', publicUrl: '' }).ctx);
     const localNames = (await local.listTools()).tools.map((t) => t.name);
-    expect(localNames).toHaveLength(30);
+    expect(localNames).toHaveLength(36);
     expect(localNames).not.toContain('search_mail');
   });
 
@@ -211,7 +217,7 @@ describe('tool registration', () => {
   it('advertises an object output schema for every tool', async () => {
     const client = await connect(fake({ scopes: WRITE }).ctx);
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(31);
+    expect(tools).toHaveLength(37);
     for (const t of tools) {
       expect((t.outputSchema as { type?: string } | undefined)?.type, t.name).toBe('object');
     }

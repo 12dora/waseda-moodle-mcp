@@ -6,9 +6,12 @@
 export const AJAX_FUNCTIONS: ReadonlySet<string> = new Set([
   'core_calendar_get_action_events_by_course',
   'core_calendar_get_action_events_by_timesort',
+  'core_calendar_delete_calendar_events',
   'core_calendar_get_calendar_day_view',
+  'core_calendar_get_calendar_event_by_id',
   'core_calendar_get_calendar_monthly_view',
   'core_calendar_get_calendar_upcoming_view',
+  'core_calendar_submit_create_update_form',
   'core_completion_update_activity_completion_status_manually',
   'core_course_get_enrolled_courses_by_timeline_classification',
   'core_course_get_module',

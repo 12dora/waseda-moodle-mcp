@@ -162,8 +162,31 @@ export function fileDownloadUrl(base: { baseUrl: string; token: string }, fileUr
   return `${u.origin}${u.pathname}${u.search}${u.search ? '&' : '?'}token=${encodeURIComponent(base.token)}`;
 }
 
-/** The web session's form of a file URL: `/pluginfile.php/…` or `/draftfile.php/…` (the cookie authenticates). */
+/**
+ * A folder's ZIP, `/mod/folder/download_folder.php?id=<cmid>` exactly (no other parameter): the one page besides
+ * file URLs the web session may fetch as a file. The web-service token cannot fetch it.
+ */
+const FOLDER_ZIP = /^\/mod\/folder\/download_folder\.php\?id=[1-9]\d{0,9}$/;
+
+export const FOLDER_ZIP_PATH = '/mod/folder/download_folder.php';
+
+/** `path` (path + query) is exactly a folder ZIP download. */
+export const isFolderZipPath = (path: string): boolean => FOLDER_ZIP.test(path);
+
+/** The absolute folder ZIP URL when `fileUrl` is exactly one on baseUrl; null otherwise. */
+function folderZipUrl(baseUrl: string, fileUrl: string): string | null {
+  const u = URL.canParse(fileUrl, `${baseUrl}/`) ? new URL(fileUrl, `${baseUrl}/`) : null;
+  if (!u || u.origin !== new URL(baseUrl).origin || !isFolderZipPath(`${u.pathname}${u.search}`)) return null;
+  return `${u.origin}${u.pathname}${u.search}`;
+}
+
+/**
+ * The web session's form of a file URL: `/pluginfile.php/…`, `/draftfile.php/…` (the cookie authenticates) or a
+ * folder's ZIP.
+ */
 export function sessionFileUrl(baseUrl: string, fileUrl: string): string {
+  const zip = folderZipUrl(baseUrl, fileUrl);
+  if (zip) return zip;
   const u = cleanFileUrl(baseUrl, fileUrl, SESSION_FILE_PREFIXES);
   u.pathname = u.pathname.replace(/^\/webservice\//, '/');
   return u.toString();

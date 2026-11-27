@@ -18,6 +18,7 @@ import {
   WmmError,
 } from '../errors';
 import { htmlToMarkdown } from '../html';
+import { isFolderZipPath } from '../moodle/wire';
 import { isoJst, nowMs } from '../time';
 import type { FileLink, UploadLink } from '../types';
 import { allocateDraft } from './actions/drafts';
@@ -36,8 +37,11 @@ const INLINE_MAX_BYTES = 1024 * 1024;
 
 // ------------------------------------------------------------------ helpers
 
-/** Same rules as MoodleApi.fetchFile: own host, pluginfile path only; token stripped; returns path + query. */
-function normalizeFilePath(baseUrl: string, fileUrl: string): string {
+/**
+ * Same rules as MoodleApi.fetchFile: own host, pluginfile path (token stripped) or a folder's ZIP (web session only);
+ * returns path + query, the form a download ticket carries.
+ */
+export function moodleFilePath(baseUrl: string, fileUrl: string): string {
   let u: URL;
   let base: URL;
   try {
@@ -47,6 +51,7 @@ function normalizeFilePath(baseUrl: string, fileUrl: string): string {
     throw new InvalidInput('That is not a valid file URL.');
   }
   if (u.origin !== base.origin) throw new InvalidInput('Only files hosted on Waseda Moodle can be fetched.');
+  if (isFolderZipPath(`${u.pathname}${u.search}`)) return `${u.pathname}${u.search}`;
   let path = u.pathname;
   if (path.startsWith('/pluginfile.php/')) path = `/webservice${path}`;
   if (!path.startsWith('/webservice/pluginfile.php/')) {
@@ -126,8 +131,19 @@ async function buildInline(api: MoodleApi, path: string, mime: string | null): P
 
 // ------------------------------------------------------------------ local copy (stdio)
 
+const FILE_GONE = 'That file is no longer in Moodle (it may have been removed or replaced).';
+const NO_FILE_ACCESS =
+  'You do not have access to that file in Moodle: the teacher may have hidden it. Check the activity on Moodle.';
+
+/** Moodle's answer for a missing (404) or hidden (403) file as an error; null for other statuses. */
+function fileStatusError(status: number): WmmError | null {
+  if (status === 404) return new NotFound(FILE_GONE);
+  if (status === 403) return new Forbidden(NO_FILE_ACCESS);
+  return null;
+}
+
 /** Bigger files are not copied to the temp directory; the user opens them in a browser instead. */
-const LOCAL_COPY_MAX_BYTES = 50 * 1024 * 1024;
+export const LOCAL_COPY_MAX_BYTES = 50 * 1024 * 1024;
 const TEMP_DIR_PATTERN = /^wmm-[A-Za-z0-9]{6}$/;
 const TEMP_DIR_MAX_AGE_MS = 24 * 3600 * 1000;
 
@@ -166,6 +182,38 @@ async function writeCapped(
   }
 }
 
+/** A new private download directory `wmm-XXXXXX` in `parent` (default the OS temp dir, where day-old ones go). */
+export async function makeDownloadDir(parent?: string): Promise<string> {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const nodePath = await import('node:path');
+  const root = parent ?? os.tmpdir();
+  if (!parent) await cleanOldTempDirs(root);
+  return fs.mkdtemp(nodePath.join(root, 'wmm-'));
+}
+
+/**
+ * Streams the Moodle file at `path` into the NEW file `target` (fails with EEXIST when it exists, before anything is
+ * requested). False when it is over 50 MB; nothing is left behind then or on an error.
+ */
+export async function saveMoodleFile(api: MoodleApi, path: string, target: string): Promise<boolean> {
+  const fs = await import('node:fs/promises');
+  const fh = await fs.open(target, 'wx', 0o600);
+  let complete = false;
+  try {
+    const res = await api.fetchFile(`${api.baseUrl}${path}`);
+    if (!res.ok || !res.body) {
+      void res.body?.cancel().catch(() => undefined);
+      throw fileStatusError(res.status) ?? new MoodleUnavailable('Moodle did not return the file.');
+    }
+    complete = await writeCapped(res.body, fh);
+  } finally {
+    await fh.close();
+    if (!complete) await fs.rm(target, { force: true });
+  }
+  return complete;
+}
+
 interface LocalCopy {
   path: string;
   name: string;
@@ -178,26 +226,15 @@ interface LocalCopy {
 async function downloadToTemp(api: MoodleApi, file: LocalCopy): Promise<string | null> {
   if (file.size !== null && file.size > LOCAL_COPY_MAX_BYTES) return null;
   const fs = await import('node:fs/promises');
-  const os = await import('node:os');
   const nodePath = await import('node:path');
   const url = await import('node:url');
-  await cleanOldTempDirs(os.tmpdir());
-  const dir = await fs.mkdtemp(nodePath.join(os.tmpdir(), 'wmm-'));
+  const dir = await makeDownloadDir();
   const target = nodePath.join(dir, nodePath.basename(file.name) || 'download');
   if (file.bytes) {
     await fs.writeFile(target, file.bytes, { mode: 0o600 });
     return url.pathToFileURL(target).href;
   }
-  const res = await api.fetchFile(`${api.baseUrl}${file.path}`);
-  if (!res.ok || !res.body) throw new MoodleUnavailable('Moodle did not return the file.');
-  const fh = await fs.open(target, 'w', 0o600);
-  let complete = false;
-  try {
-    complete = await writeCapped(res.body, fh);
-  } finally {
-    await fh.close();
-  }
-  if (!complete) {
+  if (!(await saveMoodleFile(api, file.path, target))) {
     await fs.rm(dir, { recursive: true, force: true });
     return null;
   }
@@ -205,14 +242,10 @@ async function downloadToTemp(api: MoodleApi, file: LocalCopy): Promise<string |
 }
 
 /** The address a signed-in browser can open (session-based pluginfile, no token). */
-const browserUrl = (baseUrl: string, path: string) =>
+export const browserUrl = (baseUrl: string, path: string) =>
   `${baseUrl}${path.replace(/^\/webservice\/pluginfile\.php\//, '/pluginfile.php/')}`;
 
 // ------------------------------------------------------------------ download link
-
-const FILE_GONE = 'That file is no longer in Moodle (it may have been removed or replaced).';
-const NO_FILE_ACCESS =
-  'You do not have access to that file in Moodle: the teacher may have hidden it. Check the activity on Moodle.';
 
 const FATAL_PROBE_ERRORS = [NeedsReconnect, NotFound, Forbidden, BudgetExceeded];
 
@@ -220,8 +253,8 @@ const FATAL_PROBE_ERRORS = [NeedsReconnect, NotFound, Forbidden, BudgetExceeded]
 async function probeHeaders(api: MoodleApi, path: string): Promise<Headers> {
   try {
     const head = await api.fetchFile(`${api.baseUrl}${path}`, { method: 'HEAD' });
-    if (head.status === 404) throw new NotFound(FILE_GONE);
-    if (head.status === 403) throw new Forbidden(NO_FILE_ACCESS);
+    const refused = fileStatusError(head.status);
+    if (refused) throw refused;
     void head.body?.cancel().catch(() => undefined);
     return head.headers;
   } catch (e) {
@@ -242,7 +275,7 @@ export async function createFileLink(
   opts: { inline?: boolean } = {},
 ): Promise<FileLink> {
   const api = await ctx.moodle();
-  const path = normalizeFilePath(api.baseUrl, fileUrl);
+  const path = moodleFilePath(api.baseUrl, fileUrl);
   const headers = await probeHeaders(api, path);
   const name = nameFromHeaders(headers, path);
   const mime = mimeFrom(headers, name);
@@ -256,8 +289,13 @@ export async function createFileLink(
     const local = await downloadToTemp(api, { path, name, size, bytes });
     return { name, mime, size, downloadUrl: local ?? browserUrl(api.baseUrl, path), expiresAt, inline };
   }
+  return { name, mime, size, downloadUrl: await signedDownloadUrl(ctx, path, name), expiresAt, inline };
+}
+
+/** The short-lived single-user link (`/f/<ticket>`, DOWNLOAD_TTL_SEC) for a path from moodleFilePath. */
+export async function signedDownloadUrl(ctx: ServiceContext, path: string, name: string): Promise<string> {
   const ticket = await ctx.signer.sign({ k: 'dl', u: ctx.user.id, p: path, n: name }, DOWNLOAD_TTL_SEC);
-  return { name, mime, size, downloadUrl: `${ctx.publicUrl}/f/${ticket}`, expiresAt, inline };
+  return `${ctx.publicUrl}/f/${ticket}`;
 }
 
 // ------------------------------------------------------------------ upload link
