@@ -180,7 +180,9 @@ The extension reads only the `MoodleSession` cookie of `wsdmoodle.waseda.jp` (th
 sends it to your service: when the user connects, again after each new Moodle sign-in, and about every 12
 hours. Without the extension, users paste the cookie value on the connect page. Users on version 1.0 of the
 extension need the update (1.0 can only send the app's launch link) and must agree once more in its
-settings. Deploy the server before publishing a newer extension.
+settings. Deploy the server before publishing a newer extension. The deploy (`pnpm deploy`) also packs the extension into
+`<your service>/extension.zip`; set `EXTENSION_SERVICE_URL=<your service URL>` for it so its settings page starts with
+your URL filled in. The connect page offers that package while `EXTENSION_URL` (a store listing) is not set.
 
 ## 12. Updating
 

@@ -1,5 +1,6 @@
 import { applyI18n, t } from './i18n.js';
 import { hasConsentFor, makeConsent, privacyUrl } from './lib/consent.js';
+import { DEFAULT_SERVICE_URL } from './lib/defaults.js';
 import { normalizeServiceUrl } from './lib/moodle.js';
 
 applyI18n();
@@ -25,19 +26,22 @@ let stored = await chrome.storage.local.get(['serviceUrl', 'consent']);
 // The URL the consent box state belongs to: typing keeps the box as is until the URL itself changes.
 let boxOrigin;
 
-/** Reflects the typed URL: privacy link for a valid URL; a new URL resets the box to its stored consent. */
+/**
+ * Reflects the typed URL: privacy link for a valid URL; a new URL resets the box to its stored consent. Before the
+ * first save the box starts ticked (the label and the privacy text say what connecting sends; Save is the action).
+ */
 function syncForm() {
   const origin = normalizeServiceUrl(input.value);
   privacyLink.hidden = !origin;
   if (origin) privacyLink.href = privacyUrl(origin);
   if (origin !== boxOrigin) {
-    consentBox.checked = hasConsentFor(stored.consent, origin);
+    consentBox.checked = !stored.serviceUrl || hasConsentFor(stored.consent, origin);
     boxOrigin = origin;
   }
   syncBtn.disabled = !hasConsentFor(stored.consent, stored.serviceUrl);
 }
 
-input.value = stored.serviceUrl || '';
+input.value = stored.serviceUrl || DEFAULT_SERVICE_URL;
 syncForm();
 input.addEventListener('input', syncForm);
 consentBox.addEventListener('change', () => {

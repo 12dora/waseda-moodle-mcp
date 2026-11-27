@@ -25,7 +25,9 @@ screen and use the same text.
 4. Open `<service URL>/privacy?lang=en` in a private window. It must load without sign-in and contain the "Browser
    extension" section.
 5. Check that the GitHub repository is public, Issues are enabled and `main` contains the code you are submitting.
-6. Run `pnpm pack:ext`. In the zip, `manifest.json` is at the root; there are no test files and no `store/` folder.
+6. Run `EXTENSION_SERVICE_URL=<service URL> pnpm pack:ext` (the settings page then starts with that URL filled in and
+   the consent box ticked; users can change both). Or download `<service URL>/extension.zip`, which the deploy builds
+   the same way. In the zip, `manifest.json` is at the root; there are no test files and no `store/` folder.
 7. Test the unpacked zip in Chrome and in Edge: connect while signed in, connect while signed out, sign out and in
    again.
 8. Capture the images listed in [screenshots.md](screenshots.md).
@@ -133,7 +135,7 @@ give them a check without an account and point to the source.
 Limit: 500 characters.
 
 ```text
-No test account: Waseda Moodle accepts university sign-in only. To check: in Settings enter https://example.com, tick consent, Save, allow access. In the popup click Connect: the Moodle sign-in page opens and nothing is sent to the service while signed out. After sign-in, the MoodleSession cookie goes only to that URL; cookie again on new sign-ins and every 12 h. Source: https://github.com/12dora/waseda-moodle-mcp/tree/main/extension
+No test account: Waseda Moodle accepts university sign-in only. To check: Settings opens with the service URL filled in and consent ticked; click Save and allow access. In the popup click Connect: the Moodle sign-in page opens and nothing is sent to the service while signed out. After sign-in, the MoodleSession cookie goes only to that URL; cookie again on new sign-ins and every 12 h. Source: https://github.com/12dora/waseda-moodle-mcp/tree/main/extension
 ```
 
 ### Note B — Edge notes for certification
@@ -145,7 +147,7 @@ Test account: none can be provided. The extension works with Waseda University's
 
 Check without an account:
 1. Install. The Settings page opens and the toolbar badge shows "!".
-2. Enter https://example.com as Service URL. Saving without the consent box is refused. Tick it, click Save and allow access: only that origin is requested.
+2. The Service URL is filled in and the consent box is ticked; both can be changed. Saving with the box unticked is refused. Click Save and allow access: only that origin is requested.
 3. Open the popup: Moodle shows "Not signed in".
 4. Click Connect. The Moodle sign-in page opens in a tab. Nothing is sent to the service URL while signed out (see the service worker's network log). Close the tab to end the wait.
 5. Untick consent and Save to withdraw it.
@@ -171,6 +173,10 @@ For an update: raise `version` in `manifest.json`, run `pnpm pack:ext`, upload t
 submit. If data handling or permissions changed, first update the privacy page and these files.
 
 ## If a review is rejected
+
+If a store objects to the consent box starting ticked, build the package without `EXTENSION_SERVICE_URL` defaults
+for the box (change `syncForm` in `options.js` to start unticked) and resubmit; the prefilled URL can stay.
+
 
 | Reason given | Response |
 |---|---|
