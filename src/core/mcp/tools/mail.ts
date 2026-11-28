@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { GMAIL_ID_RE } from '../../mail/gmail';
 import { getMail, searchMail } from '../../services/mail/read';
+import { blockedLinkHint } from '../render/common';
 import { renderMail, renderMailSearch } from '../render/mail';
 import { getMailOut, searchMailOut } from '../schemas/mail';
 import { defineTool, limit, READ_HINTS } from './define';
@@ -55,7 +56,8 @@ const getMailTool = defineTool({
   output: getMailOut,
   async run(ctx, a) {
     const r = await getMail(ctx, { messageId: a.message_id, threadId: a.thread_id });
-    return { text: renderMail(r), data: r };
+    const url = r.messages.flatMap((m) => m.attachments).find((x) => x.url)?.url;
+    return { text: renderMail(r), data: { ...r, ifBlocked: url ? blockedLinkHint(url) : null } };
   },
 });
 

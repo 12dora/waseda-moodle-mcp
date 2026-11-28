@@ -8,6 +8,8 @@ export const fileLinkOut = z.looseObject({
   downloadUrl: z.string(),
   expiresAt: z.string(),
   inline: z.looseObject({ mime: z.string(), attached: z.boolean() }).nullable(),
+  /** What to tell the user when the agent's sandbox refuses the link (hosted service only). */
+  ifBlocked: z.string().nullable().optional(),
 });
 
 export const uploadLinkOut = z.looseObject({
@@ -17,4 +19,5 @@ export const uploadLinkOut = z.looseObject({
   expiresAt: z.string(),
   maxBytes: z.number(),
   curlExample: z.string(),
+  ifBlocked: z.string().nullable().optional(),
 });

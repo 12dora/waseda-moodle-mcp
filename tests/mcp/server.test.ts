@@ -625,6 +625,7 @@ describe('read tools', () => {
     expect(types).toEqual(['text', 'resource_link', 'resource']);
     expect(textOf(r)).toContain('curl');
     expect(r.structuredContent).toMatchObject({ name: 'notes.txt', inline: { mime: 'text/plain', attached: true } });
+    expect((r.structuredContent as { ifBlocked?: string }).ifBlocked).toContain('add wasemoodle.example.com to');
     expect(JSON.stringify(r.structuredContent)).not.toContain('hello');
   });
 

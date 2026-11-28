@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { DOWNLOAD_KINDS, downloadCourseFiles } from '../../services/downloads';
+import { blockedLinkHint } from '../render/common';
 import { renderCourseDownloadLinks, renderCourseDownloadLocal } from '../render/downloads';
 import { list } from '../schemas/common';
 import { defineTool, id, READ_HINTS } from './define';
@@ -75,6 +76,8 @@ export const downloadCourseFilesTool = (stdio: boolean) =>
         cursor: a.cursor,
         destDir,
       });
-      return { text: stdio ? renderCourseDownloadLocal(r) : renderCourseDownloadLinks(r), data: r };
+      if (stdio) return { text: renderCourseDownloadLocal(r), data: r };
+      const url = r.files.find((f) => f.url)?.url;
+      return { text: renderCourseDownloadLinks(r), data: { ...r, ifBlocked: url ? blockedLinkHint(url) : null } };
     },
   });

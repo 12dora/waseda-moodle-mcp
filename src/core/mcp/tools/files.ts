@@ -2,6 +2,7 @@ import type { ContentBlock } from '@modelcontextprotocol/server';
 import * as z from 'zod';
 import { createFileLink, createUploadLink } from '../../services/files';
 import type { FileLink } from '../../types';
+import { blockedLinkHint } from '../render/common';
 import { renderFileLink, renderUploadLink } from '../render/files';
 import { fileLinkOut, uploadLinkOut } from '../schemas/files';
 import { getFileDescription } from '../wording';
@@ -56,7 +57,8 @@ export const getFileTool = (stdio: boolean) =>
     async run(ctx, a) {
       const link = await createFileLink(ctx, a.url, { inline: a.inline });
       // the inline payload already travels in `content`; do not duplicate it in structuredContent
-      const data = { ...link, inline: link.inline ? { mime: link.inline.mime, attached: true } : null };
+      const inline = link.inline ? { mime: link.inline.mime, attached: true } : null;
+      const data = { ...link, inline, ifBlocked: stdio ? null : blockedLinkHint(link.downloadUrl) };
       return { text: renderFileLink(link, stdio), data, extra: fileContent(link, stdio) };
     },
   });
@@ -76,6 +78,6 @@ export const createUploadLinkTool = defineTool({
   output: uploadLinkOut,
   async run(ctx, a) {
     const r = await createUploadLink(ctx, a.cmid);
-    return { text: renderUploadLink(r, a.cmid), data: r };
+    return { text: renderUploadLink(r, a.cmid), data: { ...r, ifBlocked: blockedLinkHint(r.uploadUrl) } };
   },
 });
