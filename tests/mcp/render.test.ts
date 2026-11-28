@@ -454,7 +454,7 @@ describe('files', () => {
     const t = renderFileLink(link);
     expect(t).toContain('application/pdf, 1.5 KB');
     expect(t).toContain('valid until 2026-10-14 Wed 12:15 JST');
-    expect(t).toContain("curl -fL -o 'Lecture_1_slides_.pdf' 'https://wasemoodle.example.com/f/tkt'");
+    expect(t).toContain("curl -fL --retry 3 -o 'Lecture_1_slides_.pdf' 'https://wasemoodle.example.com/f/tkt'");
     expect(t).toContain('"CONNECT tunnel failed"');
     expect(t).toContain('allow wasemoodle.example.com in this app');
     expect(t).toContain('open the link in a browser and attach the file');

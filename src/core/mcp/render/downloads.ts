@@ -62,9 +62,11 @@ function shellSnippet(r: CourseDownload): string[] {
   if (linked.length === 0) return [];
   const root = `course-${r.courseId}`;
   return [
-    'Download everything (POSIX shell; one directory per section):',
+    'Download everything (POSIX shell; one directory per section; run the lines one after another, as Moodle queues parallel requests of one account):',
     '```sh',
-    ...linked.map((f) => `curl -fL --create-dirs -o ${shellQuote(`${root}/${f.path}`)} ${shellQuote(f.url ?? '')}`),
+    ...linked.map(
+      (f) => `curl -fL --retry 3 --create-dirs -o ${shellQuote(`${root}/${f.path}`)} ${shellQuote(f.url ?? '')}`,
+    ),
     '```',
     blockedLinkHint(linked[0]?.url ?? ''),
   ];

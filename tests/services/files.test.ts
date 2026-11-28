@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Forbidden, InvalidInput, NeedsReconnect, NotFound } from '../../src/core/errors';
+import { Forbidden, InvalidInput, MoodleBusy, NeedsReconnect, NotFound } from '../../src/core/errors';
 import { getActivity } from '../../src/core/services/activity';
 import {
   createFileLink,
@@ -248,6 +248,17 @@ describe('streamDownload', () => {
       get(),
     );
     expect(reconnect.status).toBe(401);
+
+    const busy = await streamDownload(
+      envOf(t, async () => {
+        throw new MoodleBusy(Date.now() + 90_000);
+      }),
+      await ticket(t),
+      get(),
+    );
+    expect(busy.status).toBe(503);
+    expect(Number(busy.headers.get('retry-after'))).toBeGreaterThan(80);
+    expect(((await busy.json()) as { error: { message: string } }).error.message).toContain('one file at a time');
   });
 });
 

@@ -10,6 +10,7 @@ import {
   Forbidden,
   InvalidInput,
   MailUnavailable,
+  MoodleBusy,
   MoodleError,
   MoodleUnavailable,
   NeedsReconnect,
@@ -56,6 +57,11 @@ function statusOf(e: WmmError): number {
 
 function errorResponse(e: unknown): Response {
   if (!(e instanceof WmmError)) return fail(500, 'error', 'Unexpected error.');
+  if (e instanceof MoodleBusy) {
+    // curl --retry waits for Retry-After; parallel downloads of one account only queue up on Moodle
+    const wait = String(e.retryAfterSec);
+    return fail(503, e.code, `${e.message} Retry in ${wait} s, one file at a time.`, { 'retry-after': wait });
+  }
   return fail(statusOf(e), e.code, e.message);
 }
 

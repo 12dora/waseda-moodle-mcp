@@ -219,7 +219,9 @@ describe('downloadCourseFiles on the web session', () => {
     expect(r.viewed).toEqual({ resource: 2 });
     const text = renderCourseDownloadLinks(r);
     expect(text).toContain('Opening 2 resources counted as viewing them on Moodle');
-    expect(text).toContain(`curl -fL --create-dirs -o 'course-${COURSE}/01 第1回/handout-7201.pdf' '${PUBLIC_URL}/f/`);
+    expect(text).toContain(
+      `curl -fL --retry 3 --create-dirs -o 'course-${COURSE}/01 第1回/handout-7201.pdf' '${PUBLIC_URL}/f/`,
+    );
     expect(text).toContain(`allow ${new URL(PUBLIC_URL).hostname} in this app`);
   });
 

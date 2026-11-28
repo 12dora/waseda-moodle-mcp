@@ -22,7 +22,7 @@ export function renderFileLink(link: FileLink, stdio = false): string {
     lines.push(NOT_DOWNLOADED_NOTE, link.downloadUrl);
   } else {
     lines.push(`Download URL (valid until ${fmt(link.expiresAt)} JST, single-user, do not share): ${link.downloadUrl}`);
-    lines.push(`Example: curl -fL -o '${safeName(link.name)}' '${link.downloadUrl}'`);
+    lines.push(`Example: curl -fL --retry 3 -o '${safeName(link.name)}' '${link.downloadUrl}'`);
     lines.push(blockedLinkHint(link.downloadUrl));
     if (!link.inline && canInline(link.mime) && link.size !== null && link.size <= INLINE_MAX_BYTES) {
       lines.push('Text, images and PDFs up to 1 MiB also come back directly with inline=true.');
