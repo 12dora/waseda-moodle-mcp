@@ -29,7 +29,21 @@ export interface MoodleWebSessionOptions {
   onEnded?: () => void | Promise<void>;
   /** A request ran out of `timeoutMs` (we gave up; Moodle may still be running it). Best effort. */
   onTimeout?: () => void;
+  /** A request took SLOW_MS or more, or ran out of time (diagnostics; path without query). Best effort. */
+  onSlow?: (e: SlowRequest) => void;
 }
+
+export interface SlowRequest {
+  method: string;
+  path: string;
+  ms: number;
+  /** null: no answer (timeout or network failure). */
+  status: number | null;
+  timedOut: boolean;
+}
+
+/** Requests at least this slow are reported to onSlow. */
+const SLOW_MS = 10_000;
 
 /** Calls whose point is the request itself (keepalive) or that consume what they read: never from the memo. */
 const FRESH = new Set(['core_session_touch', 'core_session_time_remaining', 'core_fetch_notifications']);
@@ -129,9 +143,12 @@ export class MoodleWebSession implements WebSession {
     this.opts.charge();
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
+    const started = Date.now();
+    let status: number | null = null;
     try {
       const headers = { ...(init.headers as Record<string, string> | undefined), Cookie: this.cookie };
       const res = await this.doFetch(url, { ...init, headers, redirect: 'manual', signal: ac.signal });
+      status = res.status;
       if (res.status >= 500) throw await unavailable(res);
       return await read(res);
     } catch (e) {
@@ -139,7 +156,13 @@ export class MoodleWebSession implements WebSession {
       throw e instanceof WmmError ? e : new MoodleUnavailable();
     } finally {
       clearTimeout(timer);
+      this.reportSlow(url, init.method ?? 'GET', { ms: Date.now() - started, status, timedOut: ac.signal.aborted });
     }
+  }
+
+  private reportSlow(url: string, method: string, r: Pick<SlowRequest, 'ms' | 'status' | 'timedOut'>): void {
+    if (!this.opts.onSlow || (r.ms < SLOW_MS && !r.timedOut)) return;
+    best(() => this.opts.onSlow?.({ method, path: new URL(url).pathname, ...r }));
   }
 
   /**

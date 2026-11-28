@@ -196,6 +196,40 @@ describe('MoodleWebSession.ajax', () => {
     expect(notTimedOut).not.toHaveBeenCalled();
   });
 
+  it('reports slow and timed-out requests to onSlow, path without query', async () => {
+    const onSlow = vi.fn();
+    const hung = setup(
+      (_u, init) =>
+        new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(new Error('aborted')))),
+      { timeoutMs: 5, onSlow },
+    );
+    await expect(hung.session.page('/course/view.php?id=99')).rejects.toBeInstanceOf(MoodleUnavailable);
+    expect(onSlow).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'GET', path: '/course/view.php', status: null, timedOut: true }),
+    );
+
+    onSlow.mockClear();
+    const fast = setup(() => html(PROFILE), { onSlow });
+    await fast.session.page('/user/profile.php');
+    expect(onSlow).not.toHaveBeenCalled();
+
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      const slow = setup(
+        () => {
+          clock.mockReturnValue(Date.now() + 12_000);
+          return html(PROFILE);
+        },
+        { onSlow },
+      );
+      clock.mockReturnValue(1_000_000);
+      await slow.session.page('/user/profile.php');
+      expect(onSlow).toHaveBeenCalledWith(expect.objectContaining({ status: 200, timedOut: false, ms: 12_000 }));
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('a page whose body does not arrive in time times out as well', async () => {
     const onTimeout = vi.fn();
     const stalled = (signal: AbortSignal | null | undefined) =>

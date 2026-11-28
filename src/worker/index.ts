@@ -17,6 +17,7 @@ import { runMailIdle } from './mail-idle';
 import { mcpApiHandler } from './mcp';
 import { meterD1 } from './metered-d1';
 import { runRenewal } from './renew-cron';
+import { logRequest } from './request-log';
 import { createD1Store } from './store-d1';
 import { runCourseSweep, SCHEDULED_QUERY_BUDGET, SWEEP_CALL_BUDGET } from './sweep-cron';
 
@@ -166,12 +167,24 @@ async function throttlePublic(request: Request, env: Env): Promise<Response | nu
   }
 }
 
+async function handle(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const limited = await throttlePublic(request, env);
+  if (limited) return limited;
+  executionByRequest.set(request, ctx);
+  return providerFor(env).fetch(request, env, ctx);
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const limited = await throttlePublic(request, env);
-    if (limited) return limited;
-    executionByRequest.set(request, ctx);
-    return providerFor(env).fetch(request, env, ctx);
+    const started = Date.now();
+    let status = 500;
+    try {
+      const res = await handle(request, env, ctx);
+      status = res.status;
+      return res;
+    } finally {
+      logRequest(request, status, Date.now() - started);
+    }
   },
   scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
     ctx.waitUntil(runScheduled(env, controller.scheduledTime, ctx));

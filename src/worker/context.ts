@@ -191,6 +191,7 @@ async function webChannel(
       sesskey: cred.sesskeyEnc ? await rt.key.decrypt(cred.sesskeyEnc) : null,
       onUpdate: (change) => later(stored.update(change)),
       onEnded: () => later(ended()),
+      onSlow: (e) => console.warn({ kind: 'moodle_slow', user: user.id, ...e }),
     },
     busyUntil: cred.busyUntil,
     onBusy: (until) => defer(rt.store.updateCredentialStatus(user.id, { busyUntil: until })),

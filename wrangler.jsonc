@@ -2,6 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "waseda-moodle-mcp",
   "main": "src/worker/index.ts",
+  // Workers Logs: our own structured lines only (request-log.ts, moodle_slow); invocation logs may carry headers
+  "observability": { "enabled": true, "head_sampling_rate": 1, "logs": { "invocation_logs": false } },
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
