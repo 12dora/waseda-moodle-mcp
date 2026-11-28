@@ -48,7 +48,7 @@ const localInput = linkInput.extend({
 
 const HOW = {
   worker:
-    'Lists the files of a course (or one section) with short-lived download links (single-user, about 15 minutes) and a ready-to-run shell snippet (curl, one directory per section) to fetch them all at once. ',
+    'Lists the files of a course (or one section) with short-lived download links (single-user, about 15 minutes) and a ready-to-run shell snippet (curl, one directory per section) to fetch them all at once; if your sandbox blocks the links (HTTP 403), the result says what the user must allow. ',
   stdio:
     'Downloads the files of a course (or one section) into a NEW local directory (in the temp directory or under dest_dir), one sub-directory per section, and returns the local paths. Files over 50 MB are not downloaded; the result gives their Moodle address instead. ',
 };

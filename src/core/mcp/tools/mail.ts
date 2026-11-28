@@ -46,7 +46,7 @@ const getMailTool = defineTool({
     '(get_conversation). Pass thread_id from search_mail, or message_id from get_mail — exactly one. ' +
     'Reading does not mark the mail as read (the Gmail API never does). ' +
     'A thread keeps the newest 10 messages; older ones are counted in omitted. ' +
-    'Attachments come as short-lived download links.',
+    'Attachments come as short-lived download links; if your sandbox blocks them (HTTP 403), the result says what the user must allow.',
   annotations: READ_HINTS,
   input: z.object({
     message_id: gmailId('Gmail message id from get_mail (hex). Pass this or thread_id, not both.').optional(),

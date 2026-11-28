@@ -33,7 +33,7 @@ export { type FileRouteEnv, streamDownload, streamUpload } from './file-http';
 
 export const DOWNLOAD_TTL_SEC = 15 * 60;
 const UPLOAD_TTL_SEC = 30 * 60;
-const INLINE_MAX_BYTES = 1024 * 1024;
+export const INLINE_MAX_BYTES = 1024 * 1024;
 
 // ------------------------------------------------------------------ helpers
 
@@ -114,11 +114,14 @@ interface InlineRead {
   bytes: Uint8Array | null;
 }
 
+/** Types the inline option attaches: text, images and PDFs. */
+export const canInline = (mime: string | null): mime is string =>
+  !!mime && (isTextMime(mime) || mime.startsWith('image/') || mime === 'application/pdf');
+
 async function buildInline(api: MoodleApi, path: string, mime: string | null): Promise<InlineRead> {
   const none: InlineRead = { inline: null, bytes: null };
-  if (!mime) return none;
+  if (!canInline(mime)) return none;
   const asText = isTextMime(mime);
-  if (!asText && !mime.startsWith('image/') && mime !== 'application/pdf') return none;
   const res = await api.fetchFile(`${api.baseUrl}${path}`);
   if (!res.ok) return none;
   const bytes = await readLimited(res, INLINE_MAX_BYTES);

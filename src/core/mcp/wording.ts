@@ -8,7 +8,7 @@ export const RECONNECT_STDIO =
   'The Moodle connection has ended. Ask the user to sign in to Waseda Moodle in a browser, run "waseda-moodle-mcp connect" in a terminal (it explains how to copy the MoodleSession cookie), then restart this MCP server.';
 
 const FILES_WORKER =
-  'Files are never inlined by default: get_file returns a short-lived download link; fetch it with your own tools (e.g. curl) and read the file locally.';
+  'Files are never inlined by default: get_file returns a short-lived download link; fetch it with your own tools (e.g. curl) and read the file locally. If the link is blocked (HTTP 403, "CONNECT tunnel failed"), ask the user to allow this service\'s domain in the network settings of your sandbox (Claude: Settings → Capabilities).';
 const FILES_STDIO =
   'Files are never inlined by default: get_file saves the file to a temporary local path (a file:// URL) that you can read directly.';
 
@@ -29,7 +29,7 @@ export function getFileDescription(mode: Mode): string {
   const how =
     mode === 'stdio'
       ? 'Downloads a Moodle file (slides, PDFs, assignment attachments, submitted files, forum attachments) to a temporary local file and returns its path as a file:// URL; read it with your own tools. Files over 50 MB are not downloaded; the result then carries the Moodle address for the user to open in a browser. '
-      : 'Creates a short-lived download link for a Moodle file (slides, PDFs, assignment attachments, submitted files, forum attachments). Download the link with your own tools (e.g. curl) and read the file locally. ';
+      : 'Creates a short-lived download link for a Moodle file (slides, PDFs, assignment attachments, submitted files, forum attachments). Download the link with your own tools (e.g. curl) and read the file locally; if your sandbox blocks the link (HTTP 403), the result says what the user must allow. ';
   return (
     how +
     'Pass the file url exactly as listed by get_activity or other tools. ' +

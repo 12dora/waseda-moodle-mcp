@@ -1,7 +1,8 @@
 import { formatBytes } from '../../format';
+import { canInline, INLINE_MAX_BYTES } from '../../services/files';
 import { fmt } from '../../time';
 import type { FileLink, UploadLink } from '../../types';
-import { hardCap, oneLine } from './common';
+import { blockedLinkHint, hardCap, oneLine } from './common';
 
 /** Shell-safe file name for the curl example. */
 function safeName(name: string): string {
@@ -22,6 +23,10 @@ export function renderFileLink(link: FileLink, stdio = false): string {
   } else {
     lines.push(`Download URL (valid until ${fmt(link.expiresAt)} JST, single-user, do not share): ${link.downloadUrl}`);
     lines.push(`Example: curl -fL -o '${safeName(link.name)}' '${link.downloadUrl}'`);
+    lines.push(blockedLinkHint(link.downloadUrl));
+    if (!link.inline && canInline(link.mime) && link.size !== null && link.size <= INLINE_MAX_BYTES) {
+      lines.push('Text, images and PDFs up to 1 MiB also come back directly with inline=true.');
+    }
   }
   if (link.inline) lines.push('The content is also attached to this result.');
   return hardCap(lines.join('\n'));
@@ -32,6 +37,7 @@ export function renderUploadLink(u: UploadLink & { uploadId?: string }, cmid?: n
     `Upload URL (valid until ${fmt(u.expiresAt)} JST, max ${formatBytes(u.maxBytes)} per file): ${u.uploadUrl}`,
     'Send the raw bytes with PUT or POST and the file name as ?name=. Example:',
     u.curlExample,
+    blockedLinkHint(u.uploadUrl),
   ];
   if (u.uploadId && u.usedBy === 'prepare_forum_post') {
     lines.push(`After uploading, call prepare_forum_post or prepare_forum_post_change with upload_id "${u.uploadId}".`);

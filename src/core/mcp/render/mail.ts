@@ -7,7 +7,7 @@ import type {
   MailThread,
 } from '../../services/mail/read';
 import { fmt } from '../../time';
-import { assemble, assembleTail, oneLine, plural } from './common';
+import { assemble, assembleTail, blockedLinkHint, oneLine, plural } from './common';
 
 /** Matches the get_mail structured budget (12k per message is applied in the service). */
 const MAIL_TEXT_BUDGET = 40_000;
@@ -64,7 +64,11 @@ export function renderMail(t: MailThread): string {
     `# ${oneLine(t.subject, 120) || '(no subject)'}`,
     `${plural(t.messages.length, 'message')}${omit}. Open in Gmail: ${t.webUrl}`,
   ];
-  const footer = ['Reply with prepare_mail_reply using the message_id of the message to answer.'];
+  const linked = t.messages.flatMap((m) => m.attachments).find((a) => a.url);
+  const footer = [
+    ...(linked?.url ? [blockedLinkHint(linked.url)] : []),
+    'Reply with prepare_mail_reply using the message_id of the message to answer.',
+  ];
   return assembleTail({
     head,
     blocks: t.messages.map(messageBlock),

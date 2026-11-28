@@ -29,6 +29,21 @@ export interface Entry {
   item?: boolean;
 }
 
+/**
+ * For agents whose sandbox proxy refuses this service's host (Claude web: HTTP 403, "CONNECT tunnel failed"); only the
+ * user can allow it in the client's settings.
+ */
+export function blockedLinkHint(url: string): string {
+  let host = '';
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    /* not an absolute URL */
+  }
+  const target = host || "this service's domain";
+  return `If curl fails with HTTP 403 or "CONNECT tunnel failed", your sandbox's network blocks ${target}. Tell the user to allow it (Claude: Settings → Capabilities, add ${target} to the allowed domains of code execution) and retry in a new chat.`;
+}
+
 /** Last line of defence so no renderer can exceed the cap. */
 export function hardCap(text: string, budget = MAX_TEXT_CHARS): string {
   const cap = budget + 200;

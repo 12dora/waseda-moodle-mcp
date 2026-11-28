@@ -1,7 +1,7 @@
 import { formatBytes } from '../../format';
 import { type CourseDownload, DOWNLOAD_KINDS, type DownloadFile, type DownloadKind } from '../../services/downloads';
 import { fmt } from '../../time';
-import { hardCap, oneLine, plural } from './common';
+import { blockedLinkHint, hardCap, oneLine, plural } from './common';
 
 /** The shell snippet carries one line per file; it must never be cut, so the cap is far above the chunk size. */
 const TEXT_BUDGET = 24_000;
@@ -66,6 +66,7 @@ function shellSnippet(r: CourseDownload): string[] {
     '```sh',
     ...linked.map((f) => `curl -fL --create-dirs -o ${shellQuote(`${root}/${f.path}`)} ${shellQuote(f.url ?? '')}`),
     '```',
+    blockedLinkHint(linked[0]?.url ?? ''),
   ];
 }
 

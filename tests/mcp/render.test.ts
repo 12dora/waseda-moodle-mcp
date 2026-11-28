@@ -455,12 +455,26 @@ describe('files', () => {
     expect(t).toContain('application/pdf, 1.5 KB');
     expect(t).toContain('valid until 2026-10-14 Wed 12:15 JST');
     expect(t).toContain("curl -fL -o 'Lecture_1_slides_.pdf' 'https://wasemoodle.example.com/f/tkt'");
+    expect(t).toContain('"CONNECT tunnel failed"');
+    expect(t).toContain('Settings → Capabilities, add wasemoodle.example.com');
+    expect(t).toContain('inline=true');
+  });
+
+  it('skips the inline hint when the file is attached or too large', () => {
+    expect(renderFileLink({ ...link, size: 2 * 1024 * 1024 })).not.toContain('inline=true');
+    const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    expect(renderFileLink({ ...link, mime: docx })).not.toContain('inline=true');
+    expect(renderFileLink({ ...link, mime: null })).not.toContain('inline=true');
+    expect(renderFileLink({ ...link, inline: { mime: 'application/pdf', base64: 'eA==' } })).not.toContain(
+      'inline=true',
+    );
   });
 
   it('handles local file URLs and inline notes', () => {
     const t = renderFileLink({ ...link, downloadUrl: 'file:///tmp/a.pdf', inline: { mime: 'text/plain', text: 'x' } });
     expect(t).toContain('Saved locally: file:///tmp/a.pdf');
     expect(t).not.toContain('curl');
+    expect(t).not.toContain('Capabilities');
     expect(t).toContain('also attached');
   });
 
