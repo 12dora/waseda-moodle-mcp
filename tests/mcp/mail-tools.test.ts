@@ -121,7 +121,7 @@ describe('mail renderers and output schemas', () => {
     expect(text).toContain('see the attached 講義資料');
     expect(text).toContain('講義資料.pdf');
     expect(text).toContain('https://wasemoodle.example.com/f/tkt');
-    expect(text).toContain('add wasemoodle.example.com to the allowed domains');
+    expect(text).toContain('allow wasemoodle.example.com in this app');
     expect(text).toContain('prepare_mail_reply');
     expect(text).toContain('message_id aa000004');
     expect(getMailOut.safeParse(threadSample).success).toBe(true);
@@ -141,7 +141,7 @@ describe('mail renderers and output schemas', () => {
     expect(text).toContain('body cut at 12000 chars');
     expect(text).toContain('structured result');
     expect(text).toContain('open in Gmail');
-    expect(text).not.toContain('Capabilities');
+    expect(text).not.toContain('network blocks');
   });
 });
 

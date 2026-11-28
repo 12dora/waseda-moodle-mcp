@@ -456,7 +456,9 @@ describe('files', () => {
     expect(t).toContain('valid until 2026-10-14 Wed 12:15 JST');
     expect(t).toContain("curl -fL -o 'Lecture_1_slides_.pdf' 'https://wasemoodle.example.com/f/tkt'");
     expect(t).toContain('"CONNECT tunnel failed"');
-    expect(t).toContain('Settings → Capabilities, add wasemoodle.example.com');
+    expect(t).toContain('allow wasemoodle.example.com in this app');
+    expect(t).toContain('open the link in a browser and attach the file');
+    expect(t).not.toContain('Claude');
     expect(t).toContain('inline=true');
   });
 
@@ -474,7 +476,7 @@ describe('files', () => {
     const t = renderFileLink({ ...link, downloadUrl: 'file:///tmp/a.pdf', inline: { mime: 'text/plain', text: 'x' } });
     expect(t).toContain('Saved locally: file:///tmp/a.pdf');
     expect(t).not.toContain('curl');
-    expect(t).not.toContain('Capabilities');
+    expect(t).not.toContain('network blocks');
     expect(t).toContain('also attached');
   });
 
@@ -492,6 +494,7 @@ describe('files', () => {
       5001,
     );
     expect(t).toContain('max 20 MB');
+    expect(t).toContain('pass small files inline instead');
     expect(t).toContain('upload_id "upl_1"');
     expect(t).toContain('cmid 5001');
   });

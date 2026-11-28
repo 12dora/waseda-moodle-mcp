@@ -30,10 +30,10 @@ export interface Entry {
 }
 
 /**
- * For agents whose sandbox proxy refuses this service's host (Claude web: HTTP 403, "CONNECT tunnel failed"); only the
- * user can allow it in the client's settings.
+ * For agents whose network refuses this service's host (e.g. a sandbox proxy answering HTTP 403, "CONNECT tunnel
+ * failed"). Client-neutral: the user either allows the host or moves the file by hand.
  */
-export function blockedLinkHint(url: string): string {
+export function blockedLinkHint(url: string, direction: 'download' | 'upload' = 'download'): string {
   let host = '';
   try {
     host = new URL(url).hostname;
@@ -41,7 +41,11 @@ export function blockedLinkHint(url: string): string {
     /* not an absolute URL */
   }
   const target = host || "this service's domain";
-  return `If curl fails with HTTP 403 or "CONNECT tunnel failed", your sandbox's network blocks ${target}. Tell the user to allow it (Claude: Settings → Capabilities, add ${target} to the allowed domains of code execution) and retry in a new chat.`;
+  const manual =
+    direction === 'upload'
+      ? 'or pass small files inline instead (files[].text / content_base64)'
+      : 'or ask them to open the link in a browser and attach the file to the chat';
+  return `If the request fails (e.g. HTTP 403, "CONNECT tunnel failed"), your network blocks ${target}. Ask the user to allow ${target} in this app's network or sandbox settings and retry, ${manual}.`;
 }
 
 /** Last line of defence so no renderer can exceed the cap. */

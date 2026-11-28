@@ -220,7 +220,7 @@ describe('downloadCourseFiles on the web session', () => {
     const text = renderCourseDownloadLinks(r);
     expect(text).toContain('Opening 2 resources counted as viewing them on Moodle');
     expect(text).toContain(`curl -fL --create-dirs -o 'course-${COURSE}/01 第1回/handout-7201.pdf' '${PUBLIC_URL}/f/`);
-    expect(text).toContain(`add ${new URL(PUBLIC_URL).hostname} to the allowed domains`);
+    expect(text).toContain(`allow ${new URL(PUBLIC_URL).hostname} in this app`);
   });
 
   it('pages through a large course with a cursor (30 activity pages per call)', async () => {

@@ -37,7 +37,7 @@ export function renderUploadLink(u: UploadLink & { uploadId?: string }, cmid?: n
     `Upload URL (valid until ${fmt(u.expiresAt)} JST, max ${formatBytes(u.maxBytes)} per file): ${u.uploadUrl}`,
     'Send the raw bytes with PUT or POST and the file name as ?name=. Example:',
     u.curlExample,
-    blockedLinkHint(u.uploadUrl),
+    blockedLinkHint(u.uploadUrl, 'upload'),
   ];
   if (u.uploadId && u.usedBy === 'prepare_forum_post') {
     lines.push(`After uploading, call prepare_forum_post or prepare_forum_post_change with upload_id "${u.uploadId}".`);

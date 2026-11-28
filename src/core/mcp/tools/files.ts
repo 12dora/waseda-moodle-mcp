@@ -68,7 +68,7 @@ export const createUploadLinkTool = defineTool({
   title: 'Create upload link',
   description:
     'Creates a short-lived upload link for files too large to pass inline: for an assignment submission or a forum post attachment. ' +
-    'If your sandbox blocks the link (HTTP 403), the result says what the user must allow. ' +
+    'If your sandbox blocks the link (HTTP 403), the result says what to ask the user. ' +
     'Upload each file with curl (PUT raw bytes, name in ?name=), then pass the returned upload_id to prepare_submission (assignment) or prepare_forum_post / prepare_forum_post_change (forum). ' +
     "This does not submit or post anything; that still needs the prepare step and the user's confirmation.",
   annotations: PREPARE_HINTS,
@@ -78,6 +78,6 @@ export const createUploadLinkTool = defineTool({
   output: uploadLinkOut,
   async run(ctx, a) {
     const r = await createUploadLink(ctx, a.cmid);
-    return { text: renderUploadLink(r, a.cmid), data: { ...r, ifBlocked: blockedLinkHint(r.uploadUrl) } };
+    return { text: renderUploadLink(r, a.cmid), data: { ...r, ifBlocked: blockedLinkHint(r.uploadUrl, 'upload') } };
   },
 });
