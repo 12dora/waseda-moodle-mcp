@@ -120,6 +120,7 @@ export const zhCN: Dictionary = {
   'client.claude.step1': '在 claude.ai 中打开“Customize”→“Connectors”，选择“Add custom connector”。',
   'client.claude.step2': '粘贴 MCP 服务器 URL，选择“Add”，然后点击“Connect”并登录。',
   'client.claude.step3': '在对话中通过“+”→“Connectors”启用。Claude Desktop 同样可用。',
+  'client.claude.step4': '读取文件需在“Settings”→“Capabilities”中允许代码执行访问以下域名：',
   'client.claude.note':
     '免费版限 1 个自定义连接器。Team 和 Enterprise 由所有者在“Organization settings”→“Connectors”中添加。',
   'client.chatgpt.step1': '在 ChatGPT 中打开“Plugins”，选择“+”→“Add custom MCP server”。',

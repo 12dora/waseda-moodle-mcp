@@ -86,7 +86,12 @@ describe('clientGuides', () => {
     const other = 'https://other.example.com/mcp';
     const codes = clientGuides(other).flatMap((g) => g.steps.map((s) => s.code).filter(Boolean));
     expect(codes.length).toBeGreaterThan(0);
-    for (const c of codes) expect(c).toContain(other);
+    for (const c of codes) expect(c).toContain(new globalThis.URL(other).hostname);
+  });
+
+  it('asks Claude users to allow the service host for file links', () => {
+    const claude = clientGuides(URL).find((g) => g.id === 'claude');
+    expect(claude?.steps.at(-1)).toEqual({ text: 'client.claude.step4', code: new globalThis.URL(URL).hostname });
   });
 
   it('builds every API-key snippet from the live MCP URL (Other is the bare header)', () => {

@@ -126,6 +126,8 @@ export const ja: Dictionary = {
   'client.claude.step1': 'claude.ai で「Customize」→「Connectors」を開き、「Add custom connector」を選びます。',
   'client.claude.step2': 'MCP サーバー URL を貼り付けて「Add」を選び、「Connect」からサインインします。',
   'client.claude.step3': 'チャットの「+」→「Connectors」でオンにします。Claude Desktop でも使えます。',
+  'client.claude.step4':
+    'ファイルを読むには、「Settings」→「Capabilities」でコード実行に次のドメインへのアクセスを許可します：',
   'client.claude.note':
     '無料プランはカスタムコネクタ 1 個まで。Team / Enterprise はオーナーが「Organization settings」→「Connectors」で追加します。',
   'client.chatgpt.step1': 'ChatGPT で「Plugins」を開き、「+」→「Add custom MCP server」を選びます。',

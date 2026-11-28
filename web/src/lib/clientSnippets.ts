@@ -66,12 +66,26 @@ export const grokCommand = (url: string, withKey = false) =>
     ? `grok mcp add --transport http ${NAME} ${url} \\\n  --header "${AUTH_HEADER}"`
     : `grok mcp add --transport http ${NAME} ${url}`;
 
+/** Host of the MCP URL: the domain Claude's code execution must be allowed to reach for file links. */
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+};
+
 export function clientGuides(url: string): ClientGuide[] {
   return [
     {
       id: 'claude',
       label: 'client.tab.claude',
-      steps: [{ text: 'client.claude.step1' }, { text: 'client.claude.step2' }, { text: 'client.claude.step3' }],
+      steps: [
+        { text: 'client.claude.step1' },
+        { text: 'client.claude.step2' },
+        { text: 'client.claude.step3' },
+        { text: 'client.claude.step4', code: hostOf(url) },
+      ],
       note: 'client.claude.note',
     },
     {

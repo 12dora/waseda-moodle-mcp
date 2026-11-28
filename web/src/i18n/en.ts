@@ -124,6 +124,7 @@ export const en = {
   'client.claude.step1': 'On claude.ai, open Customize → Connectors and select Add custom connector.',
   'client.claude.step2': 'Paste the MCP server URL, select Add, then Connect and sign in.',
   'client.claude.step3': 'In a chat, turn it on under + → Connectors. It also works in Claude Desktop.',
+  'client.claude.step4': 'To read files, allow code execution to reach this domain under Settings → Capabilities:',
   'client.claude.note':
     'Free plan: 1 custom connector. Team and Enterprise: an Owner adds it in Organization settings → Connectors.',
   'client.chatgpt.step1': 'In ChatGPT, open Plugins, select +, then Add custom MCP server.',
